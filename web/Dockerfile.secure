@@ -1,0 +1,163 @@
+# USF BIOS - Secure Production Docker Image
+# - Compiles Python to bytecode (no source code access)
+# - Disables CLI access
+# - Only WebUI is accessible
+# Copyright (c) US Inc. All rights reserved.
+
+# ============================================================================
+# Stage 1: Frontend Builder
+# ============================================================================
+FROM node:20-alpine AS frontend-builder
+
+WORKDIR /build/frontend
+COPY frontend/package*.json ./
+RUN npm ci --only=production
+COPY frontend/ ./
+RUN npm run build
+
+# ============================================================================
+# Stage 2: Python Compiler - Compile to bytecode
+# ============================================================================
+FROM python:3.11-slim AS python-compiler
+
+WORKDIR /compile
+
+# Install compilation tools
+RUN pip install --no-cache-dir py_compile nuitka cython
+
+# Copy Python source
+COPY usf_bios/ /compile/usf_bios/
+COPY web/backend/ /compile/web/backend/
+COPY setup.py setup.cfg /compile/
+
+# Compile all Python files to bytecode and remove source
+RUN python -m compileall -b /compile/usf_bios /compile/web/backend && \
+    find /compile -name "*.py" -type f -delete && \
+    find /compile -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+
+# ============================================================================
+# Stage 3: Production Image (Secure)
+# ============================================================================
+FROM python:3.11-slim
+
+LABEL maintainer="US Inc <support@us.inc>"
+LABEL description="USF BIOS - Enterprise AI Fine-tuning Platform (Secure)"
+LABEL version="1.0.0"
+
+# Security: Create non-root user
+RUN groupadd -r usf && useradd -r -g usf usf
+
+# Environment
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV USF_DISABLE_CLI=1
+ENV USF_UI_ONLY=1
+ENV HOME=/app
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    nodejs \
+    npm \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Copy requirements and install Python packages
+COPY requirements/ /app/requirements/
+COPY web/backend/requirements.txt /app/web/backend/
+RUN pip install --no-cache-dir \
+    torch>=2.0 \
+    transformers \
+    datasets \
+    accelerate \
+    peft \
+    trl \
+    deepspeed \
+    && pip install --no-cache-dir -r /app/web/backend/requirements.txt
+
+# Copy compiled bytecode (no source)
+COPY --from=python-compiler /compile/usf_bios/ /app/usf_bios/
+COPY --from=python-compiler /compile/web/backend/ /app/web/backend/
+
+# Copy frontend build
+COPY --from=frontend-builder /build/frontend/.next/standalone /app/web/frontend/
+COPY --from=frontend-builder /build/frontend/.next/static /app/web/frontend/.next/static
+COPY --from=frontend-builder /build/frontend/public /app/web/frontend/public
+
+# Create data directories
+RUN mkdir -p /app/data/uploads /app/data/outputs /app/data/models && \
+    chown -R usf:usf /app
+
+# Create secure entrypoint that ONLY starts WebUI
+RUN cat > /app/entrypoint.sh << 'ENTRYPOINT_SCRIPT'
+#!/bin/bash
+set -e
+
+# Block any CLI attempts
+export USF_DISABLE_CLI=1
+export USF_UI_ONLY=1
+
+# Prevent shell access
+unset SHELL
+export SHELL=/bin/false
+
+echo "=============================================="
+echo "  USF BIOS - AI Fine-tuning Platform"
+echo "  Copyright (c) US Inc. All rights reserved."
+echo "=============================================="
+echo ""
+echo "  Mode: WebUI Only (CLI Disabled)"
+echo ""
+
+# Start backend API
+cd /app/web/backend
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+BACKEND_PID=$!
+
+# Wait for backend
+sleep 3
+
+# Start frontend
+cd /app/web/frontend
+node server.js &
+FRONTEND_PID=$!
+
+echo ""
+echo "=============================================="
+echo "  Services Ready"
+echo "=============================================="
+echo ""
+echo "  Web UI:  http://localhost:3000"
+echo "  API:     http://localhost:8000"
+echo ""
+echo "=============================================="
+
+# Handle shutdown
+trap "kill $BACKEND_PID $FRONTEND_PID 2>/dev/null" EXIT SIGTERM SIGINT
+
+# Wait for processes
+wait -n
+exit $?
+ENTRYPOINT_SCRIPT
+RUN chmod +x /app/entrypoint.sh
+
+# Remove shell access for security
+RUN rm -f /bin/sh /bin/bash /bin/dash 2>/dev/null || true
+
+# Security: Make source directories read-only
+RUN chmod -R 555 /app/usf_bios /app/web
+
+# Switch to non-root user
+USER usf
+
+# Expose ports
+EXPOSE 3000 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8000/api/health || exit 1
+
+# Entry point - WebUI only
+ENTRYPOINT ["/app/entrypoint.sh"]

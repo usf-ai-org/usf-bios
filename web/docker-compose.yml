@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  # Production: Secure build with no source code access
+  usf-bios:
+    build:
+      context: ..
+      dockerfile: web/Dockerfile.secure
+    container_name: usf-bios-platform
+    ports:
+      - "3000:3000"  # Frontend UI (WebUI)
+      - "8000:8000"  # Backend API
+    volumes:
+      # Mount data directories only - no code access
+      - usf-data-uploads:/app/data/uploads
+      - usf-data-outputs:/app/data/outputs
+      - usf-data-models:/app/data/models
+    environment:
+      - USF_UI_ONLY=1
+      - USF_DISABLE_CLI=1
+      - CUDA_VISIBLE_DEVICES=0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    # Security: Read-only root filesystem, no privileged access
+    read_only: false
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  usf-data-uploads:
+  usf-data-outputs:
+  usf-data-models:
