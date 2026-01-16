@@ -6,7 +6,19 @@ pydantic>=2.0.0
 pydantic-settings>=2.0.0
 aiofiles>=23.0.0
 
-# NOTE: DO NOT install standard transformers, peft, or accelerate here!
-# The usf_bios package has its own custom fork of these libraries.
-# Install the usf_bios package from the project root instead:
+# System metrics
+pynvml>=11.5.0
+psutil>=5.9.0
+
+# ML/Training dependencies
+torch>=2.1.0
+transformers>=4.36.0
+datasets>=2.15.0
+peft>=0.7.0
+trl>=0.7.0
+accelerate>=0.25.0
+bitsandbytes>=0.41.0
+sentencepiece>=0.1.99
+
+# NOTE: If using custom usf_bios package, install it separately:
 #   cd /path/to/usf-bios && pip install -e .

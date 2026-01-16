@@ -1,0 +1,58 @@
+# USF BIOS - Docker Compose for GPU Server Testing
+# Usage: docker compose up --build
+
+version: '3.8'
+
+services:
+  # Backend API with GPU support
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    container_name: usf-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persist data and models
+      - ./data:/app/data
+      - ./output:/app/output
+      # For development/debugging - mount source code
+      - ./web/backend/app:/app/app:ro
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - CUDA_VISIBLE_DEVICES=0
+      - PYTHONUNBUFFERED=1
+    # GPU access
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Frontend UI
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+    container_name: usf-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+networks:
+  default:
+    name: usf-network

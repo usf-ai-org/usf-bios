@@ -9,7 +9,7 @@ import {
   RefreshCw, Upload, X, FileText, Check,
   HardDrive, Thermometer, Clock, Activity,
   FolderOpen, Download, Layers, ToggleLeft, ToggleRight,
-  History, Menu, Monitor, Gauge
+  History, Menu, Monitor, Gauge, XCircle
 } from 'lucide-react'
 import TrainingSettingsStep from '@/components/TrainingSettings'
 import DatasetConfig from '@/components/DatasetConfig'
@@ -65,6 +65,17 @@ interface SystemMetrics {
   ram_used: number | null
   ram_total: number | null
   available: boolean
+}
+
+interface SystemStatus {
+  status: 'live' | 'starting' | 'degraded' | 'offline' | 'error' | 'unknown'
+  message: string
+  gpu_available: boolean
+  gpu_name: string | null
+  cuda_available: boolean
+  bios_installed: boolean
+  backend_ready: boolean
+  details: Record<string, string>
 }
 
 interface TrainingMetric {
@@ -185,6 +196,18 @@ export default function Home() {
     available: false
   })
   
+  // System status - tracks if system is ready for training
+  const [systemStatus, setSystemStatus] = useState<SystemStatus>({
+    status: 'unknown',
+    message: 'Checking system status...',
+    gpu_available: false,
+    gpu_name: null,
+    cuda_available: false,
+    bios_installed: false,
+    backend_ready: false,
+    details: {}
+  })
+  
   // Training metrics for graphs
   const [trainingMetrics, setTrainingMetrics] = useState<TrainingMetric[]>([])
   
@@ -201,6 +224,35 @@ export default function Home() {
       fetchDatasets()
     }
   }, [mainTab, currentStep])
+
+  // Fetch system status - check if system is ready for training
+  const fetchSystemStatus = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/system/status`)
+      if (res.ok) {
+        const data = await res.json()
+        setSystemStatus(data)
+      } else {
+        setSystemStatus(prev => ({
+          ...prev,
+          status: 'offline',
+          message: 'Backend not responding',
+          backend_ready: false
+        }))
+      }
+    } catch (e) {
+      setSystemStatus({
+        status: 'offline',
+        message: 'Cannot connect to backend server',
+        gpu_available: false,
+        gpu_name: null,
+        cuda_available: false,
+        bios_installed: false,
+        backend_ready: false,
+        details: { error: String(e) }
+      })
+    }
+  }, [])
 
   // Fetch system metrics periodically - only set if data is valid
   const fetchSystemMetrics = useCallback(async () => {
@@ -225,6 +277,13 @@ export default function Home() {
       // Keep metrics as unavailable on error
     }
   }, [])
+
+  // Fetch system status on mount and periodically
+  useEffect(() => {
+    fetchSystemStatus()
+    const interval = setInterval(fetchSystemStatus, 10000) // Check every 10 seconds
+    return () => clearInterval(interval)
+  }, [fetchSystemStatus])
 
   // Poll system metrics during training or inference
   useEffect(() => {
@@ -799,6 +858,31 @@ export default function Home() {
         </div>
       </header>
 
+      {/* System Status Banner - Shows when system is not live */}
+      {systemStatus.status !== 'live' && (
+        <div className={`px-4 py-3 text-center text-sm font-medium ${
+          systemStatus.status === 'offline' ? 'bg-red-100 text-red-800 border-b border-red-200' :
+          systemStatus.status === 'degraded' ? 'bg-yellow-100 text-yellow-800 border-b border-yellow-200' :
+          systemStatus.status === 'error' ? 'bg-red-100 text-red-800 border-b border-red-200' :
+          systemStatus.status === 'starting' ? 'bg-blue-100 text-blue-800 border-b border-blue-200' :
+          'bg-slate-100 text-slate-800 border-b border-slate-200'
+        }`}>
+          <div className="max-w-6xl mx-auto flex items-center justify-center gap-2">
+            {systemStatus.status === 'offline' && <XCircle className="w-4 h-4" />}
+            {systemStatus.status === 'degraded' && <AlertCircle className="w-4 h-4" />}
+            {systemStatus.status === 'error' && <XCircle className="w-4 h-4" />}
+            {systemStatus.status === 'starting' && <Loader2 className="w-4 h-4 animate-spin" />}
+            {systemStatus.status === 'unknown' && <AlertCircle className="w-4 h-4" />}
+            <span>
+              <strong>System Status: {systemStatus.status.toUpperCase()}</strong> — {systemStatus.message}
+            </span>
+            <button onClick={fetchSystemStatus} className="ml-2 p-1 hover:bg-black/10 rounded">
+              <RefreshCw className="w-3 h-3" />
+            </button>
+          </div>
+        </div>
+      )}
+
       <main className="max-w-6xl mx-auto px-4 py-6">
         
         {/* ===================== TRAINING TAB ===================== */}
@@ -954,10 +1038,21 @@ export default function Home() {
                     </div>
                   </div>
                   
+                  {/* System status warning */}
+                  {systemStatus.status !== 'live' && (
+                    <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700 flex items-center gap-2">
+                      <XCircle className="w-5 h-5 flex-shrink-0" />
+                      <div>
+                        <strong>Cannot start training:</strong> {systemStatus.message}
+                        {systemStatus.gpu_name && <span className="block text-xs mt-1">GPU: {systemStatus.gpu_name}</span>}
+                      </div>
+                    </div>
+                  )}
+                  
                   <button onClick={startTraining}
-                    disabled={config.dataset_paths.length === 0}
-                    className="w-full py-4 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-semibold text-lg disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg">
-                    <Zap className="w-5 h-5" /> Start Training
+                    disabled={config.dataset_paths.length === 0 || systemStatus.status !== 'live'}
+                    className="w-full py-4 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-semibold text-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg">
+                    <Zap className="w-5 h-5" /> {systemStatus.status === 'live' ? 'Start Training' : 'System Not Ready'}
                   </button>
                 </div>
               )}

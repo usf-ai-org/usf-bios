@@ -1,7 +1,65 @@
-"""System metrics endpoints"""
+"""System metrics and status endpoints"""
 from fastapi import APIRouter
+from pydantic import BaseModel
+from typing import Literal, Optional
+import os
+import subprocess
 
 router = APIRouter(prefix="/api/system", tags=["system"])
+
+
+class SystemStatus(BaseModel):
+    """System status response model"""
+    status: Literal["live", "starting", "degraded", "offline", "error"]
+    message: str
+    gpu_available: bool
+    gpu_name: Optional[str] = None
+    cuda_available: bool
+    bios_installed: bool
+    backend_ready: bool
+    details: dict
+
+
+def check_bios_installation() -> tuple[bool, str]:
+    """Check if USF BIOS training system is properly installed"""
+    try:
+        # Check if core packages are available
+        import transformers
+        import peft
+        import trl
+        import accelerate
+        import datasets
+        return True, "BIOS training packages installed"
+    except ImportError as e:
+        return False, f"Missing package: {str(e)}"
+    except Exception as e:
+        return False, f"Installation check failed: {str(e)}"
+
+
+def check_gpu_availability() -> tuple[bool, str, Optional[str]]:
+    """Check if GPU is available and functional"""
+    gpu_name = None
+    try:
+        import torch
+        if torch.cuda.is_available():
+            gpu_name = torch.cuda.get_device_name(0)
+            # Test GPU is actually usable
+            test_tensor = torch.zeros(1).cuda()
+            del test_tensor
+            return True, f"GPU ready: {gpu_name}", gpu_name
+        else:
+            return False, "CUDA not available", None
+    except Exception as e:
+        return False, f"GPU check failed: {str(e)}", None
+
+
+def check_cuda_available() -> bool:
+    """Check if CUDA is available"""
+    try:
+        import torch
+        return torch.cuda.is_available()
+    except:
+        return False
 
 
 def get_gpu_metrics():
@@ -119,3 +177,78 @@ async def get_gpu_info():
 async def get_cpu_info():
     """Get CPU and memory information"""
     return get_cpu_metrics()
+
+
+@router.get("/status", response_model=SystemStatus)
+async def get_system_status():
+    """
+    Get comprehensive system status for frontend display.
+    Returns status: live, starting, degraded, offline, error
+    Frontend should block job submission unless status is 'live'
+    """
+    details = {}
+    
+    # Check BIOS installation
+    bios_ok, bios_msg = check_bios_installation()
+    details["bios"] = bios_msg
+    
+    # Check GPU
+    gpu_ok, gpu_msg, gpu_name = check_gpu_availability()
+    details["gpu"] = gpu_msg
+    
+    # Check CUDA
+    cuda_ok = check_cuda_available()
+    details["cuda"] = "Available" if cuda_ok else "Not available"
+    
+    # Backend is ready if we got this far
+    backend_ready = True
+    details["backend"] = "Running"
+    
+    # Determine overall status
+    if bios_ok and gpu_ok and cuda_ok:
+        status = "live"
+        message = "System fully operational - Ready for training"
+    elif bios_ok and not gpu_ok:
+        status = "degraded"
+        message = "GPU not available - Training will fail"
+    elif not bios_ok and gpu_ok:
+        status = "degraded"
+        message = "BIOS packages not installed - Training will fail"
+    elif not bios_ok and not gpu_ok:
+        status = "offline"
+        message = "System not ready - Missing GPU and BIOS packages"
+    else:
+        status = "error"
+        message = "Unknown system state"
+    
+    return SystemStatus(
+        status=status,
+        message=message,
+        gpu_available=gpu_ok,
+        gpu_name=gpu_name,
+        cuda_available=cuda_ok,
+        bios_installed=bios_ok,
+        backend_ready=backend_ready,
+        details=details
+    )
+
+
+@router.get("/ready")
+async def readiness_check():
+    """
+    Simple readiness check for job submission.
+    Returns {"ready": true/false, "reason": "..."}
+    """
+    bios_ok, bios_msg = check_bios_installation()
+    gpu_ok, gpu_msg, _ = check_gpu_availability()
+    
+    if bios_ok and gpu_ok:
+        return {"ready": True, "reason": "System ready for training"}
+    
+    reasons = []
+    if not bios_ok:
+        reasons.append(f"BIOS: {bios_msg}")
+    if not gpu_ok:
+        reasons.append(f"GPU: {gpu_msg}")
+    
+    return {"ready": False, "reason": "; ".join(reasons)}
