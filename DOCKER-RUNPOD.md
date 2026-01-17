@@ -1,5 +1,29 @@
 # USF BIOS - Docker Image for RunPod
 
+## Security Architecture
+
+**Backend API is INTERNAL ONLY** - not exposed outside the container.
+
+```
+┌─────────────────────────────────────────────────────┐
+│                   Docker Container                   │
+│                                                     │
+│   ┌─────────────┐         ┌─────────────────────┐   │
+│   │   Next.js   │ ──────► │   FastAPI Backend   │   │
+│   │  Frontend   │  proxy  │   (127.0.0.1:8000)  │   │
+│   │  Port 3000  │         │   INTERNAL ONLY     │   │
+│   └─────────────┘         └─────────────────────┘   │
+│         ▲                                           │
+└─────────│───────────────────────────────────────────┘
+          │
+    External Access
+    (Port 3000 only)
+```
+
+- **Port 3000**: Externally accessible (Next.js frontend)
+- **Port 8000**: Internal only (FastAPI backend, bound to 127.0.0.1)
+- All `/api/*` requests are proxied through Next.js to the internal backend
+
 ## Quick Start
 
 ### Step 1: Build and Push to Docker Hub

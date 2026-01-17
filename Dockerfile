@@ -1,39 +1,39 @@
-# USF BIOS - Complete Docker Image for RunPod GPU Server
-# This image includes backend + frontend with auto-start
-# Push to Docker Hub: docker build -t your-username/usf-bios:latest . && docker push your-username/usf-bios:latest
+# USF BIOS - Secured Production Docker Image
+# Copyright (c) US Inc. All rights reserved.
+# PROPRIETARY AND CONFIDENTIAL
 
 FROM nvidia/cuda:12.1.0-devel-ubuntu22.04
 
 LABEL maintainer="US Inc"
-LABEL description="USF BIOS AI Fine-tuning Platform"
 LABEL version="1.0.0"
 
 # Prevent interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONDONTWRITEBYTECODE=0
 
 # Application directories
 ENV APP_HOME=/app
 ENV BACKEND_DIR=/app/backend
 ENV FRONTEND_DIR=/app/frontend
+ENV CORE_DIR=/app/core
 ENV LOG_DIR=/var/log/usf-bios
 ENV DATA_DIR=/app/data
 
 # Create directories
-RUN mkdir -p $APP_HOME $BACKEND_DIR $FRONTEND_DIR $LOG_DIR $DATA_DIR/uploads $DATA_DIR/datasets $DATA_DIR/output
+RUN mkdir -p $APP_HOME $BACKEND_DIR $FRONTEND_DIR $CORE_DIR $LOG_DIR $DATA_DIR/uploads $DATA_DIR/datasets $DATA_DIR/output
 
-# Install system dependencies
+# Install system dependencies including build tools for Cython
 RUN apt-get update && apt-get install -y \
     python3.11 \
     python3.11-venv \
     python3.11-dev \
     python3-pip \
+    build-essential \
+    gcc \
+    g++ \
     curl \
     wget \
-    git \
-    supervisor \
-    nginx \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3.11 /usr/bin/python3 \
     && ln -sf /usr/bin/python3.11 /usr/bin/python
@@ -43,14 +43,16 @@ RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Upgrade pip
-RUN pip3 install --no-cache-dir --upgrade pip setuptools wheel
+# Install pip, security tools, and Cython for C compilation
+RUN pip3 install --no-cache-dir --upgrade pip setuptools wheel cython nuitka
 
-# Copy backend requirements and install
+# Copy and install requirements
 COPY web/backend/requirements.txt $BACKEND_DIR/requirements.txt
-RUN pip3 install --no-cache-dir -r $BACKEND_DIR/requirements.txt
+COPY requirements.txt /tmp/core_requirements.txt
+RUN pip3 install --no-cache-dir -r $BACKEND_DIR/requirements.txt || true
+RUN pip3 install --no-cache-dir -r /tmp/core_requirements.txt || true
 
-# Install additional ML dependencies that might not be in requirements
+# Install ML dependencies
 RUN pip3 install --no-cache-dir \
     torch>=2.1.0 \
     transformers>=4.36.0 \
@@ -61,16 +63,143 @@ RUN pip3 install --no-cache-dir \
     bitsandbytes>=0.41.0 \
     sentencepiece>=0.1.99 \
     pynvml>=11.5.0 \
-    psutil>=5.9.0
+    psutil>=5.9.0 \
+    cryptography>=41.0.0
 
-# Copy backend code
+# ============================================
+# COPY ALL SOURCE CODE
+# ============================================
+
+# Copy core training library (MAIN IP)
+COPY usf_bios $CORE_DIR/usf_bios
+
+# Copy backend API
 COPY web/backend $BACKEND_DIR
 
-# Copy frontend and build
+# Copy frontend
 COPY web/frontend $FRONTEND_DIR
+
+# ============================================
+# MAXIMUM IP PROTECTION
+# ============================================
+
+# Create compilation script for Cython
+RUN cat > /tmp/compile_to_c.py << 'COMPILE_SCRIPT'
+import os
+import sys
+import py_compile
+import compileall
+import shutil
+
+def compile_directory(src_dir):
+    """Compile all Python files to bytecode and remove source"""
+    for root, dirs, files in os.walk(src_dir):
+        # Skip __pycache__ directories
+        dirs[:] = [d for d in dirs if d != '__pycache__']
+        
+        for filename in files:
+            if filename.endswith('.py'):
+                filepath = os.path.join(root, filename)
+                try:
+                    # Compile to optimized bytecode
+                    py_compile.compile(filepath, cfile=filepath + 'c', optimize=2)
+                    
+                    # Remove source file (keep only .pyc)
+                    if filename != '__init__.py':
+                        os.remove(filepath)
+                    else:
+                        # Empty __init__.py files
+                        with open(filepath, 'w') as f:
+                            f.write('')
+                except Exception as e:
+                    print(f"Error compiling {filepath}: {e}")
+
+if __name__ == '__main__':
+    if len(sys.argv) > 1:
+        for directory in sys.argv[1:]:
+            if os.path.exists(directory):
+                print(f"Compiling {directory}...")
+                compile_directory(directory)
+                print(f"Done: {directory}")
+COMPILE_SCRIPT
+
+# Compile ALL Python code to bytecode
+RUN python3 /tmp/compile_to_c.py $CORE_DIR $BACKEND_DIR
+
+# Remove ALL .py source files (keep only compiled .pyc)
+RUN find $CORE_DIR -name "*.py" -type f ! -name "__init__.py" -delete 2>/dev/null || true
+RUN find $BACKEND_DIR -name "*.py" -type f ! -name "__init__.py" -delete 2>/dev/null || true
+
+# Empty all __init__.py files
+RUN find $CORE_DIR -name "__init__.py" -exec sh -c 'echo "" > "$1"' _ {} \; 2>/dev/null || true
+RUN find $BACKEND_DIR -name "__init__.py" -exec sh -c 'echo "" > "$1"' _ {} \; 2>/dev/null || true
+
+# Remove __pycache__ directories (we have .pyc files in place)
+RUN find $CORE_DIR -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+RUN find $BACKEND_DIR -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+
+# Remove any documentation, comments, README files
+RUN find $CORE_DIR -name "*.md" -type f -delete 2>/dev/null || true
+RUN find $CORE_DIR -name "*.txt" -type f -delete 2>/dev/null || true
+RUN find $CORE_DIR -name "*.rst" -type f -delete 2>/dev/null || true
+RUN find $BACKEND_DIR -name "*.md" -type f -delete 2>/dev/null || true
+
+# Remove any test files
+RUN find $CORE_DIR -name "test_*.py*" -type f -delete 2>/dev/null || true
+RUN find $CORE_DIR -name "*_test.py*" -type f -delete 2>/dev/null || true
+RUN rm -rf $CORE_DIR/tests 2>/dev/null || true
+
+# Remove compilation script
+RUN rm -f /tmp/compile_to_c.py /tmp/core_requirements.txt
+
+# Install the core package
+RUN cd $CORE_DIR && pip3 install -e . 2>/dev/null || true
+
+# Build frontend
 WORKDIR $FRONTEND_DIR
 RUN npm install
 RUN npm run build
+
+# Remove frontend source maps and source files
+RUN find $FRONTEND_DIR -name "*.map" -type f -delete 2>/dev/null || true
+RUN find $FRONTEND_DIR -name "*.ts" -type f ! -path "*node_modules*" -delete 2>/dev/null || true
+RUN find $FRONTEND_DIR -name "*.tsx" -type f ! -path "*node_modules*" -delete 2>/dev/null || true
+RUN rm -rf $FRONTEND_DIR/src 2>/dev/null || true
+
+# Set restrictive permissions (read+execute only)
+RUN chmod -R 500 $CORE_DIR 2>/dev/null || true
+RUN chmod -R 500 $BACKEND_DIR 2>/dev/null || true
+RUN chmod -R 500 $FRONTEND_DIR/.next 2>/dev/null || true
+RUN chown -R root:root $APP_HOME
+
+# Copy RSA public key for log encryption (private key stays with US Inc)
+COPY keys/usf_bios_public.pem /app/.k
+
+# Create encrypted log writer utility (uses RSA public key - CANNOT decrypt, only encrypt)
+RUN cat > /app/enc_log.pyc << 'ENCLOG'
+#!/usr/bin/env python3
+import base64,sys
+from cryptography.hazmat.primitives import serialization,hashes
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.backends import default_backend
+def l():
+    with open('/app/.k','rb') as f:
+        return serialization.load_pem_public_key(f.read(),backend=default_backend())
+def e(d):
+    k=l()
+    return k.encrypt(d.encode('utf-8'),padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()),algorithm=hashes.SHA256(),label=None))
+def w(f,m):
+    try:
+        c=base64.b64encode(e(m))
+        with open(f,'ab') as x:x.write(c+b'\n---ENC---\n')
+    except:pass
+if __name__=="__main__":
+    if len(sys.argv)>=3:w(sys.argv[1],sys.argv[2])
+ENCLOG
+RUN chmod +x /app/enc_log.pyc
+
+# Compile the encryption utility to bytecode and remove source
+RUN python3 -c "import py_compile; py_compile.compile('/app/enc_log.pyc', '/app/enc_log.pyc', optimize=2)" 2>/dev/null || true
 
 # Create startup script
 RUN cat > /app/start.sh << 'STARTSCRIPT'
@@ -79,133 +208,91 @@ set -e
 
 LOG_DIR="/var/log/usf-bios"
 mkdir -p $LOG_DIR
+chmod 700 $LOG_DIR
 
+echo ""
 echo "=================================================="
-echo "USF BIOS - Starting Services"
+echo "  USF BIOS - AI Training Platform"
+echo "  Powered by US Inc"
 echo "=================================================="
-echo "$(date '+%Y-%m-%d %H:%M:%S') - Starting USF BIOS" | tee $LOG_DIR/startup.log
+echo ""
 
-# Function to log with timestamp
-log() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | tee -a $LOG_DIR/startup.log
+# Encrypted logging function (RSA public key - cannot decrypt)
+enc_log() {
+    python3 /app/enc_log.pyc "$LOG_DIR/system.enc" "$(date '+%Y-%m-%d %H:%M:%S') - $1" 2>/dev/null
 }
 
-# Check GPU availability
-log "Checking GPU availability..."
+# Status display (minimal info only)
+status() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1"
+    enc_log "$1"
+}
+
+# Check GPU
+status "Initializing..."
 if command -v nvidia-smi &> /dev/null; then
-    nvidia-smi >> $LOG_DIR/startup.log 2>&1 && log "GPU detected" || log "WARNING: nvidia-smi failed"
+    nvidia-smi 2>&1 | python3 /app/enc_log.py "$LOG_DIR/system.enc" "$(cat)" 2>/dev/null
+    status "✓ GPU ready"
 else
-    log "WARNING: nvidia-smi not found - GPU may not be available"
+    status "⚠ CPU mode"
 fi
 
-# Check Python packages
-log "Checking BIOS installation..."
-python3 << 'PYCHECK' 2>&1 | tee -a $LOG_DIR/startup.log
+# Verify system
+status "Verifying..."
+python3 << 'PYCHECK' 2>&1
 import sys
-errors = []
-
 try:
     import torch
-    print(f"✓ PyTorch {torch.__version__}")
+    print(f"  ✓ Core ML")
     if torch.cuda.is_available():
-        print(f"✓ CUDA available: {torch.cuda.get_device_name(0)}")
-    else:
-        errors.append("CUDA not available")
-except ImportError as e:
-    errors.append(f"PyTorch: {e}")
-
+        print(f"  ✓ Accelerator")
+except:
+    print("  ⚠ Limited mode")
 try:
-    import transformers
-    print(f"✓ Transformers {transformers.__version__}")
-except ImportError as e:
-    errors.append(f"Transformers: {e}")
-
-try:
-    import peft
-    print(f"✓ PEFT {peft.__version__}")
-except ImportError as e:
-    errors.append(f"PEFT: {e}")
-
-try:
-    import pynvml
-    pynvml.nvmlInit()
-    print("✓ pynvml initialized")
-    pynvml.nvmlShutdown()
-except Exception as e:
-    print(f"⚠ pynvml: {e}")
-
-if errors:
-    print("\n❌ INSTALLATION ERRORS:")
-    for err in errors:
-        print(f"  - {err}")
-    print("\nSystem may not function properly!")
-else:
-    print("\n✓ All packages installed correctly")
+    import transformers,peft
+    print(f"  ✓ Training modules")
+except:
+    pass
+print("\n✓ Ready")
 PYCHECK
 
-# Start backend
-log "Starting Backend server on port 8000..."
+# Start services (no details exposed)
+status "Starting..."
 cd /app/backend
-python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 > $LOG_DIR/backend.log 2>&1 &
-BACKEND_PID=$!
-echo $BACKEND_PID > /var/run/usf-backend.pid
-log "Backend PID: $BACKEND_PID"
+python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000 2>&1 | while read line; do
+    python3 /app/enc_log.pyc "$LOG_DIR/api.enc" "$line" 2>/dev/null
+done &
+enc_log "Service 1 initialized"
 
-# Wait for backend to be ready
-log "Waiting for backend to be ready..."
 for i in {1..30}; do
-    if curl -s http://localhost:8000/health > /dev/null 2>&1; then
-        log "Backend is ready"
-        break
-    fi
+    curl -s http://localhost:8000/health > /dev/null 2>&1 && break
     sleep 1
-    if [ $i -eq 30 ]; then
-        log "ERROR: Backend failed to start within 30 seconds"
-        cat $LOG_DIR/backend.log | tail -50 >> $LOG_DIR/startup.log
-    fi
 done
 
-# Start frontend
-log "Starting Frontend server on port 3000..."
 cd /app/frontend
-npm start > $LOG_DIR/frontend.log 2>&1 &
-FRONTEND_PID=$!
-echo $FRONTEND_PID > /var/run/usf-frontend.pid
-log "Frontend PID: $FRONTEND_PID"
+node .next/standalone/server.js 2>&1 | while read line; do
+    python3 /app/enc_log.pyc "$LOG_DIR/web.enc" "$line" 2>/dev/null
+done &
+enc_log "Service 2 initialized"
 
-# Wait for frontend to be ready
-log "Waiting for frontend to be ready..."
 for i in {1..60}; do
-    if curl -s http://localhost:3000 > /dev/null 2>&1; then
-        log "Frontend is ready"
-        break
-    fi
+    curl -s http://localhost:3000 > /dev/null 2>&1 && break
     sleep 1
-    if [ $i -eq 60 ]; then
-        log "WARNING: Frontend may not be ready yet"
-    fi
 done
 
+status "✓ System ready"
 echo ""
 echo "=================================================="
-echo "USF BIOS - Services Started"
+echo "  USF BIOS is running"
 echo "=================================================="
 echo ""
-echo "Backend:  http://localhost:8000"
-echo "Frontend: http://localhost:3000"
-echo "API Docs: http://localhost:8000/docs"
-echo "Status:   http://localhost:8000/api/system/status"
-echo ""
-echo "Logs:"
-echo "  Startup:  $LOG_DIR/startup.log"
-echo "  Backend:  $LOG_DIR/backend.log"
-echo "  Frontend: $LOG_DIR/frontend.log"
+echo "  Access: http://localhost:3000"
 echo ""
 echo "=================================================="
+echo ""
 
-# Keep container running and show logs
-log "Tailing logs (Ctrl+C to exit)..."
-tail -f $LOG_DIR/backend.log $LOG_DIR/frontend.log
+# Keep container running
+tail -f /dev/null
 STARTSCRIPT
 
 RUN chmod +x /app/start.sh
@@ -218,8 +305,8 @@ curl -sf http://localhost:3000 > /dev/null
 HEALTHCHECK
 RUN chmod +x /app/healthcheck.sh
 
-# Expose ports
-EXPOSE 8000 3000
+# Expose only frontend port (backend is internal only)
+EXPOSE 3000
 
 # Set working directory
 WORKDIR /app

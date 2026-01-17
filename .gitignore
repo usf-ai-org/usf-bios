@@ -229,3 +229,8 @@ __pycache__/
 *.safetensors
 checkpoints/
 models/
+
+# Security keys - NEVER commit private keys
+keys/*_private.pem
+tools/decrypt_logs.py
+tools/generate_keys.py
