@@ -33,8 +33,13 @@ def get_py_files(directory):
     return py_files
 
 
-def compile_directory(source_dir):
-    """Compile all Python files in directory to .so"""
+def compile_directory(source_dir, compile_from=None):
+    """Compile all Python files in directory to .so
+    
+    Args:
+        source_dir: Directory containing Python files to compile
+        compile_from: Directory to run compilation from (default: parent of source_dir)
+    """
     py_files = get_py_files(source_dir)
     if not py_files:
         print(f"No Python files to compile in {source_dir}")
@@ -42,12 +47,15 @@ def compile_directory(source_dir):
     
     print(f"Compiling {len(py_files)} files in {source_dir}...")
     
-    # Change to source directory for proper .so file placement
-    original_dir = os.getcwd()
-    os.chdir(source_dir)
+    # Determine compilation directory (parent of package for proper module paths)
+    if compile_from is None:
+        compile_from = os.path.dirname(source_dir)
     
-    # Convert absolute paths to relative paths from source_dir
-    rel_py_files = [os.path.relpath(f, source_dir) for f in py_files]
+    original_dir = os.getcwd()
+    os.chdir(compile_from)
+    
+    # Convert absolute paths to relative paths from compile_from
+    rel_py_files = [os.path.relpath(f, compile_from) for f in py_files]
     
     # Compile with Cython - maximum security settings
     try:
@@ -173,12 +181,14 @@ if __name__ == '__main__':
     print("=" * 60)
     
     # Step 1: Compile USF BIOS core library (training engine)
+    # Run from /compile so usf_bios package structure is preserved
     print("\n[1/4] Compiling USF BIOS core library...")
-    compile_directory('/compile/usf_bios')
+    compile_directory('/compile/usf_bios', compile_from='/compile')
     
     # Step 2: Compile Web backend (API server)
+    # Run from /compile/web/backend so app package structure is preserved
     print("\n[2/4] Compiling Web backend...")
-    compile_directory('/compile/web/backend')
+    compile_directory('/compile/web/backend', compile_from='/compile/web/backend')
     
     # Step 3: Minimize __init__.py files
     print("\n[3/4] Minimizing __init__.py files...")
