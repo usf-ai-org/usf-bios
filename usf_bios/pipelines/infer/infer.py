@@ -9,7 +9,7 @@ from usf_bios.arguments import InferArguments
 from usf_bios.dataset import DatasetLoader, load_dataset, sample_dataset
 from usf_bios.infer_engine import AdapterRequest, InferRequest, RequestConfig, TransformersEngine
 from usf_bios.metrics import InferStats, MeanMetric, compute_rouge_bleu
-from usf_bios.utils import JsonlWriter, get_dist_setting, get_logger, is_dist, is_master, read_from_jsonl
+from usf_bios.utils import JsonlWriter, get_dist_setting, get_logger, is_debug_mode, is_dist, is_master, read_from_jsonl
 from ..base import USFPipeline
 from ..export import merge_lora
 from ..utils import get_cached_dataset, prepare_model_template

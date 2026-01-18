@@ -10,7 +10,7 @@ import torch.nn as nn
 from transformers.integrations import is_deepspeed_zero3_enabled
 from transformers.trainer_utils import set_seed
 
-from .logger import get_logger
+from .logger import get_logger, is_debug_mode
 from .utils import deep_getattr
 
 logger = get_logger()

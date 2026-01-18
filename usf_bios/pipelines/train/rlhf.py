@@ -13,7 +13,7 @@ from usf_bios.plugins import Tuner, extra_tuners
 from usf_bios.sequence_parallel import sequence_parallel
 from usf_bios.tuners import USF
 from usf_bios.utils import (HfConfigFactory, disable_deepspeed_zero3, get_logger, get_model_parameter_info,
-                         safe_snapshot_download)
+                         is_debug_mode, safe_snapshot_download)
 from ..utils import prepare_adapter
 from .kto import prepare_kto_dataset
 from .sft import USFSft
