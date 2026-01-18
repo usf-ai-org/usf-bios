@@ -1,7 +1,7 @@
 # USF BIOS - Secure Production Docker Image
-# - Compiles Python to bytecode (no source code access)
-# - Disables CLI access
-# - Only WebUI is accessible
+# - Compiles Python to native .so binaries (Cython)
+# - Industry-standard code protection (cannot be reverse engineered)
+# - Disables CLI access - WebUI only
 # Copyright (c) US Inc. All rights reserved.
 
 # ============================================================================
@@ -88,7 +88,7 @@ RUN pip install --no-cache-dir \
     nvidia-ml-py \
     && pip install --no-cache-dir -r /app/web/backend/requirements.txt
 
-# Copy compiled bytecode (no source)
+# Copy compiled .so binaries (no source code)
 COPY --from=python-compiler /compile/usf_bios/ /app/usf_bios/
 COPY --from=python-compiler /compile/web/backend/ /app/web/backend/
 

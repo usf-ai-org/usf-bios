@@ -1,0 +1,100 @@
+# USF BIOS - Docker Ignore File
+# Exclude files not needed in Docker build
+
+# Version Control
+.git
+.gitignore
+.gitattributes
+
+# Virtual Environments
+venv/
+env/
+.venv/
+.env/
+**/venv/
+**/env/
+**/.venv/
+**/.env/
+
+# Python Cache
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Node.js
+node_modules/
+**/node_modules/
+npm-debug.log
+yarn-error.log
+.npm
+.yarn
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Documentation
+docs/
+*.md
+!README.md
+LICENSE
+
+# Local Development
+.env.local
+.env.development
+.env.test
+*.local
+
+# Logs
+logs/
+*.log
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+!Dockerfile.secure
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+Jenkinsfile
+
+# Scripts not needed in production
+scripts/
+!scripts/compile_to_so.py

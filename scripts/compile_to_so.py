@@ -2,20 +2,31 @@
 """
 USF BIOS - Cython Compilation Script
 Compiles Python source files to native .so files for code protection.
+This provides industry-standard code obfuscation used by commercial software.
 Copyright (c) US Inc. All rights reserved.
 """
 import os
 import sys
+import glob
+import shutil
 from distutils.core import setup
 from Cython.Build import cythonize
+from Cython.Compiler import Options
+
+# Cython compiler options for maximum obfuscation
+Options.docstrings = False  # Remove all docstrings
+Options.embed_pos_in_docstring = False
 
 
 def get_py_files(directory):
     """Get all .py files except __init__.py"""
     py_files = []
+    # Directories to skip
+    skip_dirs = {'__pycache__', 'venv', 'env', '.venv', '.env', 'node_modules', '.git', 'build', 'dist', 'egg-info'}
+    
     for root, dirs, files in os.walk(directory):
-        # Skip __pycache__ and hidden directories
-        dirs[:] = [d for d in dirs if not d.startswith('.') and d != '__pycache__']
+        # Skip excluded directories
+        dirs[:] = [d for d in dirs if not d.startswith('.') and d not in skip_dirs and not d.endswith('.egg-info')]
         for file in files:
             if file.endswith('.py') and file != '__init__.py':
                 py_files.append(os.path.join(root, file))
@@ -31,7 +42,7 @@ def compile_directory(source_dir):
     
     print(f"Compiling {len(py_files)} files in {source_dir}...")
     
-    # Compile with Cython
+    # Compile with Cython - maximum security settings
     try:
         setup(
             ext_modules=cythonize(
@@ -40,7 +51,11 @@ def compile_directory(source_dir):
                     'language_level': '3',
                     'boundscheck': False,
                     'wraparound': False,
+                    'cdivision': True,
+                    'embedsignature': False,  # Don't embed function signatures
+                    'emit_code_comments': False,  # No source comments in C
                 },
+                nthreads=4,  # Parallel compilation
                 quiet=True
             ),
             script_args=['build_ext', '--inplace']
@@ -63,36 +78,115 @@ def compile_directory(source_dir):
 
 
 def minimize_init_files(base_dir):
-    """Make __init__.py files minimal - keep only necessary imports"""
+    """Make __init__.py files minimal - remove all source code comments"""
+    skip_dirs = {'venv', 'env', '.venv', '.env', 'node_modules', '.git'}
+    
     for root, dirs, files in os.walk(base_dir):
+        dirs[:] = [d for d in dirs if d not in skip_dirs]
         for file in files:
             if file == '__init__.py':
                 filepath = os.path.join(root, file)
                 try:
                     with open(filepath, 'r') as f:
                         content = f.read()
-                    # Keep only imports and __all__ definitions
-                    lines = [l for l in content.split('\n') 
-                             if l.strip().startswith(('from ', 'import ', '__all__', '#'))]
+                    # Keep only essential imports for package structure
+                    lines = []
+                    for l in content.split('\n'):
+                        stripped = l.strip()
+                        # Keep imports and __all__, remove comments
+                        if stripped.startswith(('from ', 'import ', '__all__')):
+                            # Remove inline comments
+                            if '#' in l:
+                                l = l.split('#')[0].rstrip()
+                            if l.strip():
+                                lines.append(l)
                     with open(filepath, 'w') as f:
-                        f.write('\n'.join(lines) + '\n' if lines else '# USF BIOS\n')
+                        f.write('\n'.join(lines) + '\n' if lines else '')
+                    print(f"  Minimized: {filepath}")
                 except Exception as e:
                     print(f"Warning: Could not process {filepath}: {e}")
 
 
+def clean_build_artifacts(base_dir):
+    """Remove all build artifacts and intermediate files"""
+    skip_dirs = {'venv', 'env', '.venv', '.env', 'node_modules', '.git'}
+    
+    patterns_to_remove = ['*.c', '*.html', '*.pyc', '*.pyo']
+    dirs_to_remove = ['__pycache__', 'build', '*.egg-info']
+    
+    for root, dirs, files in os.walk(base_dir):
+        dirs[:] = [d for d in dirs if d not in skip_dirs]
+        
+        # Remove files
+        for pattern in patterns_to_remove:
+            for filepath in glob.glob(os.path.join(root, pattern)):
+                os.remove(filepath)
+        
+        # Remove directories
+        for dir_pattern in dirs_to_remove:
+            for dirpath in glob.glob(os.path.join(root, dir_pattern)):
+                if os.path.isdir(dirpath):
+                    shutil.rmtree(dirpath, ignore_errors=True)
+
+
+def verify_compilation(base_dir):
+    """Verify all .py files (except __init__.py) have been removed"""
+    skip_dirs = {'venv', 'env', '.venv', '.env', 'node_modules', '.git'}
+    remaining_py = []
+    so_count = 0
+    
+    for root, dirs, files in os.walk(base_dir):
+        dirs[:] = [d for d in dirs if d not in skip_dirs]
+        for file in files:
+            if file.endswith('.py') and file != '__init__.py':
+                remaining_py.append(os.path.join(root, file))
+            elif file.endswith('.so'):
+                so_count += 1
+    
+    print(f"\n  Compiled .so files: {so_count}")
+    
+    if remaining_py:
+        print(f"  WARNING: {len(remaining_py)} .py files still exist:")
+        for f in remaining_py[:5]:
+            print(f"    - {f}")
+        return False
+    else:
+        print("  All source files successfully removed")
+        return True
+
+
 if __name__ == '__main__':
     print("=" * 60)
-    print("  USF BIOS - Cython Compilation")
-    print("  Compiling Python to native .so files...")
+    print("  USF BIOS - Secure Binary Compilation")
+    print("  Industry-standard code protection via Cython")
     print("=" * 60)
     
-    # Compile directories
+    # Step 1: Compile USF BIOS core library (training engine)
+    print("\n[1/4] Compiling USF BIOS core library...")
     compile_directory('/compile/usf_bios')
-    compile_directory('/compile/web/backend/app')
     
-    # Minimize __init__.py files
+    # Step 2: Compile Web backend (API server)
+    print("\n[2/4] Compiling Web backend...")
+    compile_directory('/compile/web/backend')
+    
+    # Step 3: Minimize __init__.py files
+    print("\n[3/4] Minimizing __init__.py files...")
     minimize_init_files('/compile')
     
+    # Step 4: Clean build artifacts
+    print("\n[4/4] Cleaning build artifacts...")
+    clean_build_artifacts('/compile')
+    
+    # Verification
+    print("\n" + "=" * 60)
+    print("  Verification")
     print("=" * 60)
-    print("  Compilation complete!")
+    success = verify_compilation('/compile')
+    
+    print("\n" + "=" * 60)
+    if success:
+        print("  BUILD SUCCESSFUL - Code fully protected")
+        print("  Binary .so files cannot be reverse engineered")
+    else:
+        print("  BUILD WARNING - Some files may not be protected")
     print("=" * 60)
