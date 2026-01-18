@@ -16,22 +16,33 @@ COPY web/frontend/ ./
 RUN npm run build
 
 # ============================================================================
-# Stage 2: Python Compiler - Compile to bytecode
+# Stage 2: Python Compiler - Compile to native .so files using Cython
 # ============================================================================
 FROM python:3.11-slim AS python-compiler
 
 WORKDIR /compile
 
-# Install compilation tools (py_compile is built-in)
-RUN pip install --no-cache-dir nuitka cython
+# Install build tools and Cython
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy Python source
+RUN pip install --no-cache-dir cython
+
+# Copy Python source and compilation script
 COPY usf_bios/ /compile/usf_bios/
 COPY web/backend/ /compile/web/backend/
-COPY setup.py setup.cfg /compile/
+COPY scripts/compile_to_so.py /compile/compile_to_so.py
 
-# Compile all Python files to bytecode (keep source for import system)
-RUN python -m compileall -f /compile/usf_bios /compile/web/backend
+# Run the Cython compilation (converts .py to native .so files)
+RUN python /compile/compile_to_so.py
+
+# Clean up build artifacts
+RUN find /compile -name "*.pyc" -delete && \
+    find /compile -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true && \
+    find /compile -name "build" -type d -exec rm -rf {} + 2>/dev/null || true && \
+    rm -f /compile/compile_to_so.py
 
 # ============================================================================
 # Stage 3: Production Image (Secure)
