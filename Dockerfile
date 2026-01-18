@@ -138,16 +138,63 @@ RUN find $BACKEND_DIR -name "__init__.py" -exec sh -c 'echo "" > "$1"' _ {} \; 2
 RUN find $CORE_DIR -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 RUN find $BACKEND_DIR -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 
-# Remove any documentation, comments, README files
-RUN find $CORE_DIR -name "*.md" -type f -delete 2>/dev/null || true
-RUN find $CORE_DIR -name "*.txt" -type f -delete 2>/dev/null || true
-RUN find $CORE_DIR -name "*.rst" -type f -delete 2>/dev/null || true
-RUN find $BACKEND_DIR -name "*.md" -type f -delete 2>/dev/null || true
+# ============================================
+# COMPREHENSIVE CLEANUP - DELETE ALL DOCS & COMMENTS
+# ============================================
 
-# Remove any test files
-RUN find $CORE_DIR -name "test_*.py*" -type f -delete 2>/dev/null || true
-RUN find $CORE_DIR -name "*_test.py*" -type f -delete 2>/dev/null || true
-RUN rm -rf $CORE_DIR/tests 2>/dev/null || true
+# Delete ALL documentation formats from CORE
+RUN find $CORE_DIR -type f \( \
+    -name "*.md" -o -name "*.txt" -o -name "*.rst" -o \
+    -name "*.doc" -o -name "*.docx" -o -name "*.pdf" -o \
+    -name "*.html" -o -name "*.htm" -o -name "*.xml" -o \
+    -name "*.json" -o -name "*.yaml" -o -name "*.yml" -o \
+    -name "*.ini" -o -name "*.cfg" -o -name "*.conf" -o \
+    -name "README*" -o -name "CHANGELOG*" -o -name "LICENSE*" -o \
+    -name "CONTRIBUTING*" -o -name "AUTHORS*" -o -name "HISTORY*" -o \
+    -name "TODO*" -o -name "NOTICE*" -o -name "*.sample" \
+    \) -delete 2>/dev/null || true
+
+# Delete ALL documentation formats from BACKEND
+RUN find $BACKEND_DIR -type f \( \
+    -name "*.md" -o -name "*.txt" -o -name "*.rst" -o \
+    -name "*.doc" -o -name "*.docx" -o -name "*.pdf" -o \
+    -name "*.html" -o -name "*.htm" -o -name "*.xml" -o \
+    -name "README*" -o -name "CHANGELOG*" -o -name "LICENSE*" -o \
+    -name "CONTRIBUTING*" -o -name "AUTHORS*" \
+    \) -delete 2>/dev/null || true
+
+# Delete ALL test files and directories
+RUN find $CORE_DIR -type f \( -name "test_*.py*" -o -name "*_test.py*" -o -name "tests.py*" \) -delete 2>/dev/null || true
+RUN find $BACKEND_DIR -type f \( -name "test_*.py*" -o -name "*_test.py*" -o -name "tests.py*" \) -delete 2>/dev/null || true
+RUN rm -rf $CORE_DIR/tests $CORE_DIR/test $BACKEND_DIR/tests $BACKEND_DIR/test 2>/dev/null || true
+
+# Delete example and sample files
+RUN find $CORE_DIR -type f \( -name "example*.py*" -o -name "*example.py*" -o -name "sample*.py*" \) -delete 2>/dev/null || true
+RUN find $CORE_DIR -type d \( -name "examples" -o -name "samples" -o -name "docs" -o -name "doc" \) -exec rm -rf {} + 2>/dev/null || true
+
+# Strip comments and docstrings from Python bytecode (compile with optimization level 2)
+# Level 2 removes docstrings and asserts
+RUN python3 -c "
+import py_compile
+import os
+import sys
+
+def strip_and_compile(directory):
+    for root, dirs, files in os.walk(directory):
+        dirs[:] = [d for d in dirs if d != '__pycache__']
+        for f in files:
+            if f.endswith('.pyc'):
+                filepath = os.path.join(root, f)
+                try:
+                    # Recompile with maximum optimization (strips docstrings)
+                    py_compile.compile(filepath.replace('.pyc', '.py') if os.path.exists(filepath.replace('.pyc', '.py')) else filepath, 
+                                      cfile=filepath, optimize=2, doraise=False)
+                except:
+                    pass
+
+strip_and_compile('$CORE_DIR')
+strip_and_compile('$BACKEND_DIR')
+" 2>/dev/null || true
 
 # Remove compilation script
 RUN rm -f /tmp/compile_to_c.py /tmp/core_requirements.txt
@@ -159,6 +206,11 @@ RUN cd $CORE_DIR && pip3 install -e . 2>/dev/null || true
 WORKDIR $FRONTEND_DIR
 RUN npm install
 RUN npm run build
+
+# CRITICAL: Copy static files for Next.js standalone mode
+# Standalone doesn't include static assets by default
+RUN cp -r .next/static .next/standalone/.next/static
+RUN cp -r public .next/standalone/public 2>/dev/null || mkdir -p .next/standalone/public
 
 # Remove frontend source maps and source files
 RUN find $FRONTEND_DIR -name "*.map" -type f -delete 2>/dev/null || true

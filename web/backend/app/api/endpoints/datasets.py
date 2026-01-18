@@ -77,7 +77,7 @@ async def validate_dataset(dataset_path: str = Query(..., description="Path to d
     except Exception as e:
         return DatasetValidation(
             valid=False,
-            errors=[f"Error validating dataset: {str(e)}"]
+            errors=["Failed to validate dataset"]
         )
 
 
@@ -143,7 +143,7 @@ async def _validate_jsonl(path: Path) -> DatasetValidation:
         return DatasetValidation(
             valid=False,
             format_detected="jsonl",
-            errors=[str(e)]
+            errors=["Failed to read JSONL file"]
         )
 
 
@@ -177,7 +177,7 @@ async def _validate_json(path: Path) -> DatasetValidation:
         return DatasetValidation(
             valid=False,
             format_detected="json",
-            errors=[str(e)]
+            errors=["Failed to read JSON file"]
         )
 
 
@@ -211,7 +211,7 @@ async def _validate_csv(path: Path) -> DatasetValidation:
         return DatasetValidation(
             valid=False,
             format_detected="csv",
-            errors=[str(e)]
+            errors=["Failed to read CSV file"]
         )
 
 
@@ -307,7 +307,7 @@ async def upload_dataset(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to upload dataset")
 
 
 @router.get("/list")
@@ -358,20 +358,41 @@ async def list_datasets():
         
         return {"datasets": datasets, "total": len(datasets)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to list datasets")
+
+
+@router.get("/delete-info/{dataset_id}")
+async def get_dataset_delete_info(dataset_id: str):
+    """Get information needed for delete confirmation (returns dataset name)"""
+    # Check uploaded datasets
+    dataset_path = settings.UPLOAD_DIR / dataset_id
+    if dataset_path.exists() and dataset_path.is_file():
+        dataset_name = dataset_path.stem  # Name without extension
+        return {
+            "dataset_id": dataset_id,
+            "dataset_name": dataset_name,
+            "source": "upload",
+            "confirm_text": dataset_name  # User must type this to confirm deletion
+        }
+    
+    # Check registered datasets
+    if dataset_id in _dataset_registry:
+        ds = _dataset_registry[dataset_id]
+        dataset_name = ds.get("name", dataset_id)
+        return {
+            "dataset_id": dataset_id,
+            "dataset_name": dataset_name,
+            "source": ds.get("source", "unknown"),
+            "confirm_text": dataset_name  # User must type this to confirm deletion
+        }
+    
+    raise HTTPException(status_code=404, detail=f"Dataset '{dataset_id}' not found")
 
 
 @router.delete("/delete/{dataset_id}")
-async def delete_dataset(dataset_id: str, confirm: str = Query(..., description="Type 'delete' to confirm")):
-    """Delete an uploaded dataset (requires typing 'delete' to confirm)"""
+async def delete_dataset(dataset_id: str, confirm: str = Query(..., description="Type the dataset NAME to confirm")):
+    """Delete an uploaded dataset (requires typing the dataset name to confirm)"""
     try:
-        # Validate confirmation
-        if confirm.lower() != "delete":
-            raise HTTPException(
-                status_code=400, 
-                detail="Deletion not confirmed. You must type 'delete' to confirm."
-            )
-        
         # Find the dataset
         dataset_path = settings.UPLOAD_DIR / dataset_id
         
@@ -380,6 +401,16 @@ async def delete_dataset(dataset_id: str, confirm: str = Query(..., description=
         
         if not dataset_path.is_file():
             raise HTTPException(status_code=400, detail="Invalid dataset path")
+        
+        # Get the dataset name for confirmation
+        dataset_name = dataset_path.stem  # Name without extension
+        
+        # Validate confirmation matches the dataset name
+        if confirm != dataset_name:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Confirmation failed. You must type '{dataset_name}' to delete this dataset."
+            )
         
         # Verify it's in the upload directory (security check)
         try:
@@ -392,14 +423,15 @@ async def delete_dataset(dataset_id: str, confirm: str = Query(..., description=
         
         return {
             "success": True,
-            "message": f"Dataset '{dataset_id}' deleted successfully",
-            "deleted_id": dataset_id
+            "message": f"Dataset '{dataset_name}' deleted successfully",
+            "deleted_id": dataset_id,
+            "deleted_name": dataset_name
         }
     
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to delete dataset")
 
 
 def _format_size(size_bytes: int) -> str:
@@ -467,7 +499,7 @@ async def register_dataset(registration: DatasetRegistration):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to register dataset")
 
 
 @router.get("/list-all")
@@ -522,32 +554,46 @@ async def list_all_datasets():
         return {"datasets": all_datasets, "total": len(all_datasets)}
     
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to list datasets")
 
 
 @router.delete("/unregister/{dataset_id}")
-async def unregister_dataset(dataset_id: str, confirm: str = Query(..., description="Type 'delete' to confirm")):
-    """Unregister a dataset (for HF/MS/local_path datasets)"""
+async def unregister_dataset(dataset_id: str, confirm: str = Query(..., description="Type the dataset NAME to confirm")):
+    """Unregister a dataset (for HF/MS/local_path datasets). User must type the dataset name to confirm."""
     try:
-        if confirm.lower() != "delete":
-            raise HTTPException(status_code=400, detail="Type 'delete' to confirm")
+        dataset_name = None
         
         # Check if it's an uploaded file
         if dataset_id.startswith("upload_"):
             filename = dataset_id[7:]  # Remove "upload_" prefix
             file_path = settings.UPLOAD_DIR / filename
             if file_path.exists():
+                dataset_name = file_path.stem
+                # Validate confirmation matches the dataset name
+                if confirm != dataset_name:
+                    raise HTTPException(
+                        status_code=400, 
+                        detail=f"Confirmation failed. You must type '{dataset_name}' to delete this dataset."
+                    )
                 file_path.unlink()
-                return {"success": True, "message": f"Deleted uploaded file: {filename}"}
+                return {"success": True, "message": f"Deleted uploaded file: {filename}", "deleted_name": dataset_name}
         
         # Check registry
         if dataset_id in _dataset_registry:
+            ds = _dataset_registry[dataset_id]
+            dataset_name = ds.get("name", dataset_id)
+            # Validate confirmation matches the dataset name
+            if confirm != dataset_name:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Confirmation failed. You must type '{dataset_name}' to delete this dataset."
+                )
             del _dataset_registry[dataset_id]
-            return {"success": True, "message": f"Unregistered dataset: {dataset_id}"}
+            return {"success": True, "message": f"Unregistered dataset: {dataset_name}", "deleted_name": dataset_name}
         
         raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
     
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to unregister dataset")

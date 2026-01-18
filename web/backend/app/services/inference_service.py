@@ -19,6 +19,8 @@ from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field
 
+from .sanitized_log_service import sanitized_log_service
+
 # Add the project root to path for usf_bios imports
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -144,9 +146,11 @@ class InferenceService:
                 }
             
             except Exception as e:
+                # Sanitize error for user
+                sanitized = sanitized_log_service.sanitize_error(str(e))
                 return {
                     "success": False,
-                    "error": str(e)
+                    "error": sanitized['user_message']
                 }
     
     async def load_model(self, model_path: str, adapter_path: Optional[str] = None) -> Dict[str, Any]:
@@ -217,9 +221,11 @@ class InferenceService:
                 if TORCH_AVAILABLE and torch.cuda.is_available():
                     torch.cuda.empty_cache()
                 
+                # Sanitize error for user
+                sanitized = sanitized_log_service.sanitize_error(str(e))
                 return {
                     "success": False,
-                    "error": str(e)
+                    "error": sanitized['user_message']
                 }
     
     async def generate(self, request: InferenceRequest) -> InferenceResponse:
@@ -292,18 +298,20 @@ class InferenceService:
             )
         
         except Exception as e:
-            error_msg = str(e)
+            full_error = str(e)
             
             # Handle OOM gracefully
-            if "OutOfMemoryError" in error_msg or "CUDA out of memory" in error_msg:
+            if "OutOfMemoryError" in full_error or "CUDA out of memory" in full_error:
                 gc.collect()
                 if TORCH_AVAILABLE and torch.cuda.is_available():
                     torch.cuda.empty_cache()
-                error_msg = "GPU out of memory. Try reducing max_new_tokens or clearing memory first."
+            
+            # Sanitize error for user
+            sanitized = sanitized_log_service.sanitize_error(full_error)
             
             return InferenceResponse(
                 success=False,
-                error=error_msg
+                error=sanitized['user_message']
             )
 
 

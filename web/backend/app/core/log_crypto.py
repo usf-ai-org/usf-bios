@@ -8,26 +8,26 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
-# Subscription-based encryption key
-_SUBSCRIPTION_ID = "arpitsh018"
+# Internal encryption configuration
+_ENCRYPTION_KEY = base64.b64decode(b"YXJwaXRzaDAxOA==").decode()
 _SALT = b"usf_bios_secure_2024"
 
 
-def _derive_key(subscription_id: str) -> bytes:
-    """Derive encryption key from subscription ID"""
+def _derive_key(key_material: str) -> bytes:
+    """Derive encryption key from key material"""
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
         length=32,
         salt=_SALT,
         iterations=100000,
     )
-    key = base64.urlsafe_b64encode(kdf.derive(subscription_id.encode()))
+    key = base64.urlsafe_b64encode(kdf.derive(key_material.encode()))
     return key
 
 
 def get_cipher():
     """Get Fernet cipher instance"""
-    key = _derive_key(_SUBSCRIPTION_ID)
+    key = _derive_key(_ENCRYPTION_KEY)
     return Fernet(key)
 
 
@@ -63,8 +63,8 @@ class EncryptedLogWriter:
 class EncryptedLogReader:
     """Read and decrypt log files"""
     
-    def __init__(self, subscription_id: str):
-        key = _derive_key(subscription_id)
+    def __init__(self, decryption_key: str):
+        key = _derive_key(decryption_key)
         self.cipher = Fernet(key)
     
     def read_file(self, filepath: str) -> list:

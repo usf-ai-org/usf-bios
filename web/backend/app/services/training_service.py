@@ -13,6 +13,8 @@ from ..core.config import settings
 from ..models.schemas import JobInfo, JobStatus, TrainingConfig
 from .job_manager import job_manager
 from .websocket_manager import ws_manager
+from .sanitized_log_service import sanitized_log_service
+from .encrypted_log_service import encrypted_log_service
 
 
 class TrainingService:
@@ -126,9 +128,12 @@ class TrainingService:
             cmd = self._build_command(job.config, job_id)
             cmd_str = " ".join(cmd)
             
-            await job_manager.add_log(job_id, f"Command: {cmd_str}")
-            await ws_manager.send_log(job_id, f"Starting training with command:")
-            await ws_manager.send_log(job_id, cmd_str, "command")
+            # Store full command in encrypted log only (for US Inc)
+            encrypted_log_service.encrypt_and_format(f"Command: {cmd_str}", job_id)
+            
+            # Terminal log shows safe summary only
+            sanitized_log_service.create_terminal_log(job_id, "Starting training...", "INFO")
+            await ws_manager.send_log(job_id, "Starting training...")
             
             # Create process
             process = await asyncio.create_subprocess_exec(
@@ -157,8 +162,14 @@ class TrainingService:
                 if not line_str:
                     continue
                 
-                # Store log
-                await job_manager.add_log(job_id, line_str)
+                # Store full log in encrypted log (for US Inc)
+                encrypted_log_service.encrypt_and_format(line_str, job_id)
+                
+                # Check if line is safe before storing
+                if sanitized_log_service.is_message_safe(line_str):
+                    await job_manager.add_log(job_id, line_str)
+                else:
+                    await job_manager.add_log(job_id, sanitized_log_service.get_safe_message(line_str))
                 
                 # Parse metrics
                 metrics = self._parse_log_line(line_str, job_id)
@@ -186,8 +197,13 @@ class TrainingService:
                 if update_fields:
                     await job_manager.update_job(job_id, **update_fields)
                 
-                # Send real-time updates
-                await ws_manager.send_log(job_id, line_str)
+                # Send SANITIZED real-time updates to user
+                safe_line = sanitized_log_service.get_safe_message(line_str)
+                await ws_manager.send_log(job_id, safe_line)
+                
+                # Log metrics to terminal log
+                if metrics:
+                    sanitized_log_service.log_training_metrics(job_id, metrics)
                 
                 if current_step > 0 and total_steps > 0:
                     await ws_manager.send_progress(
@@ -207,8 +223,9 @@ class TrainingService:
                 await ws_manager.send_status(job_id, "completed")
                 await ws_manager.send_log(job_id, "Training completed successfully!", "success")
                 
-                output_dir = str(settings.OUTPUT_DIR / job_id)
-                await ws_manager.send_log(job_id, f"Output saved to: {output_dir}", "success")
+                # Don't expose full path to user
+                await ws_manager.send_log(job_id, "Training completed! Output saved.", "success")
+                sanitized_log_service.log_session_end(job_id, "COMPLETED")
             else:
                 await job_manager.update_job(job_id,
                     status=JobStatus.FAILED,
@@ -221,15 +238,24 @@ class TrainingService:
             await job_manager.update_job(job_id, status=JobStatus.STOPPED)
             await ws_manager.send_status(job_id, "stopped")
             await ws_manager.send_log(job_id, "Training stopped by user", "warning")
+            sanitized_log_service.log_session_end(job_id, "CANCELLED")
         
         except Exception as e:
-            error_msg = str(e)
+            # Store full error in encrypted log (for US Inc)
+            full_error = str(e)
+            encrypted_log_service.encrypt_and_format(f"FULL ERROR: {full_error}", job_id)
+            
+            # Sanitize error for user
+            sanitized = sanitized_log_service.sanitize_error(full_error)
+            safe_error = sanitized['user_message']
+            
             await job_manager.update_job(job_id,
                 status=JobStatus.FAILED,
-                error=error_msg
+                error=safe_error  # Store sanitized error only
             )
-            await ws_manager.send_status(job_id, "failed", error_msg)
-            await ws_manager.send_log(job_id, f"Error: {error_msg}", "error")
+            await ws_manager.send_status(job_id, "failed", safe_error)
+            await ws_manager.send_log(job_id, f"Error: {safe_error}", "error")
+            sanitized_log_service.log_session_end(job_id, "FAILED", error_message=full_error)
     
     async def start_training(self, job_id: str) -> bool:
         """Start training in background"""

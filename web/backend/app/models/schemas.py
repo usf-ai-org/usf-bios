@@ -43,6 +43,9 @@ class Modality(str, Enum):
 
 class TrainingConfig(BaseModel):
     """Training configuration"""
+    # Training name (optional - auto-generated if not provided)
+    name: Optional[str] = Field(default=None, description="Custom training name (auto-generated if empty)")
+    
     # Model settings
     model_path: str = Field(..., description="Model path (HF, MS, or local)")
     model_source: ModelSource = ModelSource.HUGGINGFACE
@@ -93,6 +96,7 @@ class JobCreate(BaseModel):
 class JobInfo(BaseModel):
     """Job information"""
     job_id: str
+    name: str = Field(..., description="User-friendly training name")
     status: JobStatus
     config: TrainingConfig
     created_at: datetime

@@ -302,16 +302,20 @@ export default function DatasetConfig({ selectedPaths, onSelectionChange }: Prop
   }
 
   const confirmDelete = async () => {
-    if (!deleteTarget || deleteConfirm.toLowerCase() !== 'delete') return
+    if (!deleteTarget || deleteConfirm !== deleteTarget.name) return
     setIsDeleting(true)
     try {
-      const res = await fetch(`${API_URL}/api/datasets/unregister/${encodeURIComponent(deleteTarget.id)}?confirm=delete`, {
+      // Pass the dataset name as confirmation (not "delete")
+      const res = await fetch(`${API_URL}/api/datasets/unregister/${encodeURIComponent(deleteTarget.id)}?confirm=${encodeURIComponent(deleteTarget.name)}`, {
         method: 'DELETE'
       })
       if (res.ok) {
         await fetchDatasets()
         setDeleteTarget(null)
         setDeleteConfirm('')
+      } else {
+        const data = await res.json()
+        alert(data.detail || 'Delete failed')
       }
     } catch (e) {
       console.error('Delete failed:', e)
@@ -345,6 +349,15 @@ export default function DatasetConfig({ selectedPaths, onSelectionChange }: Prop
     }
   }
 
+  const getSourceLabel = (source: DatasetSource) => {
+    switch (source) {
+      case 'upload': return 'Uploaded'
+      case 'huggingface': return 'HuggingFace'
+      case 'modelscope': return 'ModelScope'
+      case 'local_path': return 'Local'
+    }
+  }
+
   return (
     <div className="space-y-5">
       {/* Delete Confirmation Modal */}
@@ -357,22 +370,27 @@ export default function DatasetConfig({ selectedPaths, onSelectionChange }: Prop
               </div>
               <div>
                 <h3 className="font-bold text-slate-900">Remove Dataset</h3>
-                <p className="text-sm text-slate-500">This will unregister the dataset</p>
+                <p className="text-sm text-slate-500">This action cannot be undone</p>
               </div>
             </div>
             <div className="bg-slate-50 rounded-lg p-3 mb-4">
               <p className="text-sm text-slate-700"><strong>{deleteTarget.name}</strong></p>
-              <p className="text-xs text-slate-500">{deleteTarget.source} • {deleteTarget.path}</p>
+              <p className="text-xs text-slate-500">{getSourceLabel(deleteTarget.source)} • {deleteTarget.path}</p>
             </div>
-            <p className="text-sm text-slate-600 mb-3">Type <strong className="text-red-600">delete</strong> to confirm:</p>
+            <p className="text-sm text-slate-600 mb-2">
+              To confirm deletion, type the dataset name:
+            </p>
+            <p className="text-sm font-mono bg-red-50 text-red-700 px-2 py-1 rounded mb-3 select-all">
+              {deleteTarget.name}
+            </p>
             <input type="text" value={deleteConfirm} onChange={(e) => setDeleteConfirm(e.target.value)}
-              placeholder="Type 'delete'" autoFocus
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg mb-4" />
+              placeholder={`Type "${deleteTarget.name}" to confirm`} autoFocus
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg mb-4 focus:ring-2 focus:ring-red-500 focus:border-red-500" />
             <div className="flex gap-2">
               <button onClick={() => { setDeleteTarget(null); setDeleteConfirm('') }}
-                className="flex-1 px-4 py-2 border border-slate-300 rounded-lg font-medium">Cancel</button>
-              <button onClick={confirmDelete} disabled={deleteConfirm.toLowerCase() !== 'delete' || isDeleting}
-                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg font-medium disabled:opacity-50 flex items-center justify-center gap-2">
+                className="flex-1 px-4 py-2 border border-slate-300 rounded-lg font-medium hover:bg-slate-50 transition-colors">Cancel</button>
+              <button onClick={confirmDelete} disabled={deleteConfirm !== deleteTarget.name || isDeleting}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-red-700 transition-colors flex items-center justify-center gap-2">
                 {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}Delete
               </button>
             </div>
@@ -417,12 +435,12 @@ export default function DatasetConfig({ selectedPaths, onSelectionChange }: Prop
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">File (.jsonl, .json, .csv) *</label>
               <input ref={fileInputRef} type="file" accept=".jsonl,.json,.csv" onChange={handleFileSelect}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white file:mr-3 file:px-3 file:py-1 file:border-0 file:bg-primary-100 file:text-primary-700 file:rounded file:font-medium file:text-sm" />
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white file:mr-3 file:px-3 file:py-1 file:border-0 file:bg-blue-100 file:text-blue-700 file:rounded file:font-medium file:text-sm" />
             </div>
             {uploadFile && <p className="text-sm text-slate-600">Selected: <strong>{uploadFile.name}</strong></p>}
             {uploadError && <p className="text-sm text-red-600 flex items-center gap-1"><AlertCircle className="w-4 h-4" />{uploadError}</p>}
             <button onClick={uploadDataset} disabled={!uploadFile || !uploadName.trim() || isUploading}
-              className="w-full py-2 bg-primary-600 text-white rounded-lg font-medium disabled:opacity-50 flex items-center justify-center gap-2">
+              className="w-full py-2 bg-blue-600 text-white rounded-lg font-medium disabled:opacity-50 hover:bg-blue-700 transition-colors flex items-center justify-center gap-2">
               {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
               {isUploading ? 'Uploading...' : 'Upload Dataset'}
             </button>
@@ -533,7 +551,7 @@ export default function DatasetConfig({ selectedPaths, onSelectionChange }: Prop
 
             {registerError && <p className="text-sm text-red-600 flex items-center gap-1"><AlertCircle className="w-4 h-4" />{registerError}</p>}
             <button onClick={registerDataset} disabled={!registerName.trim() || !registerPath.trim() || isRegistering}
-              className="w-full py-2 bg-primary-600 text-white rounded-lg font-medium disabled:opacity-50 flex items-center justify-center gap-2">
+              className="w-full py-2 bg-blue-600 text-white rounded-lg font-medium disabled:opacity-50 hover:bg-blue-700 transition-colors flex items-center justify-center gap-2">
               {isRegistering ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
               {isRegistering ? 'Registering...' : 'Add Dataset'}
             </button>
@@ -545,7 +563,7 @@ export default function DatasetConfig({ selectedPaths, onSelectionChange }: Prop
                 <div className="grid grid-cols-2 gap-2">
                   {POPULAR_HF_DATASETS.map(ds => (
                     <button key={ds.id} onClick={() => selectQuickDataset(ds.id, ds.name)}
-                      className="p-2 text-left border border-slate-200 rounded-lg hover:border-primary-300 hover:bg-primary-50 transition-all">
+                      className="p-2 text-left border border-slate-200 rounded-lg hover:border-blue-300 hover:bg-blue-50 transition-all">
                       <p className="text-sm font-medium text-slate-900">{ds.name}</p>
                       <p className="text-xs text-slate-500">{ds.desc}</p>
                     </button>
@@ -562,7 +580,7 @@ export default function DatasetConfig({ selectedPaths, onSelectionChange }: Prop
         <div className="flex items-center justify-between mb-3">
           <h4 className="font-medium text-slate-900">
             Registered Datasets
-            {selectedCount > 0 && <span className="text-primary-600 ml-2">({selectedCount} selected for training)</span>}
+            {selectedCount > 0 && <span className="text-blue-600 ml-2">({selectedCount} selected for training)</span>}
           </h4>
           <button onClick={fetchDatasets} disabled={isLoading}
             className="text-sm text-slate-500 hover:text-slate-700 flex items-center gap-1">
@@ -585,10 +603,10 @@ export default function DatasetConfig({ selectedPaths, onSelectionChange }: Prop
             {datasets.map(dataset => (
               <div key={dataset.id} onClick={() => toggleSelection(dataset)}
                 className={`flex items-center gap-3 p-3 rounded-lg border transition-all cursor-pointer ${
-                  dataset.selected ? 'border-primary-500 bg-primary-50' : 'border-slate-200 hover:border-slate-300 bg-white'
+                  dataset.selected ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300 bg-white'
                 }`}>
                 <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ${
-                  dataset.selected ? 'bg-primary-600 border-primary-600' : 'border-slate-300'
+                  dataset.selected ? 'bg-blue-600 border-blue-600' : 'border-slate-300'
                 }`}>
                   {dataset.selected && <Check className="w-3 h-3 text-white" />}
                 </div>
@@ -607,8 +625,10 @@ export default function DatasetConfig({ selectedPaths, onSelectionChange }: Prop
                 </div>
                 
                 <div className="text-right flex-shrink-0 hidden sm:block">
-                  <p className="text-xs font-medium text-slate-600">{dataset.size_human}</p>
-                  <p className="text-xs text-slate-400">{dataset.format}</p>
+                  <p className={`text-xs font-medium px-2 py-0.5 rounded-full inline-block ${getSourceColor(dataset.source)}`}>
+                    {getSourceLabel(dataset.source)}
+                  </p>
+                  <p className="text-xs text-slate-400 mt-1">{dataset.size_human} • {dataset.format}</p>
                 </div>
                 
                 <button onClick={(e) => { e.stopPropagation(); setDeleteTarget(dataset) }}

@@ -10,9 +10,9 @@
 FROM node:20-alpine AS frontend-builder
 
 WORKDIR /build/frontend
-COPY frontend/package*.json ./
-RUN npm ci --only=production
-COPY frontend/ ./
+COPY web/frontend/package*.json ./
+RUN npm ci
+COPY web/frontend/ ./
 RUN npm run build
 
 # ============================================================================
@@ -22,8 +22,8 @@ FROM python:3.11-slim AS python-compiler
 
 WORKDIR /compile
 
-# Install compilation tools
-RUN pip install --no-cache-dir py_compile nuitka cython
+# Install compilation tools (py_compile is built-in)
+RUN pip install --no-cache-dir nuitka cython
 
 # Copy Python source
 COPY usf_bios/ /compile/usf_bios/
@@ -75,6 +75,7 @@ RUN pip install --no-cache-dir \
     peft \
     trl \
     deepspeed \
+    nvidia-ml-py \
     && pip install --no-cache-dir -r /app/web/backend/requirements.txt
 
 # Copy compiled bytecode (no source)
@@ -86,68 +87,25 @@ COPY --from=frontend-builder /build/frontend/.next/standalone /app/web/frontend/
 COPY --from=frontend-builder /build/frontend/.next/static /app/web/frontend/.next/static
 COPY --from=frontend-builder /build/frontend/public /app/web/frontend/public
 
-# Create data directories
-RUN mkdir -p /app/data/uploads /app/data/outputs /app/data/models && \
-    chown -R usf:usf /app
-
-# Create secure entrypoint that ONLY starts WebUI
-RUN cat > /app/entrypoint.sh << 'ENTRYPOINT_SCRIPT'
-#!/bin/bash
-set -e
-
-# Block any CLI attempts
-export USF_DISABLE_CLI=1
-export USF_UI_ONLY=1
-
-# Prevent shell access
-unset SHELL
-export SHELL=/bin/false
-
-echo "=============================================="
-echo "  USF BIOS - AI Fine-tuning Platform"
-echo "  Copyright (c) US Inc. All rights reserved."
-echo "=============================================="
-echo ""
-echo "  Mode: WebUI Only (CLI Disabled)"
-echo ""
-
-# Start backend API
-cd /app/web/backend
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 &
-BACKEND_PID=$!
-
-# Wait for backend
-sleep 3
-
-# Start frontend
-cd /app/web/frontend
-node server.js &
-FRONTEND_PID=$!
-
-echo ""
-echo "=============================================="
-echo "  Services Ready"
-echo "=============================================="
-echo ""
-echo "  Web UI:  http://localhost:3000"
-echo "  API:     http://localhost:8000"
-echo ""
-echo "=============================================="
-
-# Handle shutdown
-trap "kill $BACKEND_PID $FRONTEND_PID 2>/dev/null" EXIT SIGTERM SIGINT
-
-# Wait for processes
-wait -n
-exit $?
-ENTRYPOINT_SCRIPT
+# Copy and setup entrypoint script
+COPY web/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
-# Remove shell access for security
-RUN rm -f /bin/sh /bin/bash /bin/dash 2>/dev/null || true
-
-# Security: Make source directories read-only
+# Security: Make source directories read-only (but NOT data dirs)
 RUN chmod -R 555 /app/usf_bios /app/web
+
+# Create all data directories AFTER chmod (must match docker-compose volumes)
+# These need to be writable by the usf user for database and uploads
+RUN mkdir -p /app/data/uploads \
+    /app/data/datasets \
+    /app/data/output \
+    /app/data/checkpoints \
+    /app/data/logs \
+    /app/data/terminal_logs \
+    /app/data/models \
+    /app/data/db && \
+    chown -R usf:usf /app/data && \
+    chmod -R 755 /app/data
 
 # Switch to non-root user
 USER usf

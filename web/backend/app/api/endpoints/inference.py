@@ -17,6 +17,7 @@ from ...services.inference_service import (
     InferenceResponse,
     ModelInfo
 )
+from ...services.sanitized_log_service import sanitized_log_service
 
 router = APIRouter()
 
@@ -102,9 +103,10 @@ async def chat_inference(request: ChatRequest):
         )
     
     except Exception as e:
+        sanitized = sanitized_log_service.sanitize_error(str(e))
         return ChatResponse(
             success=False,
-            error=f"Inference failed: {str(e)}"
+            error=sanitized['user_message']
         )
 
 
@@ -124,9 +126,10 @@ async def load_model(request: LoadModelRequest):
         return result
     
     except Exception as e:
+        sanitized = sanitized_log_service.sanitize_error(str(e))
         return {
             "success": False,
-            "error": f"Failed to load model: {str(e)}"
+            "error": sanitized['user_message']
         }
 
 
@@ -145,9 +148,10 @@ async def clear_memory():
         return MemoryStatus(**result)
     
     except Exception as e:
+        sanitized = sanitized_log_service.sanitize_error(str(e))
         return MemoryStatus(
             success=False,
-            error=f"Failed to clear memory: {str(e)}"
+            error=sanitized['user_message']
         )
 
 
@@ -181,7 +185,7 @@ async def get_inference_status():
     except Exception as e:
         return {
             "model_loaded": False,
-            "error": str(e)
+            "error": "Failed to get model status"
         }
 
 
@@ -244,5 +248,5 @@ async def list_checkpoints(job_id: str):
         return {
             "success": False,
             "checkpoints": [],
-            "error": str(e)
+            "error": "Failed to list checkpoints"
         }

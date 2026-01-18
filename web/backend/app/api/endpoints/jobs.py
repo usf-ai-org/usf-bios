@@ -3,21 +3,51 @@
 
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect, Depends
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from ...models.schemas import JobInfo, JobResponse, JobStatus, TrainingConfig
 from ...services.job_manager import job_manager
 from ...services.training_service import training_service
 from ...services.websocket_manager import ws_manager
+from ...services.job_service import JobService
+from ...core.database import get_db
+from ...core.config import settings
 
 router = APIRouter()
+
+
+class JobNameUpdate(BaseModel):
+    """Request model for updating job name"""
+    name: str
 
 
 @router.post("/create", response_model=JobInfo)
 async def create_job(config: TrainingConfig):
     """Create a new training job"""
-    job = await job_manager.create_job(config)
-    return job
+    try:
+        model_source = config.model_source.value if hasattr(config.model_source, 'value') else str(config.model_source)
+        modality = config.modality.value if hasattr(config.modality, 'value') else str(config.modality)
+        
+        # Validate model path against system capabilities
+        is_supported, message = settings.validate_model_path(config.model_path, model_source)
+        if not is_supported:
+            raise HTTPException(status_code=403, detail=message)
+        
+        # Validate modality against system capabilities
+        is_supported, message = settings.validate_modality(modality)
+        if not is_supported:
+            raise HTTPException(status_code=403, detail=message)
+        
+        job = await job_manager.create_job(config)
+        return job
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Failed to create training job")
 
 
 @router.post("/{job_id}/start")
@@ -86,9 +116,41 @@ async def list_jobs(
     return jobs[:limit]
 
 
+@router.patch("/{job_id}/name")
+async def update_job_name(job_id: str, update: JobNameUpdate, db: Session = Depends(get_db)):
+    """Update the name of a training job"""
+    try:
+        service = JobService(db)
+        result = service.update_job_name(job_id, update.name)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Failed to update job name")
+
+
+@router.get("/{job_id}/delete-info")
+async def get_delete_info(job_id: str):
+    """Get information needed for delete confirmation (returns job name)"""
+    job = await job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    return {
+        "job_id": job_id,
+        "job_name": job.name,
+        "status": job.status,
+        "can_delete": job.status != JobStatus.RUNNING,
+        "confirm_text": job.name  # User must type this to confirm deletion
+    }
+
+
 @router.delete("/{job_id}")
-async def delete_job(job_id: str):
-    """Delete a job (only if not running)"""
+async def delete_job(
+    job_id: str,
+    confirm: str = Query(..., description="Type the job NAME to confirm deletion")
+):
+    """Delete a job (only if not running). User must type the job name to confirm."""
     job = await job_manager.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -96,11 +158,18 @@ async def delete_job(job_id: str):
     if job.status == JobStatus.RUNNING:
         raise HTTPException(status_code=400, detail="Cannot delete a running job. Stop it first.")
     
+    # Verify confirmation matches the job name
+    if confirm != job.name:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Confirmation failed. You must type '{job.name}' to delete this training."
+        )
+    
     success = await job_manager.delete_job(job_id)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to delete job")
     
-    return {"job_id": job_id, "deleted": True}
+    return {"job_id": job_id, "job_name": job.name, "deleted": True}
 
 
 @router.websocket("/ws/{job_id}")

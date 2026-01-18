@@ -3,10 +3,24 @@
 
 import asyncio
 import uuid
+import random
 from datetime import datetime
 from typing import Dict, List, Optional
 
 from ..models.schemas import JobInfo, JobStatus, TrainingConfig
+
+
+# Word lists for generating meaningful training names
+_ADJECTIVES = [
+    "swift", "bright", "cosmic", "stellar", "quantum", "neural", "rapid", "smart",
+    "deep", "prime", "alpha", "omega", "ultra", "mega", "hyper", "super",
+    "golden", "silver", "crystal", "atomic", "dynamic", "agile", "bold", "vivid"
+]
+_NOUNS = [
+    "phoenix", "falcon", "eagle", "dragon", "titan", "atlas", "nova", "pulse",
+    "spark", "flame", "wave", "storm", "bolt", "flash", "beam", "core",
+    "nexus", "apex", "zenith", "vertex", "matrix", "cipher", "vector", "orbit"
+]
 
 
 class JobManager:
@@ -18,12 +32,36 @@ class JobManager:
         self._processes: Dict[str, asyncio.subprocess.Process] = {}
         self._lock = asyncio.Lock()
     
+    def _generate_name(self) -> str:
+        """Generate a unique, meaningful training name."""
+        for _ in range(100):
+            adj = random.choice(_ADJECTIVES)
+            noun = random.choice(_NOUNS)
+            num = random.randint(10, 99)
+            name = f"{adj}-{noun}-{num}"
+            # Check if name already exists
+            if not any(j.name == name for j in self._jobs.values()):
+                return name
+        # Fallback with timestamp
+        return f"training-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    
     async def create_job(self, config: TrainingConfig) -> JobInfo:
         """Create a new training job"""
         job_id = str(uuid.uuid4())[:8]
         
+        # Generate name if not provided
+        job_name = config.name.strip() if config.name else None
+        if not job_name:
+            job_name = self._generate_name()
+        else:
+            # Check if name is already used
+            async with self._lock:
+                if any(j.name == job_name for j in self._jobs.values()):
+                    raise ValueError(f"Training name '{job_name}' is already in use")
+        
         job = JobInfo(
             job_id=job_id,
+            name=job_name,
             status=JobStatus.PENDING,
             config=config,
             created_at=datetime.now(),

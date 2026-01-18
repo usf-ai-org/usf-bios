@@ -9,7 +9,7 @@ import {
   RefreshCw, Upload, X, FileText, Check,
   HardDrive, Thermometer, Clock, Activity,
   FolderOpen, Download, Layers, ToggleLeft, ToggleRight,
-  History, Menu, Monitor, Gauge, XCircle
+  History, Menu, Monitor, Gauge, XCircle, Lock
 } from 'lucide-react'
 import TrainingSettingsStep from '@/components/TrainingSettings'
 import DatasetConfig from '@/components/DatasetConfig'
@@ -43,6 +43,7 @@ interface TrainingConfig {
 
 interface JobStatus {
   job_id: string
+  job_name: string  // User-friendly name for the training
   status: 'pending' | 'running' | 'completed' | 'failed' | 'stopped'
   current_step: number
   total_steps: number
@@ -76,6 +77,16 @@ interface SystemStatus {
   bios_installed: boolean
   backend_ready: boolean
   details: Record<string, string>
+}
+
+interface SystemCapabilities {
+  supported_model: string | null
+  supported_sources: string[]
+  supported_architectures: string[] | null
+  supported_modalities: string[]
+  has_model_restriction: boolean
+  has_architecture_restriction: boolean
+  has_modality_restriction: boolean
 }
 
 interface TrainingMetric {
@@ -163,6 +174,9 @@ export default function Home() {
   const [deleteTarget, setDeleteTarget] = useState<UploadedDataset | null>(null)
   const [deleteConfirmText, setDeleteConfirmText] = useState('')
   const [isDeleting, setIsDeleting] = useState(false)
+  
+  // Training name state (optional - auto-generated if empty)
+  const [trainingName, setTrainingName] = useState('')
 
   // Inference state
   const [inferenceModel, setInferenceModel] = useState('')
@@ -206,6 +220,17 @@ export default function Home() {
     bios_installed: false,
     backend_ready: false,
     details: {}
+  })
+  
+  // System capabilities - what this system can fine-tune
+  const [systemCapabilities, setSystemCapabilities] = useState<SystemCapabilities>({
+    supported_model: null,
+    supported_sources: ['huggingface', 'modelscope', 'local'],
+    supported_architectures: null,
+    supported_modalities: ['text2text', 'multimodal', 'speech2text', 'text2speech', 'vision', 'audio'],
+    has_model_restriction: false,
+    has_architecture_restriction: false,
+    has_modality_restriction: false
   })
   
   // Training metrics for graphs
@@ -254,6 +279,27 @@ export default function Home() {
     }
   }, [])
 
+  // Fetch system capabilities - what this system can fine-tune
+  const fetchSystemCapabilities = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/system/capabilities`)
+      if (res.ok) {
+        const data = await res.json()
+        setSystemCapabilities(data)
+        // If system is designed for a specific model, pre-fill the config
+        if (data.has_model_restriction && data.supported_model) {
+          setConfig(prev => ({
+            ...prev,
+            model_path: data.supported_model,
+            model_source: data.supported_sources?.[0] || 'huggingface'
+          }))
+        }
+      }
+    } catch (e) {
+      console.error('Failed to fetch system capabilities:', e)
+    }
+  }, [])
+
   // Fetch system metrics periodically - only set if data is valid
   const fetchSystemMetrics = useCallback(async () => {
     try {
@@ -278,12 +324,13 @@ export default function Home() {
     }
   }, [])
 
-  // Fetch system status on mount and periodically
+  // Fetch system status and capabilities on mount
   useEffect(() => {
     fetchSystemStatus()
+    fetchSystemCapabilities()
     const interval = setInterval(fetchSystemStatus, 10000) // Check every 10 seconds
     return () => clearInterval(interval)
-  }, [fetchSystemStatus])
+  }, [fetchSystemStatus, fetchSystemCapabilities])
 
   // Poll system metrics during training or inference
   useEffect(() => {
@@ -462,12 +509,13 @@ export default function Home() {
   }
 
   const confirmDelete = async () => {
-    if (!deleteTarget || deleteConfirmText.toLowerCase() !== 'delete') return
+    if (!deleteTarget || deleteConfirmText !== deleteTarget.name) return
     
     setIsDeleting(true)
     try {
+      // Pass the dataset name as confirmation (not "delete")
       const res = await fetch(
-        `${API_URL}/api/datasets/delete/${encodeURIComponent(deleteTarget.id)}?confirm=delete`,
+        `${API_URL}/api/datasets/delete/${encodeURIComponent(deleteTarget.id)}?confirm=${encodeURIComponent(deleteTarget.name)}`,
         { method: 'DELETE' }
       )
       
@@ -499,10 +547,12 @@ export default function Home() {
     try {
       setTrainingLogs([])
       
-      // Create job with combined dataset path
+      // Create job with combined dataset path and optional custom name
       const jobConfig = {
         ...config,
-        dataset_path: config.dataset_paths.join(',')
+        dataset_path: config.dataset_paths.join(','),
+        // Include training name if provided (empty = auto-generate)
+        name: trainingName.trim() || undefined,
       }
       
       const createRes = await fetch(`${API_URL}/api/jobs/create`, {
@@ -510,7 +560,10 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(jobConfig),
       })
-      if (!createRes.ok) throw new Error(`Create failed: ${createRes.status}`)
+      if (!createRes.ok) {
+        const errData = await createRes.json().catch(() => ({}))
+        throw new Error(errData.detail || `Create failed: ${createRes.status}`)
+      }
       const job = await createRes.json()
       
       const startRes = await fetch(`${API_URL}/api/jobs/${job.job_id}/start`, {
@@ -520,6 +573,7 @@ export default function Home() {
       
       setJobStatus({
         job_id: job.job_id,
+        job_name: job.name, // Store the job name
         status: 'running',
         current_step: 0,
         total_steps: 0,
@@ -529,6 +583,7 @@ export default function Home() {
       })
       setIsTraining(true)
       setCurrentStep(5)
+      setTrainingName('') // Clear the input after successful creation
     } catch (e) {
       alert(`Failed to start training: ${e}`)
     }
@@ -753,14 +808,17 @@ export default function Home() {
               </p>
             </div>
             
-            <p className="text-sm text-slate-600 mb-3">
-              Type <strong className="text-red-600">delete</strong> to confirm:
+            <p className="text-sm text-slate-600 mb-2">
+              To confirm deletion, type the dataset name:
+            </p>
+            <p className="text-sm font-mono bg-red-50 text-red-700 px-2 py-1 rounded mb-3 select-all">
+              {deleteTarget.name}
             </p>
             <input
               type="text"
               value={deleteConfirmText}
               onChange={(e) => setDeleteConfirmText(e.target.value)}
-              placeholder="Type 'delete' here"
+              placeholder={`Type "${deleteTarget.name}" to confirm`}
               className="w-full px-3 py-2 border border-slate-300 rounded-lg mb-4 focus:ring-2 focus:ring-red-500 focus:border-red-500"
               autoFocus
             />
@@ -774,7 +832,7 @@ export default function Home() {
               </button>
               <button
                 onClick={confirmDelete}
-                disabled={deleteConfirmText.toLowerCase() !== 'delete' || isDeleting}
+                disabled={deleteConfirmText !== deleteTarget.name || isDeleting}
                 className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
                 {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
@@ -924,15 +982,35 @@ export default function Home() {
                     <p className="text-slate-600 text-sm">Choose the base model for fine-tuning</p>
                   </div>
                   
+                  {/* System Capability Notice */}
+                  {systemCapabilities.has_model_restriction && (
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                      <div className="flex items-start gap-3">
+                        <Lock className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                        <div>
+                          <p className="font-medium text-blue-800">System Configuration</p>
+                          <p className="text-sm text-blue-700 mt-1">
+                            This system is designed to fine-tune the model shown below. The system does not have the capability to fine-tune other models.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  
                   <div className="grid gap-4">
                     <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-2">Model Source</label>
+                      <label className="block text-sm font-medium text-slate-700 mb-2">
+                        Model Source
+                        {systemCapabilities.has_model_restriction && <Lock className="w-3 h-3 inline ml-1 text-slate-400" />}
+                      </label>
                       <div className="grid grid-cols-3 gap-2">
                         {['huggingface', 'modelscope', 'local'].map((source) => (
-                          <button key={source} onClick={() => setConfig({ ...config, model_source: source as any })}
+                          <button key={source} 
+                            onClick={() => !systemCapabilities.has_model_restriction && setConfig({ ...config, model_source: source as any })}
+                            disabled={systemCapabilities.has_model_restriction || !systemCapabilities.supported_sources.includes(source)}
                             className={`p-3 rounded-lg border-2 text-center transition-all ${
                               config.model_source === source ? 'border-blue-500 bg-blue-50 text-blue-600' : 'border-slate-200 text-slate-600 hover:border-slate-300'
-                            }`}>
+                            } ${systemCapabilities.has_model_restriction || !systemCapabilities.supported_sources.includes(source) ? 'opacity-60 cursor-not-allowed' : ''}`}>
                             <span className="capitalize font-medium text-sm">{source}</span>
                           </button>
                         ))}
@@ -940,32 +1018,46 @@ export default function Home() {
                     </div>
                     
                     <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-2">Model Path / ID</label>
+                      <label className="block text-sm font-medium text-slate-700 mb-2">
+                        Model Path / ID
+                        {systemCapabilities.has_model_restriction && <Lock className="w-3 h-3 inline ml-1 text-slate-400" />}
+                      </label>
                       <input type="text" value={config.model_path}
-                        onChange={(e) => setConfig({ ...config, model_path: e.target.value })}
+                        onChange={(e) => !systemCapabilities.has_model_restriction && setConfig({ ...config, model_path: e.target.value })}
+                        disabled={systemCapabilities.has_model_restriction}
                         placeholder={config.model_source === 'local' ? '/path/to/model' : 'organization/model-name'}
-                        className="w-full px-4 py-3 border border-slate-300 rounded-lg text-slate-900 placeholder-slate-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        className={`w-full px-4 py-3 border border-slate-300 rounded-lg text-slate-900 placeholder-slate-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
+                          systemCapabilities.has_model_restriction ? 'bg-slate-100 cursor-not-allowed' : ''
+                        }`}
                       />
+                      {systemCapabilities.has_model_restriction && systemCapabilities.supported_model && (
+                        <p className="text-xs text-slate-500 mt-1">
+                          Supported model: {systemCapabilities.supported_model}
+                        </p>
+                      )}
                     </div>
                     
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-2">Quick Select</label>
-                      <div className="grid grid-cols-2 gap-2">
-                        {[
-                          { id: 'Qwen/Qwen2.5-7B-Instruct', name: 'Qwen 2.5 7B' },
-                          { id: 'meta-llama/Llama-3.1-8B-Instruct', name: 'Llama 3.1 8B' },
-                          { id: 'mistralai/Mistral-7B-Instruct-v0.3', name: 'Mistral 7B' },
-                          { id: 'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B', name: 'DeepSeek R1 7B' },
-                        ].map((model) => (
-                          <button key={model.id} onClick={() => setConfig({ ...config, model_path: model.id, model_source: 'huggingface' })}
-                            className={`p-2 rounded-lg border text-left transition-all ${
-                              config.model_path === model.id ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-700 hover:border-slate-300'
-                            }`}>
-                            <span className="font-medium text-sm">{model.name}</span>
-                          </button>
-                        ))}
+                    {/* Quick Select - Hidden when system has model restriction */}
+                    {!systemCapabilities.has_model_restriction && (
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-2">Quick Select</label>
+                        <div className="grid grid-cols-2 gap-2">
+                          {[
+                            { id: 'Qwen/Qwen2.5-7B-Instruct', name: 'Qwen 2.5 7B' },
+                            { id: 'meta-llama/Llama-3.1-8B-Instruct', name: 'Llama 3.1 8B' },
+                            { id: 'mistralai/Mistral-7B-Instruct-v0.3', name: 'Mistral 7B' },
+                            { id: 'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B', name: 'DeepSeek R1 7B' },
+                          ].map((model) => (
+                            <button key={model.id} onClick={() => setConfig({ ...config, model_path: model.id, model_source: 'huggingface' })}
+                              className={`p-2 rounded-lg border text-left transition-all ${
+                                config.model_path === model.id ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-700 hover:border-slate-300'
+                              }`}>
+                              <span className="font-medium text-sm">{model.name}</span>
+                            </button>
+                          ))}
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -1038,6 +1130,24 @@ export default function Home() {
                     </div>
                   </div>
                   
+                  {/* Training Name (optional) */}
+                  <div className="bg-slate-50 rounded-lg p-4">
+                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                      Training Name <span className="text-slate-400 font-normal">(optional)</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={trainingName}
+                      onChange={(e) => setTrainingName(e.target.value)}
+                      placeholder="e.g., my-qwen-finetune (auto-generated if empty)"
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      maxLength={255}
+                    />
+                    <p className="text-xs text-slate-500 mt-1">
+                      A unique name to identify this training. Leave empty to auto-generate.
+                    </p>
+                  </div>
+                  
                   {/* System status warning */}
                   {systemStatus.status !== 'live' && (
                     <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700 flex items-center gap-2">
@@ -1063,7 +1173,11 @@ export default function Home() {
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <div>
                       <h2 className="text-xl font-bold text-slate-900">Training Progress</h2>
-                      <p className="text-slate-500 text-sm">Job: {jobStatus.job_id}</p>
+                      <p className="text-slate-500 text-sm">
+                        <span className="font-medium text-slate-700">{jobStatus.job_name}</span>
+                        <span className="mx-2">•</span>
+                        <span className="font-mono text-xs">{jobStatus.job_id}</span>
+                      </p>
                     </div>
                     <div className={`px-3 py-1 rounded-full text-sm font-medium self-start ${
                       jobStatus.status === 'running' ? 'bg-blue-100 text-blue-700' :

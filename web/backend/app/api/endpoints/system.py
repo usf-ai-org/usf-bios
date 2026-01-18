@@ -1,9 +1,11 @@
 """System metrics and status endpoints"""
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 import os
 import subprocess
+
+from ...core.config import settings
 
 router = APIRouter(prefix="/api/system", tags=["system"])
 
@@ -31,9 +33,9 @@ def check_bios_installation() -> tuple[bool, str]:
         import datasets
         return True, "BIOS training packages installed"
     except ImportError as e:
-        return False, f"Missing package: {str(e)}"
+        return False, "Missing required packages"
     except Exception as e:
-        return False, f"Installation check failed: {str(e)}"
+        return False, "Installation check failed"
 
 
 def check_gpu_availability() -> tuple[bool, str, Optional[str]]:
@@ -50,7 +52,7 @@ def check_gpu_availability() -> tuple[bool, str, Optional[str]]:
         else:
             return False, "CUDA not available", None
     except Exception as e:
-        return False, f"GPU check failed: {str(e)}", None
+        return False, "GPU check failed", None
 
 
 def check_cuda_available() -> bool:
@@ -119,8 +121,7 @@ def get_gpu_metrics():
             "gpu_utilization": 0,
             "gpu_memory_used": 0,
             "gpu_memory_total": 0,
-            "gpu_temperature": 0,
-            "error": str(e)
+            "gpu_temperature": 0
         }
 
 
@@ -150,8 +151,7 @@ def get_cpu_metrics():
         return {
             "cpu_percent": 0,
             "ram_used": 0,
-            "ram_total": 0,
-            "error": str(e)
+            "ram_total": 0
         }
 
 
@@ -252,3 +252,124 @@ async def readiness_check():
         reasons.append(f"GPU: {gpu_msg}")
     
     return {"ready": False, "reason": "; ".join(reasons)}
+
+
+# =============================================================================
+# System Capability Endpoints
+# =============================================================================
+# These endpoints expose system capabilities and supported configurations.
+# Users should perceive these as hardware/software specifications.
+# =============================================================================
+
+class SystemCapabilities(BaseModel):
+    """System capability information - what this system can fine-tune"""
+    supported_model: Optional[str] = None
+    supported_sources: List[str]
+    supported_architectures: Optional[List[str]] = None
+    supported_modalities: List[str]
+    has_model_restriction: bool
+    has_architecture_restriction: bool
+    has_modality_restriction: bool
+
+
+class CapabilityValidationRequest(BaseModel):
+    """Request to validate if system supports a configuration"""
+    model_path: str
+    model_source: str = "huggingface"
+    architecture: Optional[str] = None
+    modality: str = "text2text"
+
+
+class CapabilityValidationResponse(BaseModel):
+    """Response indicating if system supports the configuration"""
+    is_supported: bool
+    capability_message: Optional[str] = None
+    supported_model: Optional[str] = None
+    supported_architectures: Optional[List[str]] = None
+    supported_modalities: Optional[List[str]] = None
+
+
+@router.get("/capabilities", response_model=SystemCapabilities)
+async def get_system_capabilities():
+    """
+    Get what this system is capable of fine-tuning.
+    
+    Returns information about:
+    - Supported model (if system is designed for a specific model)
+    - Supported model sources (huggingface, modelscope, local)
+    - Supported architectures (if system is designed for specific architectures)
+    - Supported modalities (text2text, multimodal, speech, etc.)
+    
+    Frontend should use this to:
+    - Pre-fill model selection with supported model
+    - Hide/disable unsupported options
+    - Show system capability information
+    """
+    info = settings.get_capability_info()
+    return SystemCapabilities(**info)
+
+
+@router.get("/model-lock", response_model=SystemCapabilities, include_in_schema=False)
+async def get_model_capabilities_legacy():
+    """
+    Legacy endpoint for backward compatibility.
+    Use /capabilities instead.
+    """
+    info = settings.get_capability_info()
+    return SystemCapabilities(**info)
+
+
+@router.post("/validate-capability", response_model=CapabilityValidationResponse)
+async def validate_system_capability(request: CapabilityValidationRequest):
+    """
+    Validate if this system supports the requested fine-tuning configuration.
+    
+    Checks:
+    1. Model path - is this model supported?
+    2. Model source - is this source supported?
+    3. Architecture - is this architecture supported?
+    4. Modality - is this modality supported?
+    
+    Returns capability information if not supported.
+    """
+    # Validate model path and source
+    is_valid, message = settings.validate_model_path(
+        request.model_path, 
+        request.model_source
+    )
+    if not is_valid:
+        return CapabilityValidationResponse(
+            is_supported=False,
+            capability_message=message,
+            supported_model=settings.SUPPORTED_MODEL_PATH
+        )
+    
+    # Validate architecture if provided
+    if request.architecture:
+        is_valid, message = settings.validate_architecture(request.architecture)
+        if not is_valid:
+            return CapabilityValidationResponse(
+                is_supported=False,
+                capability_message=message,
+                supported_architectures=list(settings.supported_architectures_set) if settings.supported_architectures_set else None
+            )
+    
+    # Validate modality
+    is_valid, message = settings.validate_modality(request.modality)
+    if not is_valid:
+        return CapabilityValidationResponse(
+            is_supported=False,
+            capability_message=message,
+            supported_modalities=list(settings.supported_modalities_set)
+        )
+    
+    return CapabilityValidationResponse(is_supported=True)
+
+
+@router.post("/validate-model", response_model=CapabilityValidationResponse)
+async def validate_model_for_training(request: CapabilityValidationRequest):
+    """
+    Legacy endpoint - redirects to /validate-capability.
+    Maintained for backward compatibility.
+    """
+    return await validate_system_capability(request)

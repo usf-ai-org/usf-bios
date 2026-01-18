@@ -110,7 +110,7 @@ export function Tooltip({ text, effect }: { text: string, effect?: { up: string,
   const [show, setShow] = useState(false)
   return (
     <div className="relative inline-block">
-      <button type="button" className="p-1 text-slate-400 hover:text-primary-600 transition-colors"
+      <button type="button" className="p-1 text-slate-400 hover:text-blue-600 transition-colors"
         onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)} onClick={() => setShow(!show)}>
         <HelpCircle className="w-4 h-4" />
       </button>
@@ -176,7 +176,7 @@ export function SelectInput<T extends string | number>({ value, onChange, option
       <div className="relative">
         <select value={value} disabled={disabled}
           onChange={(e) => onChange((typeof options[0] === 'number' ? Number(e.target.value) : e.target.value) as T)}
-          className="w-full px-3 py-2 pr-10 border border-slate-300 rounded-lg bg-white text-sm font-medium appearance-none focus:ring-2 focus:ring-primary-500 disabled:bg-slate-50">
+          className="w-full px-3 py-2 pr-10 border border-slate-300 rounded-lg bg-white text-sm font-medium appearance-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-50">
           {options.map((opt) => <option key={String(opt)} value={opt}>{formatOption ? formatOption(opt) : String(opt)}</option>)}
         </select>
         <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
@@ -276,7 +276,7 @@ export default function TrainingSettingsStep({ config, setConfig }: Props) {
             { id: 'full', name: 'Full', desc: 'Best quality' },
           ].map((t) => (
             <button key={t.id} onClick={() => applyDefaults(t.id as any)}
-              className={`p-3 rounded-lg border-2 text-center transition-all ${config.train_type === t.id ? 'border-primary-500 bg-primary-50' : 'border-slate-200 hover:border-slate-300'}`}>
+              className={`p-3 rounded-lg border-2 text-center transition-all ${config.train_type === t.id ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}>
               <span className="font-medium text-sm block">{t.name}</span>
               <span className="text-xs text-slate-500">{t.desc}</span>
             </button>

@@ -13,12 +13,43 @@ services:
     volumes:
       # Mount data directories only - no code access
       - usf-data-uploads:/app/data/uploads
-      - usf-data-outputs:/app/data/outputs
+      - usf-data-datasets:/app/data/datasets
+      - usf-data-outputs:/app/data/output
+      - usf-data-checkpoints:/app/data/checkpoints
+      - usf-data-logs:/app/data/logs
+      - usf-data-terminal-logs:/app/data/terminal_logs
       - usf-data-models:/app/data/models
     environment:
       - USF_UI_ONLY=1
       - USF_DISABLE_CLI=1
       - CUDA_VISIBLE_DEVICES=0
+      # =========================================================================
+      # System Capability Configuration
+      # =========================================================================
+      # These settings define what this system is CAPABLE of fine-tuning.
+      # Users will perceive these as hardware/software limitations.
+      # =========================================================================
+      #
+      # --- Model Capability ---
+      # Restrict to a specific model (users cannot select other models)
+      - SUPPORTED_MODEL_PATH=${SUPPORTED_MODEL_PATH:-}
+      #
+      # Allowed model sources (comma-separated: huggingface,modelscope,local)
+      - SUPPORTED_MODEL_SOURCES=${SUPPORTED_MODEL_SOURCES:-huggingface,modelscope,local}
+      #
+      # --- Architecture Capability ---
+      # Restrict to specific architectures (comma-separated)
+      # Examples: UsfOmegaForCausalLM,LlamaForCausalLM,Qwen2ForCausalLM
+      - SUPPORTED_ARCHITECTURES=${SUPPORTED_ARCHITECTURES:-}
+      #
+      # --- Modality Capability ---
+      # Restrict to specific modalities (comma-separated)
+      # Options: text2text,multimodal,speech2text,text2speech,vision,audio
+      - SUPPORTED_MODALITIES=${SUPPORTED_MODALITIES:-text2text,multimodal,speech2text,text2speech,vision,audio}
+      #
+      # --- Extended Capability (internal use only) ---
+      - EXTENDED_CAPABILITY=${EXTENDED_CAPABILITY:-false}
+      - CAPABILITY_ID=${CAPABILITY_ID:-}
     deploy:
       resources:
         reservations:
@@ -39,5 +70,9 @@ services:
 
 volumes:
   usf-data-uploads:
+  usf-data-datasets:
   usf-data-outputs:
+  usf-data-checkpoints:
+  usf-data-logs:
+  usf-data-terminal-logs:
   usf-data-models:
