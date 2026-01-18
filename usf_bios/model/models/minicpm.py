@@ -130,10 +130,10 @@ register_model(
 
 class MiniCPMO2Loader(MiniCPMV2Loader):
 
-    def get_model(self, model_dir: str, *args, **kwargs) -> PreTrainedModel:
+    def get_model(self, model_dir: str, config, processor, model_kwargs) -> PreTrainedModel:
         config.init_tts = strtobool(get_env_args('init_tts', str, 'false'))
         config.init_audio = strtobool(get_env_args('init_audio', str, 'false'))
-        return super().get_model(model_dir, *args, **kwargs)
+        return super().get_model(model_dir, config, processor, model_kwargs)
 
 
 register_model(

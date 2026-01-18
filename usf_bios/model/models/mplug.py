@@ -21,7 +21,7 @@ logger = get_logger()
 
 class MplugOwl2Loader(ModelLoader):
 
-    def _get_model(self, model_dir: str, vocab_size, *args, **kwargs) -> PreTrainedModel:
+    def _get_model(self, model_dir: str, vocab_size, config, processor, model_kwargs) -> PreTrainedModel:
         local_repo_path = self.local_repo_path
         if not local_repo_path:
             local_repo_path = git_clone_github('https://github.com/X-PLUG/mPLUG-Owl')
@@ -32,12 +32,12 @@ class MplugOwl2Loader(ModelLoader):
         from mplug_owl2 import MPLUGOwl2LlamaForCausalLM
         if vocab_size is not None:
             config.vocab_size = vocab_size
-        model = super().get_model(model_dir, *args, **kwargs)
+        model = super().get_model(model_dir, config, processor, model_kwargs)
         logger.info_debug('Please ignore the unimported warning.')
         return model
 
-    def get_model(self, model_dir: str, *args, **kwargs) -> PreTrainedModel:
-        return self._get_model(model_dir, None, *args, **kwargs)
+    def get_model(self, model_dir: str, config, processor, model_kwargs) -> PreTrainedModel:
+        return self._get_model(model_dir, None, config, processor, model_kwargs)
 
     def get_processor(self, model_dir: str, config: PretrainedConfig) -> Processor:
         from transformers.models.clip.image_processing_clip import CLIPImageProcessor
