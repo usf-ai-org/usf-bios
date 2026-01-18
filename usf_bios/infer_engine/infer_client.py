@@ -110,13 +110,13 @@ class InferClient(InferEngine):
         return res
 
     @staticmethod
-    def _parse_stream_data(data: bytes) -> Optional[str]:
-        data = data.decode(encoding='utf-8')
-        data = data.strip()
-        if len(data) == 0:
-            return
-        assert data.startswith('data:'), f'data: {data}'
-        return data[5:].strip()
+    def _parse_stream_data(raw_data: bytes) -> Optional[str]:
+        decoded = raw_data.decode(encoding='utf-8')
+        decoded = decoded.strip()
+        if len(decoded) == 0:
+            return None
+        assert decoded.startswith('data:'), f'data: {decoded}'
+        return decoded[5:].strip()
 
     async def infer_async(
         self,
