@@ -30,10 +30,8 @@ COPY usf_bios/ /compile/usf_bios/
 COPY web/backend/ /compile/web/backend/
 COPY setup.py setup.cfg /compile/
 
-# Compile all Python files to bytecode and remove source
-RUN python -m compileall -b /compile/usf_bios /compile/web/backend && \
-    find /compile -name "*.py" -type f -delete && \
-    find /compile -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+# Compile all Python files to bytecode (keep source for import system)
+RUN python -m compileall -f /compile/usf_bios /compile/web/backend
 
 # ============================================================================
 # Stage 3: Production Image (Secure)
