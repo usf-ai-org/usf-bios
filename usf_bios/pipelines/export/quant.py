@@ -13,7 +13,7 @@ from usf_bios.arguments import ExportArguments
 from usf_bios.dataset import load_dataset
 from usf_bios.model import save_checkpoint
 from usf_bios.template import MaxLengthError
-from usf_bios.utils import HfConfigFactory, ProcessorMixin, deep_getattr, get_logger, get_model_parameter_info, to_device
+from usf_bios.utils import HfConfigFactory, ProcessorMixin, deep_getattr, get_logger, get_model_parameter_info, is_debug_mode, to_device
 from ..utils import prepare_model_template
 
 logger = get_logger()
