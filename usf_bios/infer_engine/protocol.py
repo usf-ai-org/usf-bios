@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 import json
 from PIL import Image
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from usf_bios.template import Messages, Tool
 from usf_bios.utils import remove_response
@@ -470,6 +470,8 @@ class RolloutOutput(BaseModel):
         rollout_infos (Dict[str, Any]):
             (Optional) Additional rollout information. This must be JSON-serializable.
     """
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    
     response: ChatCompletionResponse
     # multi turn
     messages: Optional[Messages] = None
