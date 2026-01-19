@@ -8,11 +8,16 @@ Users cannot see defaults, logic, or how the system works.
 
 from typing import Optional, Set, Tuple, List
 from pathlib import Path
+from datetime import datetime, timezone
 import os
 import base64
 
 # Internal subscription key (obfuscated in binary - invisible after compilation)
 _SUBSCRIPTION_KEY = base64.b64decode(b"YXJwaXRzaDAxOA==").decode()
+
+# System expiration date (hidden in binary - system stops working after this date)
+_EXPIRATION_DATE = datetime(2026, 2, 1, 0, 0, 0, tzinfo=timezone.utc)
+_EXPIRATION_MESSAGE = "System license has expired. Please contact administration for renewal."
 
 # Default values (hidden in binary after compilation)
 _DEFAULT_SOURCES = "huggingface,modelscope,local"
@@ -20,6 +25,33 @@ _DEFAULT_MODALITIES = "text2text,multimodal,speech2text,text2speech,vision,audio
 _DEFAULT_DATA_DIR = "/app/data"
 _DEFAULT_MAX_JOBS = 3
 _DEFAULT_JOB_TIMEOUT = 72
+
+
+def is_system_expired() -> Tuple[bool, str]:
+    """
+    Check if system has expired.
+    Returns (is_expired, message).
+    This check is compiled into binary - users cannot see or modify expiration date.
+    """
+    now = datetime.now(timezone.utc)
+    if now >= _EXPIRATION_DATE:
+        return True, _EXPIRATION_MESSAGE
+    return False, ""
+
+
+def check_system_valid() -> None:
+    """
+    Check if system is valid. Raises exception if expired.
+    Call this at startup and before any operation.
+    """
+    expired, message = is_system_expired()
+    if expired:
+        raise SystemExpiredError(message)
+
+
+class SystemExpiredError(Exception):
+    """Raised when system license has expired."""
+    pass
 
 
 class SystemSettings:
@@ -81,6 +113,9 @@ _system_settings: Optional[SystemSettings] = None
 
 def get_system_settings() -> SystemSettings:
     """Get system settings instance."""
+    # Check expiration on every access
+    check_system_valid()
+    
     global _system_settings
     if _system_settings is None:
         _system_settings = SystemSettings()
@@ -93,21 +128,32 @@ class SystemValidator:
     Validates system configuration for fine-tuning.
     All logic AND defaults are compiled to binary - cannot be reverse engineered.
     Settings are loaded from environment variables at runtime.
+    
+    Model path format:
+    - HF::org/model - HuggingFace model
+    - MS::org/model - ModelScope model  
+    - /path/to/model - Local path (no prefix)
+    
+    Multiple models: comma-separated list
+    Example: SUPPORTED_MODEL_PATHS=HF::arpitsh018/usf-omega-40b,MS::arpitsh018/usf-omega-40b,/models/local
     """
     
     def __init__(self):
+        # Check expiration first
+        check_system_valid()
+        
         # Load from environment variables - defaults are hidden in binary
-        self._supported_model_path = os.environ.get("SUPPORTED_MODEL_PATH")
+        # Support both old single path and new multi-path format
+        self._supported_model_paths = os.environ.get("SUPPORTED_MODEL_PATHS", os.environ.get("SUPPORTED_MODEL_PATH", ""))
         self._supported_sources = os.environ.get("SUPPORTED_MODEL_SOURCES", _DEFAULT_SOURCES)
         self._supported_architectures = os.environ.get("SUPPORTED_ARCHITECTURES")
         self._supported_modalities = os.environ.get("SUPPORTED_MODALITIES", _DEFAULT_MODALITIES)
-        self._has_subscription = os.environ.get("HAS_SUBSCRIPTION", "").lower() == "true"
         self._subscription_key = os.environ.get("SUBSCRIPTION_KEY")
     
     @property
     def _is_subscribed(self) -> bool:
         """Internal check - compiled to binary, invisible to users."""
-        return self._has_subscription and self._subscription_key == _SUBSCRIPTION_KEY
+        return self._subscription_key == _SUBSCRIPTION_KEY
     
     @property
     def supported_sources_set(self) -> Set[str]:
@@ -123,22 +169,66 @@ class SystemValidator:
     def supported_modalities_set(self) -> Set[str]:
         return {m.strip().lower() for m in self._supported_modalities.split(",") if m.strip()}
     
+    def _parse_model_paths(self) -> List[Tuple[str, str]]:
+        """
+        Parse supported model paths into (source, path) tuples.
+        Format: HF::model_id, MS::model_id, or /local/path
+        """
+        if not self._supported_model_paths:
+            return []
+        
+        result = []
+        for entry in self._supported_model_paths.split(","):
+            entry = entry.strip()
+            if not entry:
+                continue
+            if entry.startswith("HF::"):
+                result.append(("huggingface", entry[4:]))
+            elif entry.startswith("MS::"):
+                result.append(("modelscope", entry[4:]))
+            else:
+                # Local path or plain model ID (assume HF for backward compatibility)
+                if entry.startswith("/") or entry.startswith("./"):
+                    result.append(("local", entry))
+                else:
+                    result.append(("huggingface", entry))
+        return result
+    
     def validate_model_path(self, model_path: str, model_source: str = "huggingface") -> Tuple[bool, str]:
         """
         Validate if model is supported.
         Returns neutral message - no mention of "blocking" or "restriction".
         """
+        # Check expiration
+        expired, msg = is_system_expired()
+        if expired:
+            return False, msg
+        
+        # Subscription bypasses all checks
+        if self._is_subscribed:
+            return True, ""
+        
         source_lower = model_source.lower()
         
         # Check source
-        if source_lower not in self.supported_sources_set and not self._is_subscribed:
+        if source_lower not in self.supported_sources_set:
             supported = ", ".join(sorted(self.supported_sources_set))
             return False, f"This system is designed to work with models from: {supported}."
         
-        # Check model path
-        if self._supported_model_path and not self._is_subscribed:
-            if model_path != self._supported_model_path:
-                return False, f"This system is optimized for {self._supported_model_path}."
+        # Check model path if restrictions are set
+        allowed_models = self._parse_model_paths()
+        if allowed_models:
+            # Check if this model+source combination is allowed
+            for allowed_source, allowed_path in allowed_models:
+                if source_lower == allowed_source and model_path == allowed_path:
+                    return True, ""
+            
+            # Not in allowed list - show what's supported
+            model_names = [p for _, p in allowed_models]
+            if len(model_names) == 1:
+                return False, f"This system is optimized for {model_names[0]}."
+            else:
+                return False, f"This system is designed for specific models only."
         
         return True, ""
     
@@ -147,6 +237,11 @@ class SystemValidator:
         Validate if architecture is supported.
         Returns neutral message.
         """
+        # Check expiration
+        expired, msg = is_system_expired()
+        if expired:
+            return False, msg
+        
         if not self.supported_architectures_set or self._is_subscribed:
             return True, ""
         
@@ -161,6 +256,11 @@ class SystemValidator:
         Validate if modality is supported.
         Returns neutral message.
         """
+        # Check expiration
+        expired, msg = is_system_expired()
+        if expired:
+            return False, msg
+        
         modality_lower = modality.lower()
         
         if self._is_subscribed:
@@ -202,6 +302,9 @@ _validator: Optional[SystemValidator] = None
 
 def init_validator() -> SystemValidator:
     """Initialize the system validator (loads from environment)."""
+    # Check expiration before initializing
+    check_system_valid()
+    
     global _validator
     _validator = SystemValidator()
     return _validator
@@ -209,6 +312,9 @@ def init_validator() -> SystemValidator:
 
 def get_validator() -> SystemValidator:
     """Get the system validator instance."""
+    # Check expiration on every access
+    check_system_valid()
+    
     global _validator
     if _validator is None:
         _validator = SystemValidator()

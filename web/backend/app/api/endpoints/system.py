@@ -6,7 +6,7 @@ import os
 import subprocess
 
 from ...core.config import settings
-from ...core.capabilities import get_validator
+from ...core.capabilities import get_validator, is_system_expired, SystemExpiredError
 
 router = APIRouter(prefix="/api/system", tags=["system"])
 
@@ -189,6 +189,20 @@ async def get_system_status():
     """
     details = {}
     
+    # Check system expiration first
+    expired, exp_msg = is_system_expired()
+    if expired:
+        return SystemStatus(
+            status="error",
+            message=exp_msg,
+            gpu_available=False,
+            gpu_name=None,
+            cuda_available=False,
+            bios_installed=False,
+            backend_ready=False,
+            details={"error": exp_msg}
+        )
+    
     # Check BIOS installation
     bios_ok, bios_msg = check_bios_installation()
     details["bios"] = bios_msg
@@ -240,6 +254,11 @@ async def readiness_check():
     Simple readiness check for job submission.
     Returns {"ready": true/false, "reason": "..."}
     """
+    # Check expiration first
+    expired, exp_msg = is_system_expired()
+    if expired:
+        return {"ready": False, "reason": exp_msg}
+    
     bios_ok, bios_msg = check_bios_installation()
     gpu_ok, gpu_msg, _ = check_gpu_availability()
     
