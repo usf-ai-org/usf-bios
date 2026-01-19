@@ -16,7 +16,10 @@
 const BACKEND_URL = 'http://localhost:8000'
 
 async function proxyRequest(request: Request, path: string): Promise<Response> {
-  const url = `${BACKEND_URL}/api/${path}`
+  // Extract query string from original request and forward it
+  const requestUrl = new URL(request.url)
+  const queryString = requestUrl.search // includes the '?' if present
+  const url = `${BACKEND_URL}/api/${path}${queryString}`
   
   // Forward headers (except host)
   const headers = new Headers()
