@@ -30,10 +30,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN pip install --no-cache-dir cython
 
-# Copy Python source and compilation script
+# Copy compilation script first (changes here invalidate cache)
+COPY scripts/compile_to_so.py /compile/compile_to_so.py
+
+# Copy Python source
 COPY usf_bios/ /compile/usf_bios/
 COPY web/backend/ /compile/web/backend/
-COPY scripts/compile_to_so.py /compile/compile_to_so.py
 
 # Run the Cython compilation (converts .py to native .so files)
 RUN python /compile/compile_to_so.py
