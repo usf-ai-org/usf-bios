@@ -105,8 +105,8 @@ RUN echo "=== VERIFICATION: Checking compiled backend ===" && \
     test -f /app/backend/app/api/__init__.py && echo "  ✓ app/api/__init__.py" && \
     test -f /app/backend/app/core/__init__.py && echo "  ✓ app/core/__init__.py" && \
     test -f /app/backend/app/services/__init__.py && echo "  ✓ app/services/__init__.py" && \
-    echo "Checking db_models .so exists:" && \
-    find /app/backend/app/models -name "db_models*.so" | grep -q . && echo "  ✓ db_models.so found" && \
+    echo "Checking db_models.py exists (kept as .py - SQLAlchemy ORM):" && \
+    test -f /app/backend/app/models/db_models.py && echo "  ✓ db_models.py found" && \
     echo "=== VERIFICATION PASSED ==="
 
 # Copy frontend build

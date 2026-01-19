@@ -22,7 +22,8 @@ def get_py_files(directory):
     """Get all .py files except __init__.py and excluded files"""
     py_files = []
     skip_dirs = {'__pycache__', 'venv', 'env', '.venv', '.env', 'node_modules', '.git', 'build', 'dist', 'egg-info'}
-    skip_files = {'__init__.py', 'config.py'}
+    # Skip files that don't compile well with Cython (SQLAlchemy ORM, Pydantic models)
+    skip_files = {'__init__.py', 'config.py', 'db_models.py'}
     
     for root, dirs, files in os.walk(directory):
         dirs[:] = [d for d in dirs if not d.startswith('.') and d not in skip_dirs and not d.endswith('.egg-info')]
