@@ -5,7 +5,7 @@
  * This runs on the Next.js SERVER (inside the container),
  * so it can access Python backend via localhost:8000.
  * 
- * Browser → Next.js (port 3000) → Python (localhost:8000)
+ * Browser → Next.js (port 3000) → Python (localhost:8000/api/*)
  * 
  * Benefits:
  * - No public URL detection needed
@@ -16,7 +16,7 @@
 const BACKEND_URL = 'http://localhost:8000'
 
 async function proxyRequest(request: Request, path: string): Promise<Response> {
-  const url = `${BACKEND_URL}/${path}`
+  const url = `${BACKEND_URL}/api/${path}`
   
   // Forward headers (except host)
   const headers = new Headers()
@@ -57,7 +57,7 @@ async function proxyRequest(request: Request, path: string): Promise<Response> {
   } catch (error) {
     console.error('[API Proxy] Error:', error)
     return Response.json(
-      { error: 'Backend unavailable', details: String(error) },
+      { error: 'Backend unavailable', details: 'Unable to reach backend service' },
       { status: 502 }
     )
   }

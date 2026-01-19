@@ -1005,10 +1005,10 @@ export default function Home() {
                         {['huggingface', 'modelscope', 'local'].map((source) => (
                           <button key={source} 
                             onClick={() => !systemCapabilities.has_model_restriction && setConfig({ ...config, model_source: source as any })}
-                            disabled={systemCapabilities.has_model_restriction || !systemCapabilities.supported_sources.includes(source)}
+                            disabled={systemCapabilities.has_model_restriction || !(systemCapabilities.supported_sources || []).includes(source)}
                             className={`p-3 rounded-lg border-2 text-center transition-all ${
                               config.model_source === source ? 'border-blue-500 bg-blue-50 text-blue-600' : 'border-slate-200 text-slate-600 hover:border-slate-300'
-                            } ${systemCapabilities.has_model_restriction || !systemCapabilities.supported_sources.includes(source) ? 'opacity-60 cursor-not-allowed' : ''}`}>
+                            } ${systemCapabilities.has_model_restriction || !(systemCapabilities.supported_sources || []).includes(source) ? 'opacity-60 cursor-not-allowed' : ''}`}>
                             <span className="capitalize font-medium text-sm">{source}</span>
                           </button>
                         ))}
