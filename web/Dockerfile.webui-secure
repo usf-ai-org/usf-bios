@@ -10,11 +10,16 @@
 # ============================================================================
 FROM node:20-alpine AS frontend-builder
 
+# Cache bust argument - pass --build-arg CACHEBUST=$(date +%s) to force rebuild
+ARG CACHEBUST=1
+
 WORKDIR /build/frontend
 COPY web/frontend/package*.json ./
 RUN npm ci
+
+# Copy source and rebuild (CACHEBUST invalidates cache when changed)
 COPY web/frontend/ ./
-RUN npm run build
+RUN echo "Cache bust: ${CACHEBUST}" && npm run build
 
 # ============================================================================
 # Stage 2: Python Compiler - Compile backend to native .so files using Cython
