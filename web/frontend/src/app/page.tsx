@@ -85,6 +85,9 @@ interface SystemCapabilities {
   has_model_restriction: boolean
   has_architecture_restriction: boolean
   has_modality_restriction: boolean
+  has_external_storage: boolean
+  storage_path: string | null
+  storage_writable: boolean
 }
 
 interface TrainingMetric {
@@ -228,7 +231,10 @@ export default function Home() {
     supported_modalities: ['text2text', 'multimodal', 'speech2text', 'text2speech', 'vision', 'audio'],
     has_model_restriction: false,
     has_architecture_restriction: false,
-    has_modality_restriction: false
+    has_modality_restriction: false,
+    has_external_storage: false,
+    storage_path: null,
+    storage_writable: false
   })
   
   // Training metrics for graphs
@@ -1084,18 +1090,32 @@ export default function Home() {
                     <p className="text-slate-600 text-sm">Review your configuration before training</p>
                   </div>
                   
-                  {/* Output Path Configuration */}
-                  <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
-                    <div className="flex items-center gap-2 mb-3">
-                      <FolderOpen className="w-5 h-5 text-blue-600" />
-                      <label className="text-sm font-medium text-slate-900">Output Directory</label>
+                  {/* Output Path Configuration - Only show if external storage is attached */}
+                  {systemCapabilities.has_external_storage ? (
+                    <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
+                      <div className="flex items-center gap-2 mb-3">
+                        <FolderOpen className="w-5 h-5 text-blue-600" />
+                        <label className="text-sm font-medium text-slate-900">Output Directory</label>
+                        <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">External Storage</span>
+                      </div>
+                      <input type="text" value={config.output_dir}
+                        onChange={(e) => setConfig({ ...config, output_dir: e.target.value })}
+                        placeholder={`${systemCapabilities.storage_path}/finetuned`}
+                        className="w-full px-4 py-2 bg-white border border-slate-300 rounded-lg text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
+                      <p className="text-xs text-slate-500 mt-2">
+                        External storage detected at <code className="bg-slate-200 px-1 rounded">{systemCapabilities.storage_path}</code>. 
+                        Use absolute path to save to persistent storage.
+                      </p>
                     </div>
-                    <input type="text" value={config.output_dir}
-                      onChange={(e) => setConfig({ ...config, output_dir: e.target.value })}
-                      placeholder="output/finetuned-model"
-                      className="w-full px-4 py-2 bg-white border border-slate-300 rounded-lg text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
-                    <p className="text-xs text-slate-500 mt-2">Where the trained model/adapter will be saved</p>
-                  </div>
+                  ) : (
+                    <div className="bg-slate-50 rounded-lg p-4 border border-slate-200">
+                      <div className="flex items-center gap-2">
+                        <FolderOpen className="w-5 h-5 text-slate-500" />
+                        <span className="text-sm text-slate-600">Output will be saved to internal storage (not persistent)</span>
+                      </div>
+                      <p className="text-xs text-slate-400 mt-2">Attach a network volume for persistent storage</p>
+                    </div>
+                  )}
                   
                   <div className="bg-slate-50 rounded-lg p-4 space-y-3 text-sm border border-slate-200">
                     <h4 className="font-medium text-slate-900 mb-2">Configuration Summary</h4>

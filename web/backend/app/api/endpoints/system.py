@@ -302,10 +302,63 @@ async def get_system_info():
     return SystemInfo(ready=True)
 
 
+def check_external_storage() -> dict:
+    """
+    Check if external storage is mounted.
+    Common mount points for cloud GPU providers:
+    - RunPod: /runpod-volume
+    - Lambda Labs: /home/ubuntu/data
+    - Vast.ai: /workspace
+    - Generic: /mnt/storage, /shared
+    """
+    EXTERNAL_STORAGE_PATHS = [
+        "/runpod-volume",
+        "/workspace", 
+        "/mnt/storage",
+        "/shared",
+        "/data/external",
+    ]
+    
+    # Also check env var for custom storage path
+    custom_path = os.getenv("EXTERNAL_STORAGE_PATH")
+    if custom_path:
+        EXTERNAL_STORAGE_PATHS.insert(0, custom_path)
+    
+    for path in EXTERNAL_STORAGE_PATHS:
+        if os.path.exists(path) and os.path.isdir(path):
+            # Check if writable
+            try:
+                test_file = os.path.join(path, ".write_test")
+                with open(test_file, "w") as f:
+                    f.write("test")
+                os.remove(test_file)
+                return {
+                    "has_external_storage": True,
+                    "storage_path": path,
+                    "storage_writable": True
+                }
+            except:
+                return {
+                    "has_external_storage": True,
+                    "storage_path": path,
+                    "storage_writable": False
+                }
+    
+    return {
+        "has_external_storage": False,
+        "storage_path": None,
+        "storage_writable": False
+    }
+
+
 @router.get("/capabilities", include_in_schema=False)
 async def get_system_capabilities():
-    """Minimal capabilities - does not expose restrictions."""
-    return {"ready": True}
+    """Capabilities including storage detection."""
+    storage_info = check_external_storage()
+    return {
+        "ready": True,
+        **storage_info
+    }
 
 
 @router.get("/model-lock", include_in_schema=False)
