@@ -84,7 +84,8 @@ jobs:
           tags: |
             ${{ env.DOCKER_IMAGE }}:latest${{ steps.config.outputs.tag_suffix }}
             ${{ env.DOCKER_IMAGE }}:${{ steps.config.outputs.sha_short }}${{ steps.config.outputs.tag_suffix }}
-          no-cache: true
+          cache-from: type=registry,ref=${{ env.DOCKER_IMAGE }}:buildcache${{ steps.config.outputs.tag_suffix }}
+          cache-to: type=registry,ref=${{ env.DOCKER_IMAGE }}:buildcache${{ steps.config.outputs.tag_suffix }},mode=max
 
       - name: Verify built image
         if: success()
