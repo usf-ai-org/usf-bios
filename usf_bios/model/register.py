@@ -249,7 +249,32 @@ class ModelLoader(BaseModelLoader):
                 auto_tokenizer_cls = AutoProcessor
             else:
                 auto_tokenizer_cls = AutoTokenizer
-        return auto_tokenizer_cls.from_pretrained(model_dir, trust_remote_code=True)
+        
+        # Build tokenizer kwargs
+        tokenizer_kwargs = {'trust_remote_code': True}
+        
+        # Fix Mistral tokenizer regex warning (applies to Mistral-based models including USF Omega)
+        # https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84
+        should_fix_regex = False
+        try:
+            model_type = getattr(config, 'model_type', '').lower()
+            arch_str = str(getattr(config, 'architectures', [])).lower()
+            if 'mistral' in model_type or 'mistral' in arch_str:
+                should_fix_regex = True
+            elif 'usf' in arch_str or 'omega' in arch_str:
+                should_fix_regex = True
+        except Exception:
+            pass
+        
+        # Try loading with fix_mistral_regex first, fallback without if not supported
+        if should_fix_regex and auto_tokenizer_cls == AutoTokenizer:
+            try:
+                return auto_tokenizer_cls.from_pretrained(model_dir, fix_mistral_regex=True, **tokenizer_kwargs)
+            except TypeError:
+                # fix_mistral_regex not supported in this transformers version
+                pass
+        
+        return auto_tokenizer_cls.from_pretrained(model_dir, **tokenizer_kwargs)
 
     def get_model(self, model_dir: str, config: PretrainedConfig, processor: Processor,
                   model_kwargs) -> PreTrainedModel:
