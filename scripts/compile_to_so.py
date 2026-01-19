@@ -59,6 +59,12 @@ def compile_directory(source_dir, compile_from=None):
     # Convert absolute paths to relative paths from compile_from
     rel_py_files = [os.path.relpath(f, compile_from) for f in py_files]
     
+    # Store expected .so locations for each .py file
+    expected_so_files = {}
+    for py_file, rel_file in zip(py_files, rel_py_files):
+        base = os.path.splitext(rel_file)[0]
+        expected_so_files[py_file] = base
+    
     # Compile with Cython - maximum security settings
     try:
         setup(
@@ -82,8 +88,48 @@ def compile_directory(source_dir, compile_from=None):
         print(f"Error compiling {source_dir}: {e}")
         os.chdir(original_dir)
         sys.exit(1)
-    finally:
-        os.chdir(original_dir)
+    
+    # Find and move .so files from build directory if needed
+    build_dir = os.path.join(compile_from, 'build')
+    if os.path.exists(build_dir):
+        print(f"  Checking build directory for .so files...")
+        for root, dirs, files in os.walk(build_dir):
+            for file in files:
+                if file.endswith('.so'):
+                    src_path = os.path.join(root, file)
+                    # Extract module name (e.g., db_models from db_models.cpython-311-x86_64-linux-gnu.so)
+                    module_name = file.split('.')[0]
+                    # Find matching destination
+                    for py_file, base in expected_so_files.items():
+                        if base.endswith(module_name) or base.endswith('/' + module_name):
+                            dest_dir = os.path.dirname(py_file)
+                            dest_path = os.path.join(dest_dir, file)
+                            if not os.path.exists(dest_path):
+                                shutil.copy2(src_path, dest_path)
+                                print(f"  Copied: {file} -> {dest_dir}")
+                            break
+    
+    os.chdir(original_dir)
+    
+    # Verify .so files exist before removing .py files
+    missing_so = []
+    for py_file in py_files:
+        py_dir = os.path.dirname(py_file)
+        py_base = os.path.splitext(os.path.basename(py_file))[0]
+        # Look for any .so file matching this module
+        found_so = False
+        for f in os.listdir(py_dir):
+            if f.startswith(py_base + '.') and f.endswith('.so'):
+                found_so = True
+                break
+        if not found_so:
+            missing_so.append(py_file)
+    
+    if missing_so:
+        print(f"  ERROR: {len(missing_so)} .so files not found!")
+        for f in missing_so[:10]:
+            print(f"    Missing: {f}")
+        sys.exit(1)
     
     # Remove source .py files (keep __init__.py)
     for py_file in py_files:
