@@ -2,8 +2,10 @@
  * API URL Detection Utility
  * 
  * Universal backend URL detection that works with ANY cloud provider.
- * Uses probe-based detection: tries candidate URLs once at startup,
- * caches the working URL, and uses it for all subsequent requests.
+ * Detects the correct backend URL based on the current browser hostname.
+ * 
+ * IMPORTANT: localhost from browser != localhost in container
+ * On cloud providers, the browser runs on user's machine, not in the container.
  */
 
 // Cached API URL - detected once at startup, used for entire runtime
@@ -11,38 +13,57 @@ let _cachedApiUrl: string | null = null
 let _detectionPromise: Promise<string> | null = null
 
 /**
+ * Get the primary backend URL based on current hostname.
+ * This is the MOST LIKELY correct URL for the current environment.
+ */
+function getPrimaryBackendUrl(): string {
+  if (typeof window === 'undefined') return ''
+  
+  const hostname = window.location.hostname
+  const protocol = window.location.protocol
+  
+  // RunPod, Vast.ai, Lambda, etc. - port is in hostname
+  // xxx-3000.proxy.runpod.net -> xxx-8000.proxy.runpod.net
+  if (hostname.includes('-3000')) {
+    return `${protocol}//${hostname.replace(/-3000/g, '-8000')}`
+  }
+  
+  // Local development only
+  if (hostname === 'localhost' || hostname === '127.0.0.1') {
+    return 'http://localhost:8000'
+  }
+  
+  // Azure, AWS, GCP, etc. - same hostname, different port
+  return `${protocol}//${hostname}:8000`
+}
+
+/**
  * Generate candidate API URLs to try, ordered by likelihood.
- * This covers all possible deployment scenarios.
+ * NEVER includes localhost for cloud environments (browser != container).
  */
 function getCandidateUrls(): string[] {
   if (typeof window === 'undefined') return []
   
   const hostname = window.location.hostname
   const protocol = window.location.protocol
-  const port = window.location.port
+  const primary = getPrimaryBackendUrl()
   
-  const candidates: string[] = []
+  const candidates: string[] = [primary]
   
-  // 1. Port-based proxy pattern (RunPod, Vast.ai, Lambda, etc.)
-  // Replace -3000 with -8000 in hostname
+  // For cloud environments, also try same host with port 8000
   if (hostname.includes('-3000')) {
-    const proxyHostname = hostname.replace(/-3000/g, '-8000')
-    candidates.push(`${protocol}//${proxyHostname}`)
+    // Already have the -8000 version, also try direct hostname:8000
+    candidates.push(`${protocol}//${hostname}:8000`)
   }
   
-  // 2. Same hostname, port 8000 (most hyperscalers, Docker, K8s)
-  candidates.push(`${protocol}//${hostname}:8000`)
-  
-  // 3. localhost:8000 (local development, same container)
-  if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
-    candidates.push(`${protocol}//localhost:8000`)
-    candidates.push(`${protocol}//127.0.0.1:8000`)
-  } else {
-    // Already localhost, just use it
+  // For local dev, try both localhost and 127.0.0.1
+  if (hostname === 'localhost') {
+    candidates.push('http://127.0.0.1:8000')
+  } else if (hostname === '127.0.0.1') {
     candidates.push('http://localhost:8000')
   }
   
-  // 4. Same host without port (reverse proxy routing /api to backend)
+  // Same host without port (reverse proxy routing)
   candidates.push('')
   
   // Remove duplicates while preserving order
@@ -117,7 +138,7 @@ export async function initApiUrl(): Promise<string> {
 
 /**
  * Get the cached API URL synchronously.
- * Returns empty string if not yet detected.
+ * Returns primary backend URL if not yet detected.
  * Use initApiUrl() for async initialization.
  */
 export function getApiUrl(): string {
@@ -130,18 +151,9 @@ export function getApiUrl(): string {
     initApiUrl()
   }
   
-  // Return best guess synchronously while detection runs
-  if (typeof window === 'undefined') return ''
-  
-  const hostname = window.location.hostname
-  const protocol = window.location.protocol
-  
-  // Quick sync fallback for immediate use
-  if (hostname.includes('-3000')) {
-    return `${protocol}//${hostname.replace(/-3000/g, '-8000')}`
-  }
-  
-  return `${protocol}//${hostname}:8000`
+  // Return primary URL synchronously while detection runs
+  // This is the best guess based on hostname - NEVER returns localhost on cloud
+  return getPrimaryBackendUrl()
 }
 
 /**
