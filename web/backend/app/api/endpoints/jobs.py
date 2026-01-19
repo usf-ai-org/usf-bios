@@ -14,6 +14,7 @@ from ...services.websocket_manager import ws_manager
 from ...services.job_service import JobService
 from ...core.database import get_db
 from ...core.config import settings
+from ...core.capabilities import get_validator, is_system_expired
 
 router = APIRouter()
 
@@ -27,16 +28,22 @@ class JobNameUpdate(BaseModel):
 async def create_job(config: TrainingConfig):
     """Create a new training job"""
     try:
+        # Check system expiration first
+        expired, exp_msg = is_system_expired()
+        if expired:
+            raise HTTPException(status_code=403, detail=exp_msg)
+        
+        validator = get_validator()
         model_source = config.model_source.value if hasattr(config.model_source, 'value') else str(config.model_source)
         modality = config.modality.value if hasattr(config.modality, 'value') else str(config.modality)
         
-        # Validate model path against system capabilities
-        is_supported, message = settings.validate_model_path(config.model_path, model_source)
+        # Validate model path against system restrictions
+        is_supported, message = validator.validate_model_path(config.model_path, model_source)
         if not is_supported:
             raise HTTPException(status_code=403, detail=message)
         
-        # Validate modality against system capabilities
-        is_supported, message = settings.validate_modality(modality)
+        # Validate modality against system restrictions
+        is_supported, message = validator.validate_modality(modality)
         if not is_supported:
             raise HTTPException(status_code=403, detail=message)
         

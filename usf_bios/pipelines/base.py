@@ -7,6 +7,13 @@ from typing import List, Optional, Union
 
 import usf_bios
 from usf_bios.arguments import AppArguments, BaseArguments, WebUIArguments
+from usf_bios.system_guard import (
+    check_system_valid, 
+    validate_model, 
+    validate_architecture,
+    validate_modality,
+    SystemGuardError
+)
 from usf_bios.utils import (ProcessorMixin, get_logger, is_master, parse_args, seed_everything,
                          setup_graceful_exit, show_startup_banner, show_success, show_training_complete,
                          show_training_failed, start_training_timer)
@@ -44,9 +51,47 @@ class USFPipeline(ABC, ProcessorMixin):
                 and 'dsw-' in os.environ['JUPYTER_NAME'] and 'GRADIO_ROOT_PATH' not in os.environ):
             os.environ['GRADIO_ROOT_PATH'] = f"/{os.environ['JUPYTER_NAME']}/proxy/{args.server_port}"
 
+    def _validate_system_restrictions(self):
+        """Validate system restrictions before training starts."""
+        args = self.args
+        
+        # Check system expiration
+        check_system_valid()
+        
+        # Validate model if specified
+        model_path = getattr(args, 'model', None)
+        if model_path:
+            # Determine model source
+            model_source = "huggingface"  # default
+            if hasattr(args, 'use_hf') and not args.use_hf:
+                model_source = "modelscope"
+            if model_path.startswith('/') or model_path.startswith('./'):
+                model_source = "local"
+            
+            validate_model(model_path, model_source)
+        
+        # Validate modality if this is a training pipeline
+        if hasattr(args, 'train_type'):
+            # Determine modality from model type or training type
+            modality = "text2text"  # default
+            if hasattr(args, 'model_type'):
+                model_type = getattr(args, 'model_type', '')
+                if model_type in ['vlm', 'mllm', 'vision']:
+                    modality = "multimodal"
+                elif model_type in ['audio', 'speech']:
+                    modality = "audio"
+            validate_modality(modality)
+
     def main(self):
         logger.info_debug(f'[USF BIOS] Start time: {dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")}')
         logger.info_debug(f'[USF BIOS] Version: {usf_bios.__version__}')
+        
+        # Validate system restrictions BEFORE anything else
+        try:
+            self._validate_system_restrictions()
+        except SystemGuardError as e:
+            logger.error(f'[USF BIOS] System validation failed: {e}')
+            raise
         
         # Setup graceful exit handling
         setup_graceful_exit()
