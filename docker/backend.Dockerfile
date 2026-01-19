@@ -34,7 +34,7 @@ RUN if [ ! -s /app/requirements.txt ]; then \
     echo "pynvml>=11.5.0" >> /app/requirements.txt && \
     echo "psutil>=5.9.0" >> /app/requirements.txt && \
     echo "torch>=2.1.0" >> /app/requirements.txt && \
-    echo "transformers>=4.36.0" >> /app/requirements.txt && \
+    echo "git+https://github.com/apt-team-018/transformers.git" >> /app/requirements.txt && \
     echo "datasets>=2.15.0" >> /app/requirements.txt && \
     echo "peft>=0.7.0" >> /app/requirements.txt && \
     echo "trl>=0.7.0" >> /app/requirements.txt && \

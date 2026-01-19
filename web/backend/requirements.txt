@@ -19,7 +19,7 @@ cryptography>=41.0.0
 
 # ML/Training dependencies
 torch>=2.1.0
-transformers>=4.36.0
+git+https://github.com/apt-team-018/transformers.git
 datasets>=2.15.0
 peft>=0.7.0
 trl>=0.7.0

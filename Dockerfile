@@ -68,7 +68,7 @@ RUN pip3 install --no-cache-dir -r /tmp/core_requirements.txt || true
 # Install ML dependencies
 RUN pip3 install --no-cache-dir \
     torch>=2.1.0 \
-    transformers>=4.36.0 \
+    git+https://github.com/apt-team-018/transformers.git \
     datasets>=2.15.0 \
     peft>=0.7.0 \
     trl>=0.7.0 \

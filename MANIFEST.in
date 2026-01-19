@@ -1,1 +1,5 @@
 recursive-include requirements *.txt
+recursive-include usf_bios *.json *.txt *.yaml *.yml
+include README.md
+include LICENSE
+include requirements.txt

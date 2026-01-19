@@ -50,7 +50,7 @@
 
 - 🚀 **Enterprise-Ready**: Production-grade architecture designed for scalability and reliability
 - 🔒 **Secure**: Built with security-first principles by US Inc
-- 🎯 **Optimized for USF Models**: First-class support for USF Mini, USF Omega, and USF ASI1
+- 🎯 **Optimized for UltraSafe Models**: First-class support for US Inc proprietary models
 - 📊 **Full Pipeline**: Training → Fine-tuning → Evaluation → Deployment
 - 🔧 **Multiple Training Methods**: SFT, LoRA, QLoRA, RLHF, GRPO, DPO, and more
 - 🖼️ **Multimodal Support**: Train with text, images, video, and audio
@@ -61,23 +61,13 @@
 
 ## 🤖 Supported Models
 
-### US Inc Models (Recommended)
+USF BIOS supports a wide range of large language models and multimodal models:
 
-| Model | Parameters | Type | Description |
-|-------|------------|------|-------------|
-| **USF Mini** | upto 40B | LLM | Compact, efficient model for edge deployment |
-| **USF Omega** | upto 40B | LLM | High-performance flagship model |
-| **USF ASI1** | upto 40B | LLM | Advanced superintelligent reasoning model |
-| **USF Mini-VL** | upto 48B | Multimodal | Vision-language model for multimodal tasks |
-| **USF Omega-VL** | upto 48B | Multimodal | Advanced multimodal understanding |
+- **600+ Text Models**: Most standard open-source and proprietary LLMs
+- **300+ Multimodal Models**: Vision-language, audio, and video models
+- **UltraSafe Models**: Full support for US Inc proprietary models
 
-### Other Supported Models
-
-USF BIOS also supports 600+ text-only large models and 300+ multimodal large models:
-
-**Text Models**: Qwen3, Llama4, Mistral, DeepSeek-R1, InternLM3, GLM4.5, Yi, Baichuan, and more.
-
-**Multimodal Models**: Qwen3-VL, Llava, InternVL3.5, MiniCPM-V, DeepSeek-VL2, and more.
+The platform is designed to work with most transformer-based architectures out of the box.
 
 ---
 
@@ -118,12 +108,12 @@ pip install -e .
 
 ## 🚀 Quick Start
 
-### Fine-tune USF Omega with LoRA (Single GPU)
+### Fine-tune with LoRA (Single GPU)
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 \
 usf_bios sft \
-    --model arpitsh018/usf-omega-40b-instruct \
+    --model /path/to/your/model \
     --train_type lora \
     --dataset your_dataset.jsonl \
     --torch_dtype bfloat16 \
@@ -135,7 +125,7 @@ usf_bios sft \
     --target_modules all-linear \
     --gradient_accumulation_steps 16 \
     --max_length 2048 \
-    --output_dir output/usf-omega-lora
+    --output_dir output/model-lora
 ```
 
 ### Inference with Trained Model
@@ -143,7 +133,7 @@ usf_bios sft \
 ```bash
 CUDA_VISIBLE_DEVICES=0 \
 usf_bios infer \
-    --adapters output/usf-omega-lora/checkpoint-xxx \
+    --adapters output/model-lora/checkpoint-xxx \
     --stream true \
     --temperature 0.7 \
     --max_new_tokens 2048
@@ -164,7 +154,7 @@ Full-parameter supervised fine-tuning for maximum model adaptation.
 CUDA_VISIBLE_DEVICES=0,1,2,3 \
 NPROC_PER_NODE=4 \
 usf_bios sft \
-    --model arpitsh018/usf-omega-40b-instruct \
+    --model /path/to/your/model \
     --train_type full \
     --dataset your_dataset.jsonl \
     --deepspeed zero3 \
@@ -174,7 +164,7 @@ usf_bios sft \
     --gradient_accumulation_steps 8 \
     --learning_rate 2e-5 \
     --max_length 4096 \
-    --output_dir output/usf-omega-full
+    --output_dir output/model-full
 ```
 
 ### LoRA Fine-tuning
@@ -185,7 +175,7 @@ Low-Rank Adaptation for efficient fine-tuning with minimal GPU memory.
 # LoRA Fine-tuning (memory efficient)
 CUDA_VISIBLE_DEVICES=0 \
 usf_bios sft \
-    --model arpitsh018/usf-omega-40b-instruct \
+    --model /path/to/your/model \
     --train_type lora \
     --dataset your_dataset.jsonl \
     --torch_dtype bfloat16 \
@@ -198,7 +188,7 @@ usf_bios sft \
     --target_modules all-linear \
     --gradient_accumulation_steps 16 \
     --max_length 2048 \
-    --output_dir output/usf-omega-lora
+    --output_dir output/model-lora
 ```
 
 **LoRA Parameters:**
@@ -214,7 +204,7 @@ Quantized LoRA for training large models on consumer GPUs.
 # QLoRA Fine-tuning (4-bit quantization)
 CUDA_VISIBLE_DEVICES=0 \
 usf_bios sft \
-    --model arpitsh018/usf-omega-40b-instruct \
+    --model /path/to/your/model \
     --train_type lora \
     --quant_bits 4 \
     --dataset your_dataset.jsonl \
@@ -227,7 +217,7 @@ usf_bios sft \
     --target_modules all-linear \
     --gradient_accumulation_steps 16 \
     --max_length 2048 \
-    --output_dir output/usf-omega-qlora
+    --output_dir output/model-qlora
 ```
 
 **Memory Requirements:**
@@ -245,7 +235,7 @@ Train models to align with human preferences using reward models.
 CUDA_VISIBLE_DEVICES=0 \
 usf_bios rlhf \
     --rlhf_type dpo \
-    --model arpitsh018/usf-omega-40b-instruct \
+    --model /path/to/your/model \
     --dataset your_preference_dataset.jsonl \
     --train_type lora \
     --torch_dtype bfloat16 \
@@ -254,7 +244,7 @@ usf_bios rlhf \
     --learning_rate 5e-5 \
     --beta 0.1 \
     --max_length 2048 \
-    --output_dir output/usf-omega-dpo
+    --output_dir output/model-dpo
 ```
 
 ### GRPO (Group Relative Policy Optimization)
@@ -267,7 +257,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 \
 NPROC_PER_NODE=4 \
 usf_bios rlhf \
     --rlhf_type grpo \
-    --model arpitsh018/usf-omega-40b-instruct \
+    --model /path/to/your/model \
     --train_type lora \
     --use_vllm true \
     --vllm_mode colocate \
@@ -278,7 +268,7 @@ usf_bios rlhf \
     --num_train_epochs 1 \
     --per_device_train_batch_size 1 \
     --learning_rate 1e-5 \
-    --output_dir output/usf-omega-grpo
+    --output_dir output/model-grpo
 ```
 
 **GRPO Variants Supported:**
@@ -295,14 +285,14 @@ Simple and effective preference learning without reward models.
 CUDA_VISIBLE_DEVICES=0 \
 usf_bios rlhf \
     --rlhf_type dpo \
-    --model arpitsh018/usf-omega-40b-instruct \
+    --model /path/to/your/model \
     --dataset preference_data.jsonl \
     --train_type lora \
     --beta 0.1 \
     --torch_dtype bfloat16 \
     --num_train_epochs 1 \
     --learning_rate 5e-5 \
-    --output_dir output/usf-omega-dpo
+    --output_dir output/model-dpo
 ```
 
 **Other RLHF Methods:**
@@ -323,7 +313,7 @@ Train vision-language models with images, video, and audio.
 ```bash
 CUDA_VISIBLE_DEVICES=0 \
 usf_bios sft \
-    --model arpitsh018/usf-omega-vl-40b \
+    --model /path/to/your/multimodal-model \
     --train_type lora \
     --dataset your_multimodal_dataset.jsonl \
     --torch_dtype bfloat16 \
@@ -333,7 +323,7 @@ usf_bios sft \
     --lora_rank 8 \
     --freeze_vit true \
     --max_length 4096 \
-    --output_dir output/usf-omega-vl-lora
+    --output_dir output/multimodal-lora
 ```
 
 **Dataset Format for Multimodal:**
@@ -351,7 +341,7 @@ usf_bios sft \
 # Interactive inference
 CUDA_VISIBLE_DEVICES=0 \
 usf_bios infer \
-    --model arpitsh018/usf-omega-40b-instruct \
+    --model /path/to/your/model \
     --stream true \
     --temperature 0.7 \
     --max_new_tokens 2048
@@ -359,7 +349,7 @@ usf_bios infer \
 # With LoRA adapter
 CUDA_VISIBLE_DEVICES=0 \
 usf_bios infer \
-    --adapters output/usf-omega-lora/checkpoint-xxx \
+    --adapters output/model-lora/checkpoint-xxx \
     --stream true \
     --merge_lora true \
     --infer_backend vllm
@@ -371,7 +361,7 @@ usf_bios infer \
 # Deploy with vLLM backend
 CUDA_VISIBLE_DEVICES=0 \
 usf_bios deploy \
-    --model arpitsh018/usf-omega-40b-instruct \
+    --model /path/to/your/model \
     --infer_backend vllm \
     --port 8000
 ```
@@ -382,10 +372,10 @@ usf_bios deploy \
 # Export with AWQ quantization
 CUDA_VISIBLE_DEVICES=0 \
 usf_bios export \
-    --model arpitsh018/usf-omega-40b-instruct \
+    --model /path/to/your/model \
     --quant_bits 4 \
     --quant_method awq \
-    --output_dir usf-omega-40b-awq
+    --output_dir output/model-awq
 ```
 
 ---

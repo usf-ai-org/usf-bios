@@ -17,9 +17,10 @@ version_file = 'usf_bios/version.py'
 
 
 def get_version():
+    version_vars = {}
     with open(version_file, 'r', encoding='utf-8') as f:
-        exec(compile(f.read(), version_file, 'exec'))
-    return locals()['__version__']
+        exec(compile(f.read(), version_file, 'exec'), version_vars)
+    return version_vars['__version__']
 
 
 def parse_requirements(fname='requirements.txt', with_version=True):

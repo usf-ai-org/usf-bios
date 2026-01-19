@@ -36,7 +36,7 @@ sortedcontainers>=1.5.9
 tensorboard
 tiktoken
 tqdm
-transformers @ git+https://github.com/apt-team-018/transformers.git
+git+https://github.com/apt-team-018/transformers.git
 transformers_stream_generator
 trl>=0.15,<0.25
 uvicorn
