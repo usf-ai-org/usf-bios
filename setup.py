@@ -168,56 +168,55 @@ def parse_requirements(fname='requirements.txt', with_version=True):
     return gen_packages_items()
 
 
-if __name__ == '__main__':
-    install_requires, deps_link = parse_requirements('requirements.txt')
-    extra_requires = {}
-    all_requires = []
-    extra_requires['eval'], _ = parse_requirements('requirements/eval.txt')
-    extra_requires['swanlab'], _ = parse_requirements('requirements/swanlab.txt')
-    extra_requires['ray'], _ = parse_requirements('requirements/ray.txt')
-    all_requires.extend(install_requires)
-    all_requires.extend(extra_requires['eval'])
-    all_requires.extend(extra_requires['swanlab'])
-    all_requires.extend(extra_requires['ray'])
-    extra_requires['all'] = all_requires
+install_requires, deps_link = parse_requirements('requirements.txt')
+extra_requires = {}
+all_requires = []
+extra_requires['eval'], _ = parse_requirements('requirements/eval.txt')
+extra_requires['swanlab'], _ = parse_requirements('requirements/swanlab.txt')
+extra_requires['ray'], _ = parse_requirements('requirements/ray.txt')
+all_requires.extend(install_requires)
+all_requires.extend(extra_requires['eval'])
+all_requires.extend(extra_requires['swanlab'])
+all_requires.extend(extra_requires['ray'])
+extra_requires['all'] = all_requires
 
-    setup(
-        name='usf_bios',
-        version=get_version(),
-        description='USF BIOS: AI Training & Fine-tuning Platform - Powered by US Inc',
-        long_description=readme(),
-        long_description_content_type='text/markdown',
-        author='US Inc',
-        author_email='support@us.inc',
-        keywords=['transformers', 'LLM', 'lora', 'megatron', 'grpo', 'sft', 'usf-bios', 'us-inc'],
-        url='https://us.inc',
-        packages=find_packages(exclude=('tests', 'tests.*')),
-        include_package_data=True,
-        package_data={
-            '': ['utils/*', 'llm/dataset/data/*.*', 'llm/ds_config/*.json', 'plugin/loss_scale/config/*.json']
-        },
-        python_requires='>=3.8.0',
-        classifiers=[
-            'Development Status :: 4 - Beta',
-            'License :: OSI Approved :: Apache Software License',
-            'Operating System :: OS Independent',
-            'Programming Language :: Python :: 3',
-            'Programming Language :: Python :: 3.8',
-            'Programming Language :: Python :: 3.9',
-            'Programming Language :: Python :: 3.10',
-            'Programming Language :: Python :: 3.11',
-            'Programming Language :: Python :: 3.12',
-        ],
-        license='Apache License 2.0',
-        tests_require=parse_requirements('requirements/tests.txt'),
-        install_requires=install_requires,
-        extras_require=extra_requires,
-        entry_points={
-            'console_scripts': ['usf_bios=usf_bios.cli.main:cli_main', 'usf_bios_megatron=usf_bios.cli._megatron.main:cli_main']
-        },
-        cmdclass={
-            'install': PostInstallCommand,
-            'develop': PostDevelopCommand,
-        },
-        dependency_links=deps_link,
-        zip_safe=False)
+setup(
+    name='usf_bios',
+    version=get_version(),
+    description='USF BIOS: AI Training & Fine-tuning Platform - Powered by US Inc',
+    long_description=readme(),
+    long_description_content_type='text/markdown',
+    author='US Inc',
+    author_email='support@us.inc',
+    keywords=['transformers', 'LLM', 'lora', 'megatron', 'grpo', 'sft', 'usf-bios', 'us-inc'],
+    url='https://us.inc',
+    packages=find_packages(exclude=('tests', 'tests.*')),
+    include_package_data=True,
+    package_data={
+        '': ['utils/*', 'llm/dataset/data/*.*', 'llm/ds_config/*.json', 'plugin/loss_scale/config/*.json']
+    },
+    python_requires='>=3.8.0',
+    classifiers=[
+        'Development Status :: 4 - Beta',
+        'License :: OSI Approved :: Apache Software License',
+        'Operating System :: OS Independent',
+        'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.8',
+        'Programming Language :: Python :: 3.9',
+        'Programming Language :: Python :: 3.10',
+        'Programming Language :: Python :: 3.11',
+        'Programming Language :: Python :: 3.12',
+    ],
+    license='Apache License 2.0',
+    tests_require=parse_requirements('requirements/tests.txt'),
+    install_requires=install_requires,
+    extras_require=extra_requires,
+    entry_points={
+        'console_scripts': ['usf_bios=usf_bios.cli.main:cli_main', 'usf_bios_megatron=usf_bios.cli._megatron.main:cli_main']
+    },
+    cmdclass={
+        'install': PostInstallCommand,
+        'develop': PostDevelopCommand,
+    },
+    dependency_links=deps_link,
+    zip_safe=False)
