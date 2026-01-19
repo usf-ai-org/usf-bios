@@ -55,12 +55,13 @@ async def get_config(request: Request):
 @app.on_event("startup")
 async def startup_event():
     """Initialize on startup"""
-    os.makedirs("/app/data", exist_ok=True)
-    os.makedirs("/app/data/datasets", exist_ok=True)
-    os.makedirs("/app/data/output", exist_ok=True)
-    os.makedirs("/app/data/checkpoints", exist_ok=True)
-    os.makedirs("/app/data/logs", exist_ok=True)
-    os.makedirs("/app/data/terminal_logs", exist_ok=True)
+    data_dir = os.environ.get("DATA_DIR", "/app/data")
+    os.makedirs(data_dir, exist_ok=True)
+    os.makedirs(f"{data_dir}/datasets", exist_ok=True)
+    os.makedirs(f"{data_dir}/output", exist_ok=True)
+    os.makedirs(f"{data_dir}/checkpoints", exist_ok=True)
+    os.makedirs(f"{data_dir}/logs", exist_ok=True)
+    os.makedirs(f"{data_dir}/terminal_logs", exist_ok=True)
     
     init_db()
     
