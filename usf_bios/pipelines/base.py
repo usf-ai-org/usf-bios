@@ -11,7 +11,6 @@ from usf_bios.system_guard import (
     check_system_valid, 
     validate_model, 
     validate_architecture,
-    validate_modality,
     SystemGuardError
 )
 from usf_bios.utils import (ProcessorMixin, get_logger, is_master, parse_args, seed_everything,
@@ -70,17 +69,8 @@ class USFPipeline(ABC, ProcessorMixin):
             
             validate_model(model_path, model_source)
         
-        # Validate modality if this is a training pipeline
-        if hasattr(args, 'train_type'):
-            # Determine modality from model type or training type
-            modality = "text2text"  # default
-            if hasattr(args, 'model_type'):
-                model_type = getattr(args, 'model_type', '')
-                if model_type in ['vlm', 'mllm', 'vision']:
-                    modality = "multimodal"
-                elif model_type in ['audio', 'speech']:
-                    modality = "audio"
-            validate_modality(modality)
+        # Architecture validation happens when model is loaded (in model loader)
+        # This is 100% reliable as architecture is always in config.json
 
     def main(self):
         logger.info_debug(f'[USF BIOS] Start time: {dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")}')

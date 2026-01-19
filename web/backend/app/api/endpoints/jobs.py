@@ -35,17 +35,14 @@ async def create_job(config: TrainingConfig):
         
         validator = get_validator()
         model_source = config.model_source.value if hasattr(config.model_source, 'value') else str(config.model_source)
-        modality = config.modality.value if hasattr(config.modality, 'value') else str(config.modality)
         
         # Validate model path against system restrictions
         is_supported, message = validator.validate_model_path(config.model_path, model_source)
         if not is_supported:
             raise HTTPException(status_code=403, detail=message)
         
-        # Validate modality against system restrictions
-        is_supported, message = validator.validate_modality(modality)
-        if not is_supported:
-            raise HTTPException(status_code=403, detail=message)
+        # Architecture validation happens when model is loaded
+        # This is 100% reliable as architecture is always in config.json
         
         job = await job_manager.create_job(config)
         return job

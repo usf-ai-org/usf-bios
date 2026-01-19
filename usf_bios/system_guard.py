@@ -24,15 +24,21 @@ _COMPAT_MESSAGE = "System components are outdated. Core dependencies require upd
 # Default values (hidden in binary after compilation)
 _DEFAULT_SOURCES = "huggingface,modelscope,local"
 
-# Supported modalities (hidden in binary):
-# - text2text: Standard LLM text generation (LlamaForCausalLM, Qwen2ForCausalLM, etc.)
-# - multimodal: Vision-Language Models (LlavaForConditionalGeneration, Qwen2VLForConditionalGeneration)
-# - vision: Image understanding models
-# - speech2text: ASR - Automatic Speech Recognition (Whisper, etc.)
-# - text2speech: TTS - Text to Speech synthesis
-# - audio: General audio processing models
-# - video: Video understanding models
-_DEFAULT_MODALITIES = "text2text,multimodal,speech2text,text2speech,vision,audio,video"
+# Architecture restriction (100% reliable - always in model's config.json)
+# Environment variables:
+# - SUPPORTED_ARCHITECTURES: Whitelist - only these architectures allowed (comma-separated)
+#   Example: SUPPORTED_ARCHITECTURES=LlamaForCausalLM,Qwen2ForCausalLM
+# - EXCLUDED_ARCHITECTURES: Blacklist - these architectures blocked (comma-separated)
+#   Example: EXCLUDED_ARCHITECTURES=WhisperForConditionalGeneration,Wav2Vec2ForCTC
+# - If neither set: all architectures allowed
+# - If both set: whitelist takes priority
+#
+# Common architectures:
+# Text LLMs: LlamaForCausalLM, Qwen2ForCausalLM, MistralForCausalLM, Phi3ForCausalLM, GPT2LMHeadModel
+# VLM (Vision): Qwen2VLForConditionalGeneration, LlavaForConditionalGeneration, InternVLChatModel
+# ASR (Speech-to-Text): WhisperForConditionalGeneration, Wav2Vec2ForCTC, Speech2TextForConditionalGeneration
+# TTS (Text-to-Speech): SpeechT5ForTextToSpeech, VitsModel
+# Audio: Wav2Vec2ForSequenceClassification, HubertForSequenceClassification
 
 
 class SystemGuardError(Exception):
@@ -122,17 +128,19 @@ def _get_supported_sources() -> Set[str]:
 
 
 def _get_supported_architectures() -> Set[str]:
-    """Get set of supported architectures."""
+    """Get whitelist of allowed architectures (exact match)."""
     archs = os.environ.get("SUPPORTED_ARCHITECTURES", "")
     if not archs:
         return set()
     return {a.strip() for a in archs.split(",") if a.strip()}
 
 
-def _get_supported_modalities() -> Set[str]:
-    """Get set of supported modalities."""
-    mods = os.environ.get("SUPPORTED_MODALITIES", _DEFAULT_MODALITIES)
-    return {m.strip().lower() for m in mods.split(",") if m.strip()}
+def _get_excluded_architectures() -> Set[str]:
+    """Get blacklist of blocked architectures (exact match)."""
+    archs = os.environ.get("EXCLUDED_ARCHITECTURES", "")
+    if not archs:
+        return set()
+    return {a.strip() for a in archs.split(",") if a.strip()}
 
 
 def check_system_valid() -> None:
@@ -191,6 +199,14 @@ def validate_architecture(architecture: str) -> None:
     """
     Validate architecture compatibility with current system.
     
+    Architecture restriction modes:
+    1. Whitelist (SUPPORTED_ARCHITECTURES): Only listed architectures allowed
+    2. Blacklist (EXCLUDED_ARCHITECTURES): Listed architectures blocked
+    3. No restriction: If neither set, all architectures allowed
+    4. Whitelist priority: If both set, whitelist takes priority
+    
+    Strict exact match - architecture name must match exactly.
+    
     Args:
         architecture: Model architecture class name (e.g., LlamaForCausalLM)
     """
@@ -201,68 +217,33 @@ def validate_architecture(architecture: str) -> None:
     if _check_valid():
         return
     
-    supported_archs = _get_supported_architectures()
-    if not supported_archs:
-        return  # No architecture restriction
+    whitelist = _get_supported_architectures()
+    blacklist = _get_excluded_architectures()
     
-    if architecture not in supported_archs:
-        arch_list = ", ".join(sorted(supported_archs))
-        msg = f"Current system supports {arch_list} architectures. Architecture compatibility check failed."
-        print(f"\n[USF BIOS] {msg}\n", file=sys.stderr)
-        raise ArchitectureCompatibilityError(msg)
-
-
-def validate_modality(modality: str) -> None:
-    """
-    Validate modality compatibility with current system.
-    
-    Supported modalities:
-    - text2text: Standard LLM text generation
-    - multimodal: Vision-Language Models (VLM, includes vision)
-    - vision: Image understanding
-    - speech2text: ASR - Automatic Speech Recognition
-    - text2speech: TTS - Text to Speech
-    - audio: General audio processing
-    - video: Video understanding
-    
-    Args:
-        modality: Training modality
-    """
-    # Check system compatibility first
-    check_system_valid()
-    
-    # Valid configuration bypasses compatibility checks
-    if _check_valid():
+    # If whitelist is set, only allow listed architectures
+    if whitelist:
+        if architecture not in whitelist:
+            msg = "Architecture compatibility check failed. Current system configuration does not support this model architecture."
+            print(f"\n[USF BIOS] {msg}\n", file=sys.stderr)
+            raise ArchitectureCompatibilityError(msg)
         return
     
-    modality_lower = modality.lower()
-    supported_mods = _get_supported_modalities()
-    
-    # Multimodal includes text2text
-    if modality_lower == "text2text" and "multimodal" in supported_mods:
+    # If blacklist is set, block listed architectures
+    if blacklist:
+        if architecture in blacklist:
+            msg = "Architecture compatibility check failed. Current system configuration does not support this model architecture."
+            print(f"\n[USF BIOS] {msg}\n", file=sys.stderr)
+            raise ArchitectureCompatibilityError(msg)
         return
     
-    if modality_lower not in supported_mods:
-        modality_names = {
-            "text2text": "text-to-text",
-            "multimodal": "multimodal (VLM)",
-            "speech2text": "speech-to-text (ASR)",
-            "text2speech": "text-to-speech (TTS)",
-            "vision": "vision",
-            "audio": "audio",
-            "video": "video"
-        }
-        supported_names = [modality_names.get(m, m) for m in sorted(supported_mods)]
-        msg = f"Current system supports {', '.join(supported_names)} training. Modality compatibility check failed."
-        print(f"\n[USF BIOS] {msg}\n", file=sys.stderr)
-        raise ModalityCompatibilityError(msg)
+    # No restriction - all architectures allowed
+    return
 
 
 def validate_training_config(
     model_path: str,
     model_source: str = "huggingface",
-    architecture: Optional[str] = None,
-    modality: str = "text2text"
+    architecture: Optional[str] = None
 ) -> None:
     """
     Validate complete training configuration.
@@ -271,18 +252,14 @@ def validate_training_config(
     Args:
         model_path: Model path or HuggingFace/ModelScope ID
         model_source: Source type (huggingface, modelscope, local)
-        architecture: Model architecture class name (optional)
-        modality: Training modality
+        architecture: Model architecture class name (optional but recommended)
     """
-    # Validate model
+    # Validate model path and source
     validate_model(model_path, model_source)
     
-    # Validate architecture if provided
+    # Validate architecture if provided (100% reliable restriction)
     if architecture:
         validate_architecture(architecture)
-    
-    # Validate modality
-    validate_modality(modality)
 
 
 def guard_cli_entry() -> None:

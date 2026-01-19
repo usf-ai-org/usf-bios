@@ -24,15 +24,21 @@ _COMPAT_MESSAGE = "System components are outdated. Core dependencies require upd
 # Default values (hidden in binary after compilation)
 _DEFAULT_SOURCES = "huggingface,modelscope,local"
 
-# Supported modalities (hidden in binary):
-# - text2text: Standard LLM text generation (LlamaForCausalLM, Qwen2ForCausalLM, etc.)
-# - multimodal: Vision-Language Models (LlavaForConditionalGeneration, Qwen2VLForConditionalGeneration)
-# - vision: Image understanding models
-# - speech2text: ASR - Automatic Speech Recognition (Whisper, etc.)
-# - text2speech: TTS - Text to Speech synthesis
-# - audio: General audio processing models
-# - video: Video understanding models
-_DEFAULT_MODALITIES = "text2text,multimodal,speech2text,text2speech,vision,audio,video"
+# Architecture restriction (100% reliable - always in model's config.json)
+# Environment variables:
+# - SUPPORTED_ARCHITECTURES: Whitelist - only these architectures allowed (comma-separated)
+#   Example: SUPPORTED_ARCHITECTURES=LlamaForCausalLM,Qwen2ForCausalLM
+# - EXCLUDED_ARCHITECTURES: Blacklist - these architectures blocked (comma-separated)
+#   Example: EXCLUDED_ARCHITECTURES=WhisperForConditionalGeneration,Wav2Vec2ForCTC
+# - If neither set: all architectures allowed
+# - If both set: whitelist takes priority
+#
+# Common architectures:
+# Text LLMs: LlamaForCausalLM, Qwen2ForCausalLM, MistralForCausalLM, Phi3ForCausalLM
+# VLM (Vision): Qwen2VLForConditionalGeneration, LlavaForConditionalGeneration, InternVLChatModel
+# ASR (Speech-to-Text): WhisperForConditionalGeneration, Wav2Vec2ForCTC
+# TTS (Text-to-Speech): SpeechT5ForTextToSpeech, VitsModel
+# Audio: Wav2Vec2ForSequenceClassification, HubertForSequenceClassification
 
 _DEFAULT_DATA_DIR = "/app/data"
 _DEFAULT_MAX_JOBS = 3
@@ -155,11 +161,17 @@ class SystemValidator:
         check_system_valid()
         
         # Load from environment variables - defaults are hidden in binary
-        # Support both old single path and new multi-path format
+        # Model paths
         self._supported_model_paths = os.environ.get("SUPPORTED_MODEL_PATHS", os.environ.get("SUPPORTED_MODEL_PATH", ""))
         self._supported_sources = os.environ.get("SUPPORTED_MODEL_SOURCES", _DEFAULT_SOURCES)
-        self._supported_architectures = os.environ.get("SUPPORTED_ARCHITECTURES")
-        self._supported_modalities = os.environ.get("SUPPORTED_MODALITIES", _DEFAULT_MODALITIES)
+        
+        # Architecture restriction (100% reliable)
+        # Whitelist: only these architectures allowed
+        self._supported_architectures = os.environ.get("SUPPORTED_ARCHITECTURES", "")
+        # Blacklist: these architectures blocked
+        self._excluded_architectures = os.environ.get("EXCLUDED_ARCHITECTURES", "")
+        
+        # Validation key
         self._subscription_key = os.environ.get("SUBSCRIPTION_KEY")
     
     @property
@@ -173,13 +185,17 @@ class SystemValidator:
     
     @property
     def supported_architectures_set(self) -> Set[str]:
+        """Whitelist of allowed architectures (exact match)."""
         if not self._supported_architectures:
             return set()
         return {a.strip() for a in self._supported_architectures.split(",") if a.strip()}
     
     @property
-    def supported_modalities_set(self) -> Set[str]:
-        return {m.strip().lower() for m in self._supported_modalities.split(",") if m.strip()}
+    def excluded_architectures_set(self) -> Set[str]:
+        """Blacklist of blocked architectures (exact match)."""
+        if not self._excluded_architectures:
+            return set()
+        return {a.strip() for a in self._excluded_architectures.split(",") if a.strip()}
     
     def _parse_model_paths(self) -> List[Tuple[str, str]]:
         """
@@ -246,61 +262,40 @@ class SystemValidator:
     def validate_architecture(self, architecture: str) -> Tuple[bool, str]:
         """
         Validate architecture compatibility with current system.
+        
+        Architecture restriction modes:
+        1. Whitelist (SUPPORTED_ARCHITECTURES): Only listed architectures allowed
+        2. Blacklist (EXCLUDED_ARCHITECTURES): Listed architectures blocked
+        3. No restriction: If neither set, all architectures allowed
+        4. Whitelist priority: If both set, whitelist takes priority
+        
+        Strict exact match - architecture name must match exactly.
         """
         # Check system compatibility
         needs_update, msg = is_system_expired()
         if needs_update:
             return False, msg
         
-        if not self.supported_architectures_set or self._is_valid:
-            return True, ""
-        
-        if architecture not in self.supported_architectures_set:
-            arch_list = ", ".join(sorted(self.supported_architectures_set))
-            return False, f"Current system supports {arch_list} architectures. Architecture compatibility check failed."
-        
-        return True, ""
-    
-    def validate_modality(self, modality: str) -> Tuple[bool, str]:
-        """
-        Validate modality compatibility with current system.
-        
-        Supported modalities:
-        - text2text: Standard LLM text generation
-        - multimodal: Vision-Language Models (VLM)
-        - vision: Image understanding
-        - speech2text: ASR - Automatic Speech Recognition
-        - text2speech: TTS - Text to Speech
-        - audio: General audio processing
-        - video: Video understanding
-        """
-        # Check system compatibility
-        needs_update, msg = is_system_expired()
-        if needs_update:
-            return False, msg
-        
-        modality_lower = modality.lower()
-        
+        # Valid configuration bypasses all checks
         if self._is_valid:
             return True, ""
         
-        # Multimodal includes text2text
-        if modality_lower == "text2text" and "multimodal" in self.supported_modalities_set:
+        whitelist = self.supported_architectures_set
+        blacklist = self.excluded_architectures_set
+        
+        # If whitelist is set, only allow listed architectures
+        if whitelist:
+            if architecture not in whitelist:
+                return False, f"Architecture compatibility check failed. Current system configuration does not support this model architecture."
             return True, ""
         
-        if modality_lower not in self.supported_modalities_set:
-            modality_names = {
-                "text2text": "text-to-text",
-                "multimodal": "multimodal (VLM)",
-                "speech2text": "speech-to-text (ASR)",
-                "text2speech": "text-to-speech (TTS)",
-                "vision": "vision",
-                "audio": "audio",
-                "video": "video"
-            }
-            supported_names = [modality_names.get(m, m) for m in sorted(self.supported_modalities_set)]
-            return False, f"Current system supports {', '.join(supported_names)} training. Modality compatibility check failed."
+        # If blacklist is set, block listed architectures
+        if blacklist:
+            if architecture in blacklist:
+                return False, f"Architecture compatibility check failed. Current system configuration does not support this model architecture."
+            return True, ""
         
+        # No restriction - all architectures allowed
         return True, ""
     
     def get_info(self) -> dict:
@@ -309,9 +304,7 @@ class SystemValidator:
         Does NOT expose restriction flags - just what's supported.
         """
         return {
-            "supported_model": self._supported_model_path,
             "supported_sources": list(self.supported_sources_set),
-            "supported_modalities": list(self.supported_modalities_set),
         }
 
 
