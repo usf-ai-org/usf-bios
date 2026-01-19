@@ -6,39 +6,7 @@ import {
   Database, Cloud, FolderOpen, Loader2, AlertCircle,
   Plus, ExternalLink
 } from 'lucide-react'
-
-// Detect API URL at runtime based on current hostname
-function getApiUrl(): string {
-  if (typeof window === 'undefined') return ''
-  
-  const hostname = window.location.hostname
-  const protocol = window.location.protocol
-  
-  // RunPod: xxx-3000.proxy.runpod.net -> xxx-8000.proxy.runpod.net
-  if (hostname.includes('.proxy.runpod.net')) {
-    return `${protocol}//${hostname.replace('-3000.', '-8000.')}`
-  }
-  
-  // Vast.ai: xxx-3000.direct.vast.ai -> xxx-8000.direct.vast.ai
-  if (hostname.includes('.direct.vast.ai')) {
-    return `${protocol}//${hostname.replace('-3000.', '-8000.')}`
-  }
-  
-  // Lambda Labs or similar patterns
-  if (hostname.includes('-3000.')) {
-    return `${protocol}//${hostname.replace('-3000.', '-8000.')}`
-  }
-  
-  // Local development
-  if (hostname === 'localhost' || hostname === '127.0.0.1') {
-    return 'http://localhost:8000'
-  }
-  
-  // Default: same host, port 8000
-  return `${protocol}//${hostname}:8000`
-}
-
-const API_URL = typeof window !== 'undefined' ? getApiUrl() : ''
+import { API_URL } from '@/lib/api'
 
 type DatasetSource = 'upload' | 'huggingface' | 'modelscope' | 'local_path'
 
