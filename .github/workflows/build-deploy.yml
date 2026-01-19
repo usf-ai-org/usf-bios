@@ -92,22 +92,22 @@ jobs:
           echo "Verifying built image..."
           docker pull ${{ env.DOCKER_IMAGE }}:latest${{ steps.config.outputs.tag_suffix }}
           
-          # Start container
+          # Start container - only port 3000 exposed (backend is internal)
           docker run -d --name usf-bios-verify \
-            -p 3000:3000 -p 8000:8000 \
+            -p 3000:3000 \
             ${{ env.DOCKER_IMAGE }}:latest${{ steps.config.outputs.tag_suffix }}
           
           # Wait for services to start
           echo "Waiting for services to start..."
-          sleep 20
+          sleep 30
           
-          # Test health endpoint
-          echo "Testing health endpoint..."
-          curl -f http://localhost:8000/health || (docker logs usf-bios-verify && exit 1)
-          
-          # Test frontend
+          # Test frontend (all API calls go through frontend proxy)
           echo "Testing frontend..."
           curl -f http://localhost:3000 || (docker logs usf-bios-verify && exit 1)
+          
+          # Test health via frontend proxy
+          echo "Testing health via proxy..."
+          curl -f http://localhost:3000/api/health || (docker logs usf-bios-verify && exit 1)
           
           echo "✓ All verification tests passed!"
           
