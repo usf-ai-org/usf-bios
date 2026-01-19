@@ -12,6 +12,7 @@ from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 from ...core.config import settings
+from ...core.capabilities import get_system_settings
 from ...models.schemas import DatasetValidation
 
 router = APIRouter()
@@ -226,8 +227,8 @@ def _is_name_taken(name: str) -> bool:
     normalized = _normalize_name(name)
     
     # Check uploaded files
-    settings.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    for f in settings.UPLOAD_DIR.glob("*"):
+    get_system_settings().UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    for f in get_system_settings().UPLOAD_DIR.glob("*"):
         if f.suffix.lower() in [".jsonl", ".json", ".csv"]:
             if _normalize_name(f.stem) == normalized:
                 return True
@@ -278,10 +279,10 @@ async def upload_dataset(
         
         # Create filename with user's name
         final_filename = f"{safe_name}{suffix}"
-        upload_path = settings.UPLOAD_DIR / final_filename
+        upload_path = get_system_settings().UPLOAD_DIR / final_filename
         
         # Ensure upload directory exists
-        settings.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        get_system_settings().UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         
         # Save file
         content = await file.read()
@@ -315,10 +316,10 @@ async def list_datasets():
     """List all uploaded datasets with metadata"""
     try:
         # Ensure upload directory exists
-        settings.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        get_system_settings().UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         
         datasets = []
-        for f in settings.UPLOAD_DIR.glob("*"):
+        for f in get_system_settings().UPLOAD_DIR.glob("*"):
             if f.suffix.lower() in [".jsonl", ".json", ".csv"]:
                 # Get basic info
                 stat = f.stat()
@@ -365,7 +366,7 @@ async def list_datasets():
 async def get_dataset_delete_info(dataset_id: str):
     """Get information needed for delete confirmation (returns dataset name)"""
     # Check uploaded datasets
-    dataset_path = settings.UPLOAD_DIR / dataset_id
+    dataset_path = get_system_settings().UPLOAD_DIR / dataset_id
     if dataset_path.exists() and dataset_path.is_file():
         dataset_name = dataset_path.stem  # Name without extension
         return {
@@ -394,7 +395,7 @@ async def delete_dataset(dataset_id: str, confirm: str = Query(..., description=
     """Delete an uploaded dataset (requires typing the dataset name to confirm)"""
     try:
         # Find the dataset
-        dataset_path = settings.UPLOAD_DIR / dataset_id
+        dataset_path = get_system_settings().UPLOAD_DIR / dataset_id
         
         if not dataset_path.exists():
             raise HTTPException(status_code=404, detail=f"Dataset '{dataset_id}' not found")
@@ -414,7 +415,7 @@ async def delete_dataset(dataset_id: str, confirm: str = Query(..., description=
         
         # Verify it's in the upload directory (security check)
         try:
-            dataset_path.resolve().relative_to(settings.UPLOAD_DIR.resolve())
+            dataset_path.resolve().relative_to(get_system_settings().UPLOAD_DIR.resolve())
         except ValueError:
             raise HTTPException(status_code=403, detail="Access denied")
         
@@ -506,12 +507,12 @@ async def register_dataset(registration: DatasetRegistration):
 async def list_all_datasets():
     """List all datasets (uploaded + registered from HF/MS/local)"""
     try:
-        settings.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        get_system_settings().UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         
         all_datasets = []
         
         # 1. Get uploaded files
-        for f in settings.UPLOAD_DIR.glob("*"):
+        for f in get_system_settings().UPLOAD_DIR.glob("*"):
             if f.suffix.lower() in [".jsonl", ".json", ".csv"]:
                 stat = f.stat()
                 total_samples = 0
@@ -566,7 +567,7 @@ async def unregister_dataset(dataset_id: str, confirm: str = Query(..., descript
         # Check if it's an uploaded file
         if dataset_id.startswith("upload_"):
             filename = dataset_id[7:]  # Remove "upload_" prefix
-            file_path = settings.UPLOAD_DIR / filename
+            file_path = get_system_settings().UPLOAD_DIR / filename
             if file_path.exists():
                 dataset_name = file_path.stem
                 # Validate confirmation matches the dataset name

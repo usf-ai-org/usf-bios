@@ -7,6 +7,7 @@ Users cannot see defaults, logic, or how the system works.
 """
 
 from typing import Optional, Set, Tuple, List
+from pathlib import Path
 import os
 import base64
 
@@ -16,6 +17,75 @@ _SUBSCRIPTION_KEY = base64.b64decode(b"YXJwaXRzaDAxOA==").decode()
 # Default values (hidden in binary after compilation)
 _DEFAULT_SOURCES = "huggingface,modelscope,local"
 _DEFAULT_MODALITIES = "text2text,multimodal,speech2text,text2speech,vision,audio"
+_DEFAULT_DATA_DIR = "/app/data"
+_DEFAULT_MAX_JOBS = 3
+_DEFAULT_JOB_TIMEOUT = 72
+
+
+class SystemSettings:
+    """
+    System settings loaded from environment.
+    All defaults are hidden in compiled binary.
+    """
+    
+    def __init__(self):
+        # Paths - defaults hidden in binary
+        self._data_dir = Path(os.environ.get("DATA_DIR", _DEFAULT_DATA_DIR))
+        
+        # Training limits - defaults hidden in binary
+        self._max_concurrent_jobs = int(os.environ.get("MAX_CONCURRENT_JOBS", _DEFAULT_MAX_JOBS))
+        self._job_timeout_hours = int(os.environ.get("JOB_TIMEOUT_HOURS", _DEFAULT_JOB_TIMEOUT))
+        
+        # Debug mode - default hidden
+        self._debug = os.environ.get("DEBUG", "").lower() == "true"
+    
+    @property
+    def DATA_DIR(self) -> Path:
+        return self._data_dir
+    
+    @property
+    def UPLOAD_DIR(self) -> Path:
+        return self._data_dir / "uploads"
+    
+    @property
+    def OUTPUT_DIR(self) -> Path:
+        return self._data_dir / "outputs"
+    
+    @property
+    def MODELS_DIR(self) -> Path:
+        return self._data_dir / "models"
+    
+    @property
+    def MAX_CONCURRENT_JOBS(self) -> int:
+        return self._max_concurrent_jobs
+    
+    @property
+    def JOB_TIMEOUT_HOURS(self) -> int:
+        return self._job_timeout_hours
+    
+    @property
+    def DEBUG(self) -> bool:
+        return self._debug
+    
+    def ensure_dirs(self):
+        """Create data directories if they don't exist."""
+        self.DATA_DIR.mkdir(parents=True, exist_ok=True)
+        self.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        self.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        self.MODELS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+# Singleton settings instance
+_system_settings: Optional[SystemSettings] = None
+
+
+def get_system_settings() -> SystemSettings:
+    """Get system settings instance."""
+    global _system_settings
+    if _system_settings is None:
+        _system_settings = SystemSettings()
+        _system_settings.ensure_dirs()
+    return _system_settings
 
 
 class SystemValidator:

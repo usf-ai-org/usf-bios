@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..core.config import settings
+from ..core.capabilities import get_system_settings
 from ..models.schemas import JobInfo, JobStatus, TrainingConfig
 from .job_manager import job_manager
 from .websocket_manager import ws_manager
@@ -25,7 +26,7 @@ class TrainingService:
     
     def _build_command(self, config: TrainingConfig, job_id: str) -> list:
         """Build the training command"""
-        output_dir = str(settings.OUTPUT_DIR / job_id)
+        output_dir = str(get_system_settings().OUTPUT_DIR / job_id)
         
         cmd = [
             sys.executable, "-m", "usf_bios", "sft",

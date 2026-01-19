@@ -198,9 +198,9 @@ async def list_checkpoints(job_id: str):
     """
     try:
         from pathlib import Path
-        from ...core.config import settings
+        from ...core.capabilities import get_system_settings
         
-        output_dir = settings.OUTPUT_DIR / job_id
+        output_dir = get_system_settings().OUTPUT_DIR / job_id
         
         if not output_dir.exists():
             return {
