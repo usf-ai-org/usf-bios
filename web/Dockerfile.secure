@@ -117,6 +117,16 @@ COPY --from=frontend-builder /build/frontend/.next/standalone /app/web/frontend/
 COPY --from=frontend-builder /build/frontend/.next/static /app/web/frontend/.next/static
 COPY --from=frontend-builder /build/frontend/public /app/web/frontend/public
 
+# VERIFICATION: Ensure frontend static files exist
+RUN echo "=== VERIFICATION: Checking frontend static files ===" && \
+    test -f /app/web/frontend/server.js && echo "  ✓ server.js exists" && \
+    test -d /app/web/frontend/.next/static && echo "  ✓ .next/static directory exists" && \
+    ls -la /app/web/frontend/.next/static/ && \
+    test -d /app/web/frontend/.next/static/chunks && echo "  ✓ chunks directory exists" && \
+    test -d /app/web/frontend/.next/static/css && echo "  ✓ css directory exists" && \
+    find /app/web/frontend/.next/static/css -name "*.css" | head -3 && \
+    echo "=== FRONTEND VERIFICATION PASSED ==="
+
 # Copy and setup entrypoint script
 COPY web/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
@@ -136,8 +146,8 @@ RUN mkdir -p /app/data/uploads \
     /app/data/models \
     /app/data/db \
     /app/web/backend/data && \
-    chown -R usf:usf /app/data /app/web/backend/data && \
-    chmod -R 755 /app/data /app/web/backend/data
+    chown -R usf:usf /app/data /app/web/backend/data /app/web/frontend && \
+    chmod -R 755 /app/data /app/web/backend/data /app/web/frontend
 
 # Switch to non-root user
 USER usf
