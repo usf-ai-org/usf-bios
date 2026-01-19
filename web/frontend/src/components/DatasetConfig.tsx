@@ -6,7 +6,7 @@ import {
   Database, Cloud, FolderOpen, Loader2, AlertCircle,
   Plus, ExternalLink
 } from 'lucide-react'
-import { API_URL } from '@/lib/api'
+import { API_URL } from '@/utils/api'
 
 type DatasetSource = 'upload' | 'huggingface' | 'modelscope' | 'local_path'
 

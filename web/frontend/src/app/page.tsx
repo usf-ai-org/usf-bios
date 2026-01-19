@@ -13,7 +13,7 @@ import {
 } from 'lucide-react'
 import TrainingSettingsStep from '@/components/TrainingSettings'
 import DatasetConfig from '@/components/DatasetConfig'
-import { API_URL } from '@/lib/api'
+import { API_URL } from '@/utils/api'
 
 // Types
 interface TrainingConfig {
