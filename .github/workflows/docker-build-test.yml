@@ -1,8 +1,9 @@
-name: Docker Build Test (Frontend + Backend Only)
+name: Docker Build Test
 
-# This workflow builds ONLY frontend + backend for quick testing
-# Does NOT include USF BIOS training code or Cython compilation
-# Use this to verify the web UI works before full build
+# This workflow supports multiple build types:
+# - webui-only: Frontend + Backend only (no Cython, fastest)
+# - webui-secure: Frontend + Backend with Cython compilation
+# - full-secure: Complete build with Cython + USF BIOS training code
 
 on:
   workflow_dispatch:
