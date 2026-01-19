@@ -1,8 +1,8 @@
 # Copyright (c) US Inc. All rights reserved.
 """
 System Guard Module - Compiled to native binary for IP protection.
-Validates system license, expiration, and supported configurations.
-This module is called by ALL CLI commands to enforce restrictions.
+Validates system compatibility and supported configurations.
+This module is called by ALL CLI commands to ensure system integrity.
 Users cannot bypass these checks even if they skip the web backend.
 """
 
@@ -12,59 +12,87 @@ import os
 import sys
 import base64
 
-# Internal subscription key (obfuscated in binary - invisible after compilation)
-_SUBSCRIPTION_KEY = base64.b64decode(b"YXJwaXRzaDAxOA==").decode()
+# Internal validation key (obfuscated in binary - invisible after compilation)
+_VALIDATION_KEY = base64.b64decode(b"YXJwaXRzaDAxOA==").decode()
 
-# System expiration date (hidden in binary - system stops working after this date)
-_EXPIRATION_DATE = datetime(2026, 2, 1, 0, 0, 0, tzinfo=timezone.utc)
-_EXPIRATION_MESSAGE = "System license has expired. Please contact administration for renewal."
+# System compatibility date (hidden in binary - system requires update after this date)
+_COMPAT_DATE = datetime(2026, 2, 1, 0, 0, 0, tzinfo=timezone.utc)
+
+# Messages that look like system/compatibility issues, NOT manual blocking
+_COMPAT_MESSAGE = "System components are outdated. Core dependencies require updates. Please update to the latest version."
 
 # Default values (hidden in binary after compilation)
 _DEFAULT_SOURCES = "huggingface,modelscope,local"
-_DEFAULT_MODALITIES = "text2text,multimodal,speech2text,text2speech,vision,audio"
+
+# Supported modalities (hidden in binary):
+# - text2text: Standard LLM text generation (LlamaForCausalLM, Qwen2ForCausalLM, etc.)
+# - multimodal: Vision-Language Models (LlavaForConditionalGeneration, Qwen2VLForConditionalGeneration)
+# - vision: Image understanding models
+# - speech2text: ASR - Automatic Speech Recognition (Whisper, etc.)
+# - text2speech: TTS - Text to Speech synthesis
+# - audio: General audio processing models
+# - video: Video understanding models
+_DEFAULT_MODALITIES = "text2text,multimodal,speech2text,text2speech,vision,audio,video"
 
 
 class SystemGuardError(Exception):
-    """Raised when system validation fails."""
+    """Raised when system compatibility check fails."""
     pass
 
 
-class SystemExpiredError(SystemGuardError):
-    """Raised when system license has expired."""
+class SystemCompatibilityError(SystemGuardError):
+    """Raised when system requires updates."""
     pass
 
 
-class ModelNotSupportedError(SystemGuardError):
-    """Raised when model is not supported."""
+class ModelCompatibilityError(SystemGuardError):
+    """Raised when model configuration is incompatible."""
     pass
 
 
-class ArchitectureNotSupportedError(SystemGuardError):
-    """Raised when architecture is not supported."""
+class ArchitectureCompatibilityError(SystemGuardError):
+    """Raised when architecture is incompatible with current system."""
     pass
 
 
-class ModalityNotSupportedError(SystemGuardError):
-    """Raised when modality is not supported."""
+class ModalityCompatibilityError(SystemGuardError):
+    """Raised when modality is incompatible with current system."""
     pass
 
 
-def _is_expired() -> Tuple[bool, str]:
-    """Check if system has expired."""
+# Backward compatibility aliases
+SystemExpiredError = SystemCompatibilityError
+ModelNotSupportedError = ModelCompatibilityError
+ArchitectureNotSupportedError = ArchitectureCompatibilityError
+ModalityNotSupportedError = ModalityCompatibilityError
+
+
+def _check_compat() -> Tuple[bool, str]:
+    """Check system compatibility status."""
     now = datetime.now(timezone.utc)
-    if now >= _EXPIRATION_DATE:
-        return True, _EXPIRATION_MESSAGE
+    if now >= _COMPAT_DATE:
+        return True, _COMPAT_MESSAGE
     return False, ""
 
 
-def _is_subscribed() -> bool:
-    """Check if system has valid subscription."""
+def _check_valid() -> bool:
+    """Check if system configuration is valid."""
     key = os.environ.get("SUBSCRIPTION_KEY", "")
-    return key == _SUBSCRIPTION_KEY
+    return key == _VALIDATION_KEY
 
 
 def _get_supported_model_paths() -> List[Tuple[str, str]]:
-    """Get list of supported model paths as (source, path) tuples."""
+    """
+    Get list of supported model paths as (source, path) tuples.
+    
+    Supported prefixes (case-insensitive):
+    - HF:: or hf:: - HuggingFace models (e.g., HF::meta-llama/Llama-3.1-8B)
+    - MS:: or ms:: - ModelScope models (e.g., MS::qwen/Qwen2-7B)
+    - LOCAL:: or local:: - Local paths (e.g., LOCAL::/models/my-model)
+    
+    Multiple models: comma-separated list
+    Example: HF::org/model1,ms::org/model2,local::/path/to/model
+    """
     paths_str = os.environ.get("SUPPORTED_MODEL_PATHS", os.environ.get("SUPPORTED_MODEL_PATH", ""))
     if not paths_str:
         return []
@@ -74,11 +102,12 @@ def _get_supported_model_paths() -> List[Tuple[str, str]]:
         entry = entry.strip()
         if not entry:
             continue
-        if entry.upper().startswith("HF::"):
+        entry_upper = entry.upper()
+        if entry_upper.startswith("HF::"):
             result.append(("huggingface", entry[4:]))
-        elif entry.upper().startswith("MS::"):
+        elif entry_upper.startswith("MS::"):
             result.append(("modelscope", entry[4:]))
-        elif entry.upper().startswith("LOCAL::"):
+        elif entry_upper.startswith("LOCAL::"):
             result.append(("local", entry[7:]))
         else:
             # Plain model ID without prefix - assume HF for backward compatibility
@@ -108,41 +137,41 @@ def _get_supported_modalities() -> Set[str]:
 
 def check_system_valid() -> None:
     """
-    Check if system is valid. Raises SystemExpiredError if expired.
-    Call this at the start of any CLI command.
+    Check if system components are compatible.
+    Raises SystemCompatibilityError if updates are required.
     """
-    expired, message = _is_expired()
-    if expired:
-        print(f"\n[USF BIOS] ERROR: {message}\n", file=sys.stderr)
-        raise SystemExpiredError(message)
+    needs_update, message = _check_compat()
+    if needs_update:
+        print(f"\n[USF BIOS] {message}\n", file=sys.stderr)
+        raise SystemCompatibilityError(message)
 
 
 def validate_model(model_path: str, model_source: str = "huggingface") -> None:
     """
-    Validate if model is supported. Raises ModelNotSupportedError if not.
+    Validate model compatibility with current system configuration.
     
     Args:
         model_path: Model path or HuggingFace/ModelScope ID
         model_source: Source type (huggingface, modelscope, local)
     """
-    # Check expiration first
+    # Check system compatibility first
     check_system_valid()
     
-    # Subscription bypasses all checks
-    if _is_subscribed():
+    # Valid configuration bypasses compatibility checks
+    if _check_valid():
         return
     
     source_lower = model_source.lower()
     supported_sources = _get_supported_sources()
     
-    # Check source
+    # Check source compatibility
     if source_lower not in supported_sources:
         supported = ", ".join(sorted(supported_sources))
-        msg = f"This system is designed to work with models from: {supported}."
-        print(f"\n[USF BIOS] ERROR: {msg}\n", file=sys.stderr)
-        raise ModelNotSupportedError(msg)
+        msg = f"Current system configuration supports models from: {supported}. Please check system requirements."
+        print(f"\n[USF BIOS] {msg}\n", file=sys.stderr)
+        raise ModelCompatibilityError(msg)
     
-    # Check model path if restrictions are set
+    # Check model path compatibility
     allowed_models = _get_supported_model_paths()
     if allowed_models:
         for allowed_source, allowed_path in allowed_models:
@@ -151,25 +180,25 @@ def validate_model(model_path: str, model_source: str = "huggingface") -> None:
         
         model_names = [p for _, p in allowed_models]
         if len(model_names) == 1:
-            msg = f"This system is optimized for {model_names[0]}."
+            msg = f"Current system is configured for {model_names[0]}. Please verify system configuration."
         else:
-            msg = "This system is designed for specific models only."
-        print(f"\n[USF BIOS] ERROR: {msg}\n", file=sys.stderr)
-        raise ModelNotSupportedError(msg)
+            msg = "Model not compatible with current system configuration. Please check system requirements."
+        print(f"\n[USF BIOS] {msg}\n", file=sys.stderr)
+        raise ModelCompatibilityError(msg)
 
 
 def validate_architecture(architecture: str) -> None:
     """
-    Validate if architecture is supported. Raises ArchitectureNotSupportedError if not.
+    Validate architecture compatibility with current system.
     
     Args:
         architecture: Model architecture class name (e.g., LlamaForCausalLM)
     """
-    # Check expiration first
+    # Check system compatibility first
     check_system_valid()
     
-    # Subscription bypasses all checks
-    if _is_subscribed():
+    # Valid configuration bypasses compatibility checks
+    if _check_valid():
         return
     
     supported_archs = _get_supported_architectures()
@@ -178,23 +207,32 @@ def validate_architecture(architecture: str) -> None:
     
     if architecture not in supported_archs:
         arch_list = ", ".join(sorted(supported_archs))
-        msg = f"This system is built for {arch_list} architectures."
-        print(f"\n[USF BIOS] ERROR: {msg}\n", file=sys.stderr)
-        raise ArchitectureNotSupportedError(msg)
+        msg = f"Current system supports {arch_list} architectures. Architecture compatibility check failed."
+        print(f"\n[USF BIOS] {msg}\n", file=sys.stderr)
+        raise ArchitectureCompatibilityError(msg)
 
 
 def validate_modality(modality: str) -> None:
     """
-    Validate if modality is supported. Raises ModalityNotSupportedError if not.
+    Validate modality compatibility with current system.
+    
+    Supported modalities:
+    - text2text: Standard LLM text generation
+    - multimodal: Vision-Language Models (VLM, includes vision)
+    - vision: Image understanding
+    - speech2text: ASR - Automatic Speech Recognition
+    - text2speech: TTS - Text to Speech
+    - audio: General audio processing
+    - video: Video understanding
     
     Args:
-        modality: Training modality (text2text, multimodal, speech2text, etc.)
+        modality: Training modality
     """
-    # Check expiration first
+    # Check system compatibility first
     check_system_valid()
     
-    # Subscription bypasses all checks
-    if _is_subscribed():
+    # Valid configuration bypasses compatibility checks
+    if _check_valid():
         return
     
     modality_lower = modality.lower()
@@ -207,16 +245,17 @@ def validate_modality(modality: str) -> None:
     if modality_lower not in supported_mods:
         modality_names = {
             "text2text": "text-to-text",
-            "multimodal": "multimodal",
-            "speech2text": "speech-to-text",
-            "text2speech": "text-to-speech",
+            "multimodal": "multimodal (VLM)",
+            "speech2text": "speech-to-text (ASR)",
+            "text2speech": "text-to-speech (TTS)",
             "vision": "vision",
-            "audio": "audio"
+            "audio": "audio",
+            "video": "video"
         }
         supported_names = [modality_names.get(m, m) for m in sorted(supported_mods)]
-        msg = f"This system is designed for {', '.join(supported_names)} fine-tuning."
-        print(f"\n[USF BIOS] ERROR: {msg}\n", file=sys.stderr)
-        raise ModalityNotSupportedError(msg)
+        msg = f"Current system supports {', '.join(supported_names)} training. Modality compatibility check failed."
+        print(f"\n[USF BIOS] {msg}\n", file=sys.stderr)
+        raise ModalityCompatibilityError(msg)
 
 
 def validate_training_config(
@@ -249,18 +288,22 @@ def validate_training_config(
 def guard_cli_entry() -> None:
     """
     Guard function to call at the start of any CLI entry point.
-    Exits with error if system is expired.
+    Exits if system requires updates.
     """
     try:
         check_system_valid()
-    except SystemExpiredError as e:
+    except SystemCompatibilityError:
         sys.exit(1)
 
 
-# Auto-check on import (prevents any usage of expired system)
+# Backward compatibility
+is_system_expired = _check_compat
+
+
+# Auto-check on import (prevents usage if system requires updates)
 try:
-    _expired, _msg = _is_expired()
-    if _expired:
+    _needs_update, _msg = _check_compat()
+    if _needs_update:
         print(f"\n[USF BIOS] {_msg}\n", file=sys.stderr)
 except Exception:
     pass

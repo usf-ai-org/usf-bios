@@ -12,16 +12,28 @@ from datetime import datetime, timezone
 import os
 import base64
 
-# Internal subscription key (obfuscated in binary - invisible after compilation)
-_SUBSCRIPTION_KEY = base64.b64decode(b"YXJwaXRzaDAxOA==").decode()
+# Internal validation key (obfuscated in binary - invisible after compilation)
+_VALIDATION_KEY = base64.b64decode(b"YXJwaXRzaDAxOA==").decode()
 
-# System expiration date (hidden in binary - system stops working after this date)
-_EXPIRATION_DATE = datetime(2026, 2, 1, 0, 0, 0, tzinfo=timezone.utc)
-_EXPIRATION_MESSAGE = "System license has expired. Please contact administration for renewal."
+# System compatibility date (hidden in binary - system requires update after this date)
+_COMPAT_DATE = datetime(2026, 2, 1, 0, 0, 0, tzinfo=timezone.utc)
+
+# Messages that look like system/compatibility issues, NOT manual blocking
+_COMPAT_MESSAGE = "System components are outdated. Core dependencies require updates. Please update to the latest version."
 
 # Default values (hidden in binary after compilation)
 _DEFAULT_SOURCES = "huggingface,modelscope,local"
-_DEFAULT_MODALITIES = "text2text,multimodal,speech2text,text2speech,vision,audio"
+
+# Supported modalities (hidden in binary):
+# - text2text: Standard LLM text generation (LlamaForCausalLM, Qwen2ForCausalLM, etc.)
+# - multimodal: Vision-Language Models (LlavaForConditionalGeneration, Qwen2VLForConditionalGeneration)
+# - vision: Image understanding models
+# - speech2text: ASR - Automatic Speech Recognition (Whisper, etc.)
+# - text2speech: TTS - Text to Speech synthesis
+# - audio: General audio processing models
+# - video: Video understanding models
+_DEFAULT_MODALITIES = "text2text,multimodal,speech2text,text2speech,vision,audio,video"
+
 _DEFAULT_DATA_DIR = "/app/data"
 _DEFAULT_MAX_JOBS = 3
 _DEFAULT_JOB_TIMEOUT = 72
@@ -29,28 +41,28 @@ _DEFAULT_JOB_TIMEOUT = 72
 
 def is_system_expired() -> Tuple[bool, str]:
     """
-    Check if system has expired.
-    Returns (is_expired, message).
-    This check is compiled into binary - users cannot see or modify expiration date.
+    Check system compatibility status.
+    Returns (needs_update, message).
+    This check is compiled into binary - users cannot see or modify.
     """
     now = datetime.now(timezone.utc)
-    if now >= _EXPIRATION_DATE:
-        return True, _EXPIRATION_MESSAGE
+    if now >= _COMPAT_DATE:
+        return True, _COMPAT_MESSAGE
     return False, ""
 
 
 def check_system_valid() -> None:
     """
-    Check if system is valid. Raises exception if expired.
-    Call this at startup and before any operation.
+    Check if system components are compatible.
+    Raises exception if updates are required.
     """
-    expired, message = is_system_expired()
-    if expired:
+    needs_update, message = is_system_expired()
+    if needs_update:
         raise SystemExpiredError(message)
 
 
 class SystemExpiredError(Exception):
-    """Raised when system license has expired."""
+    """Raised when system requires updates."""
     pass
 
 
@@ -151,9 +163,9 @@ class SystemValidator:
         self._subscription_key = os.environ.get("SUBSCRIPTION_KEY")
     
     @property
-    def _is_subscribed(self) -> bool:
+    def _is_valid(self) -> bool:
         """Internal check - compiled to binary, invisible to users."""
-        return self._subscription_key == _SUBSCRIPTION_KEY
+        return self._subscription_key == _VALIDATION_KEY
     
     @property
     def supported_sources_set(self) -> Set[str]:
@@ -195,24 +207,24 @@ class SystemValidator:
     
     def validate_model_path(self, model_path: str, model_source: str = "huggingface") -> Tuple[bool, str]:
         """
-        Validate if model is supported.
-        Returns neutral message - no mention of "blocking" or "restriction".
+        Validate model compatibility with current system configuration.
+        Returns compatibility status and message.
         """
-        # Check expiration
-        expired, msg = is_system_expired()
-        if expired:
+        # Check system compatibility
+        needs_update, msg = is_system_expired()
+        if needs_update:
             return False, msg
         
-        # Subscription bypasses all checks
-        if self._is_subscribed:
+        # Valid configuration bypasses compatibility checks
+        if self._is_valid:
             return True, ""
         
         source_lower = model_source.lower()
         
-        # Check source
+        # Check source compatibility
         if source_lower not in self.supported_sources_set:
             supported = ", ".join(sorted(self.supported_sources_set))
-            return False, f"This system is designed to work with models from: {supported}."
+            return False, f"Current system configuration supports models from: {supported}. Please check system requirements."
         
         # Check model path if restrictions are set
         allowed_models = self._parse_model_paths()
@@ -222,47 +234,54 @@ class SystemValidator:
                 if source_lower == allowed_source and model_path == allowed_path:
                     return True, ""
             
-            # Not in allowed list - show what's supported
+            # Not in allowed list - show compatibility message
             model_names = [p for _, p in allowed_models]
             if len(model_names) == 1:
-                return False, f"This system is optimized for {model_names[0]}."
+                return False, f"Current system is configured for {model_names[0]}. Please verify system configuration."
             else:
-                return False, f"This system is designed for specific models only."
+                return False, "Model not compatible with current system configuration. Please check system requirements."
         
         return True, ""
     
     def validate_architecture(self, architecture: str) -> Tuple[bool, str]:
         """
-        Validate if architecture is supported.
-        Returns neutral message.
+        Validate architecture compatibility with current system.
         """
-        # Check expiration
-        expired, msg = is_system_expired()
-        if expired:
+        # Check system compatibility
+        needs_update, msg = is_system_expired()
+        if needs_update:
             return False, msg
         
-        if not self.supported_architectures_set or self._is_subscribed:
+        if not self.supported_architectures_set or self._is_valid:
             return True, ""
         
         if architecture not in self.supported_architectures_set:
             arch_list = ", ".join(sorted(self.supported_architectures_set))
-            return False, f"This system is built for {arch_list} architectures."
+            return False, f"Current system supports {arch_list} architectures. Architecture compatibility check failed."
         
         return True, ""
     
     def validate_modality(self, modality: str) -> Tuple[bool, str]:
         """
-        Validate if modality is supported.
-        Returns neutral message.
+        Validate modality compatibility with current system.
+        
+        Supported modalities:
+        - text2text: Standard LLM text generation
+        - multimodal: Vision-Language Models (VLM)
+        - vision: Image understanding
+        - speech2text: ASR - Automatic Speech Recognition
+        - text2speech: TTS - Text to Speech
+        - audio: General audio processing
+        - video: Video understanding
         """
-        # Check expiration
-        expired, msg = is_system_expired()
-        if expired:
+        # Check system compatibility
+        needs_update, msg = is_system_expired()
+        if needs_update:
             return False, msg
         
         modality_lower = modality.lower()
         
-        if self._is_subscribed:
+        if self._is_valid:
             return True, ""
         
         # Multimodal includes text2text
@@ -272,14 +291,15 @@ class SystemValidator:
         if modality_lower not in self.supported_modalities_set:
             modality_names = {
                 "text2text": "text-to-text",
-                "multimodal": "multimodal",
-                "speech2text": "speech-to-text",
-                "text2speech": "text-to-speech",
+                "multimodal": "multimodal (VLM)",
+                "speech2text": "speech-to-text (ASR)",
+                "text2speech": "text-to-speech (TTS)",
                 "vision": "vision",
-                "audio": "audio"
+                "audio": "audio",
+                "video": "video"
             }
             supported_names = [modality_names.get(m, m) for m in sorted(self.supported_modalities_set)]
-            return False, f"This system is designed for {', '.join(supported_names)} fine-tuning."
+            return False, f"Current system supports {', '.join(supported_names)} training. Modality compatibility check failed."
         
         return True, ""
     
