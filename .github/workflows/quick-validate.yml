@@ -1,0 +1,119 @@
+name: Quick Cython Validation
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'scripts/compile_to_so.py'
+      - 'web/backend/**/*.py'
+      - 'usf_bios/**/*.py'
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  quick-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Cython
+        run: pip install cython setuptools
+
+      - name: Quick compile test (3 files)
+        run: |
+          echo "Testing Cython compilation on sample files..."
+          mkdir -p /tmp/compile_test/app/models
+          mkdir -p /tmp/compile_test/app/core
+          
+          # Copy a few critical files to test
+          cp web/backend/app/models/db_models.py /tmp/compile_test/app/models/
+          cp web/backend/app/models/schemas.py /tmp/compile_test/app/models/
+          touch /tmp/compile_test/app/__init__.py
+          touch /tmp/compile_test/app/models/__init__.py
+          touch /tmp/compile_test/app/core/__init__.py
+          
+          cd /tmp/compile_test
+          
+          # Test compile with same settings as production
+          python -c "
+          from setuptools import setup
+          from Cython.Build import cythonize
+          
+          setup(
+              ext_modules=cythonize(
+                  ['app/models/db_models.py', 'app/models/schemas.py'],
+                  compiler_directives={
+                      'language_level': '3',
+                      'annotation_typing': False,
+                  },
+                  nthreads=2,
+                  quiet=True
+              ),
+              script_args=['build_ext', '--inplace']
+          )
+          "
+          
+          # Verify .so files were created
+          echo "Checking for .so files..."
+          SO_COUNT=$(find . -name "*.so" | wc -l)
+          if [ "$SO_COUNT" -lt 2 ]; then
+            echo "ERROR: Expected 2 .so files, found $SO_COUNT"
+            find . -name "*.so"
+            exit 1
+          fi
+          
+          echo "✓ Quick validation passed - $SO_COUNT .so files created"
+
+      - name: Test __init__.py minimization
+        run: |
+          python -c "
+          import sys
+          sys.path.insert(0, '.')
+          
+          # Test the minimize logic on models/__init__.py
+          with open('web/backend/app/models/__init__.py', 'r') as f:
+              content = f.read()
+          
+          # Simulate minimization
+          lines = []
+          in_docstring = False
+          docstring_char = None
+          for l in content.split('\n'):
+              stripped = l.strip()
+              if not in_docstring:
+                  if stripped.startswith('\"\"\"') or stripped.startswith(\"'''\"):
+                      docstring_char = stripped[:3]
+                      if stripped.count(docstring_char) >= 2:
+                          continue
+                      in_docstring = True
+                      continue
+              else:
+                  if docstring_char in stripped:
+                      in_docstring = False
+                  continue
+              if stripped.startswith('#'):
+                  continue
+              if '#' in l and not l.strip().startswith('#'):
+                  l = l.split('#')[0].rstrip()
+              lines.append(l)
+          
+          minimized = '\n'.join(lines)
+          
+          # Verify it's valid Python
+          try:
+              compile(minimized, 'test', 'exec')
+              print('✓ __init__.py minimization syntax valid')
+          except SyntaxError as e:
+              print(f'✗ SyntaxError: {e}')
+              print('Content:')
+              print(minimized)
+              sys.exit(1)
+          "
