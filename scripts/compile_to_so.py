@@ -19,16 +19,18 @@ Options.embed_pos_in_docstring = False
 
 
 def get_py_files(directory):
-    """Get all .py files except __init__.py"""
+    """Get all .py files except __init__.py and excluded files"""
     py_files = []
     # Directories to skip
     skip_dirs = {'__pycache__', 'venv', 'env', '.venv', '.env', 'node_modules', '.git', 'build', 'dist', 'egg-info'}
+    # Files to skip (Pydantic models with methods don't work well with Cython)
+    skip_files = {'__init__.py', 'config.py'}
     
     for root, dirs, files in os.walk(directory):
         # Skip excluded directories
         dirs[:] = [d for d in dirs if not d.startswith('.') and d not in skip_dirs and not d.endswith('.egg-info')]
         for file in files:
-            if file.endswith('.py') and file != '__init__.py':
+            if file.endswith('.py') and file not in skip_files:
                 py_files.append(os.path.join(root, file))
     return py_files
 

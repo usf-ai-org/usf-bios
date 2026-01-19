@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import List, Optional, Set
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 # Internal system configuration
@@ -205,9 +205,10 @@ class Settings(BaseSettings):
             "has_modality_restriction": self.has_modality_restriction,
         }
     
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=True,
+    )
 
 
 settings = Settings()
