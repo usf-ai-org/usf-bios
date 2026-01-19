@@ -1,0 +1,104 @@
+/**
+ * Next.js API Proxy Route
+ * 
+ * All API calls from the browser go through this route.
+ * This runs on the Next.js SERVER (inside the container),
+ * so it can access Python backend via localhost:8000.
+ * 
+ * Browser → Next.js (port 3000) → Python (localhost:8000)
+ * 
+ * Benefits:
+ * - No public URL detection needed
+ * - No CORS issues (same origin)
+ * - Python backend stays internal
+ */
+
+const BACKEND_URL = 'http://localhost:8000'
+
+async function proxyRequest(request: Request, path: string): Promise<Response> {
+  const url = `${BACKEND_URL}/${path}`
+  
+  // Forward headers (except host)
+  const headers = new Headers()
+  request.headers.forEach((value, key) => {
+    if (key.toLowerCase() !== 'host') {
+      headers.set(key, value)
+    }
+  })
+  
+  // Build fetch options
+  const fetchOptions: RequestInit = {
+    method: request.method,
+    headers,
+  }
+  
+  // Forward body for POST/PUT/PATCH
+  if (['POST', 'PUT', 'PATCH'].includes(request.method)) {
+    fetchOptions.body = await request.text()
+  }
+  
+  try {
+    const response = await fetch(url, fetchOptions)
+    
+    // Forward response headers
+    const responseHeaders = new Headers()
+    response.headers.forEach((value, key) => {
+      // Skip headers that Next.js handles
+      if (!['content-encoding', 'transfer-encoding'].includes(key.toLowerCase())) {
+        responseHeaders.set(key, value)
+      }
+    })
+    
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: responseHeaders,
+    })
+  } catch (error) {
+    console.error('[API Proxy] Error:', error)
+    return Response.json(
+      { error: 'Backend unavailable', details: String(error) },
+      { status: 502 }
+    )
+  }
+}
+
+export async function GET(
+  request: Request,
+  { params }: { params: { path: string[] } }
+) {
+  const path = params.path.join('/')
+  return proxyRequest(request, path)
+}
+
+export async function POST(
+  request: Request,
+  { params }: { params: { path: string[] } }
+) {
+  const path = params.path.join('/')
+  return proxyRequest(request, path)
+}
+
+export async function PUT(
+  request: Request,
+  { params }: { params: { path: string[] } }
+) {
+  const path = params.path.join('/')
+  return proxyRequest(request, path)
+}
+
+export async function DELETE(
+  request: Request,
+  { params }: { params: { path: string[] } }
+) {
+  const path = params.path.join('/')
+  return proxyRequest(request, path)
+}
+
+export async function PATCH(
+  request: Request,
+  { params }: { params: { path: string[] } }
+) {
+  const path = params.path.join('/')
+  return proxyRequest(request, path)
+}
