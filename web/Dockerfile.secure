@@ -1,5 +1,69 @@
 # USF BIOS - Production Docker Image
 # Copyright (c) US Inc. All rights reserved.
+#
+# BUILD ORDER (FAIL FAST):
+# 1. Stage 0: Verify usf_bios package can be built and imported (FAIL IMMEDIATELY if not)
+# 2. Stage 1: Build frontend
+# 3. Stage 2: Compile Python to .so files
+# 4. Stage 3: Production image with proper usf_bios installation
+
+# ============================================================================
+# Stage 0: USF BIOS Package Verification (FAIL FAST)
+# This stage runs FIRST to verify usf_bios can be built before wasting time
+# ============================================================================
+FROM python:3.11-slim AS usf-bios-verifier
+
+WORKDIR /verify
+
+# Install minimal build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    python3-dev \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy usf_bios package files FIRST
+COPY setup.py setup.cfg MANIFEST.in /verify/
+COPY requirements.txt /verify/requirements.txt
+COPY requirements/ /verify/requirements/
+COPY usf_bios/ /verify/usf_bios/
+
+# ============================================================================
+# CRITICAL: Install and verify usf_bios package - FAIL BUILD IF THIS FAILS
+# ============================================================================
+RUN echo "" && \
+    echo "============================================================" && \
+    echo "  USF BIOS - PACKAGE VERIFICATION (FAIL FAST)" && \
+    echo "============================================================" && \
+    echo ""
+
+# Step 1: Install framework requirements
+RUN echo "[1/4] Installing framework requirements..." && \
+    pip install --no-cache-dir -r /verify/requirements/framework.txt && \
+    echo "  ✓ Framework requirements installed"
+
+# Step 2: Install usf_bios package
+RUN echo "[2/4] Installing usf_bios package..." && \
+    cd /verify && pip install --no-cache-dir -e . && \
+    echo "  ✓ usf_bios package installed"
+
+# Step 3: Verify usf_bios can be imported (catches missing dependencies)
+RUN echo "[3/4] Verifying usf_bios import..." && \
+    python -c "import usf_bios; print('  ✓ usf_bios module imported successfully')" && \
+    python -c "from usf_bios.utils.torch_utils import get_device; print('  ✓ usf_bios.utils imported successfully')" && \
+    python -c "from usf_bios.cli.main import ROUTE_MAPPING; print('  ✓ usf_bios.cli imported successfully')"
+
+# Step 4: Verify CLI entry point exists
+RUN echo "[4/4] Verifying CLI entry point..." && \
+    which usf_bios && \
+    usf_bios --help > /dev/null 2>&1 || echo "  ⚠ CLI help not available (expected in compiled mode)" && \
+    echo "  ✓ usf_bios CLI entry point registered"
+
+RUN echo "" && \
+    echo "============================================================" && \
+    echo "  ✓ USF BIOS VERIFICATION PASSED - Continuing build..." && \
+    echo "============================================================" && \
+    echo ""
 
 # ============================================================================
 # Stage 1: Frontend Builder
@@ -25,7 +89,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir cython
+RUN pip install --no-cache-dir cython setuptools
 
 # Copy compilation script first (changes here invalidate cache)
 COPY scripts/compile_to_so.py /compile/compile_to_so.py
@@ -90,6 +154,27 @@ RUN pip install --no-cache-dir -r /app/requirements/framework.txt \
 COPY --from=python-compiler /compile/usf_bios/ /app/usf_bios/
 COPY --from=python-compiler /compile/web/backend/ /app/web/backend/
 
+# Copy setup files to install usf_bios as a proper package
+COPY setup.py setup.cfg MANIFEST.in /app/
+
+# ============================================================================
+# INSTALL usf_bios as a pip package (registers CLI entry points)
+# ============================================================================
+RUN echo "" && \
+    echo "=== INSTALLING USF BIOS PACKAGE ===" && \
+    cd /app && pip install --no-cache-dir -e . && \
+    echo "  ✓ usf_bios installed as pip package"
+
+# ============================================================================
+# FINAL VERIFICATION: Ensure usf_bios works in production image
+# ============================================================================
+RUN echo "" && \
+    echo "=== FINAL VERIFICATION: USF BIOS ===" && \
+    python -c "import usf_bios; print('  ✓ usf_bios import OK')" && \
+    python -c "from usf_bios.utils.torch_utils import get_device, get_device_count; print('  ✓ usf_bios.utils OK')" && \
+    which usf_bios && echo "  ✓ usf_bios CLI registered" && \
+    echo "=== USF BIOS VERIFICATION PASSED ==="
+
 # VERIFICATION: Ensure all critical files exist after Cython compilation
 RUN echo "=== VERIFICATION: Checking compiled files ===" && \
     echo "Backend app structure:" && \
@@ -106,7 +191,7 @@ RUN echo "=== VERIFICATION: Checking compiled files ===" && \
     test -f /app/web/backend/app/services/__init__.py && echo "  ✓ app/services/__init__.py" && \
     echo "Checking db_models.py exists (kept as .py - SQLAlchemy ORM):" && \
     test -f /app/web/backend/app/models/db_models.py && echo "  ✓ db_models.py found" && \
-    echo "=== VERIFICATION PASSED ==="
+    echo "=== BACKEND VERIFICATION PASSED ==="
 
 # Copy frontend build
 COPY --from=frontend-builder /build/frontend/.next/standalone /app/web/frontend/

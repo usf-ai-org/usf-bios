@@ -126,7 +126,9 @@ class BaseArguments(CompatArguments, GenerationArguments, QuantizeArguments, Dat
     subscription_id: Optional[str] = None  # Enterprise subscription ID required for debug mode
 
     def _prepare_training_args(self, training_args: Dict[str, Any]) -> None:
-        pass
+        # Remove USF BIOS 'debug' (bool) to avoid conflict with transformers' 'debug' (List[DebugOption])
+        training_args.pop('debug', None)
+        training_args.pop('subscription_id', None)
 
     def _init_lazy_tokenize(self):
         if self.lazy_tokenize is None:

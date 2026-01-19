@@ -84,6 +84,10 @@ RUN pip3 install --no-cache-dir \
 # ============================================
 
 # Copy core training library (MAIN IP)
+# Copy setup files first, then source code
+COPY setup.py setup.cfg MANIFEST.in $CORE_DIR/
+COPY requirements.txt $CORE_DIR/requirements.txt
+COPY requirements/ $CORE_DIR/requirements/
 COPY usf_bios $CORE_DIR/usf_bios
 
 # Copy backend API
@@ -212,8 +216,12 @@ strip_and_compile('$BACKEND_DIR')
 # Remove compilation script
 RUN rm -f /tmp/compile_to_c.py /tmp/core_requirements.txt
 
-# Install the core package
-RUN cd $CORE_DIR && pip3 install -e . 2>/dev/null || true
+# Install the core package (usf_bios)
+# First install framework requirements, then install the package
+RUN cd $CORE_DIR && pip3 install --no-cache-dir -r requirements/framework.txt 2>/dev/null || true
+RUN cd $CORE_DIR && pip3 install --no-cache-dir -e . && \
+    echo "✓ usf_bios installed successfully" || \
+    (echo "✗ usf_bios installation failed" && exit 1)
 
 # Build frontend
 WORKDIR $FRONTEND_DIR

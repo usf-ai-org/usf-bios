@@ -50,6 +50,18 @@ RUN pip3 install --no-cache-dir --upgrade pip && \
 # Copy backend code
 COPY web/backend /app
 
+# Copy and install usf_bios core library
+COPY setup.py setup.cfg MANIFEST.in /app/usf_bios_src/
+COPY requirements.txt /app/usf_bios_src/requirements.txt
+COPY requirements/ /app/usf_bios_src/requirements/
+COPY usf_bios /app/usf_bios_src/usf_bios
+
+# Install usf_bios framework requirements and the package itself
+RUN pip3 install --no-cache-dir -r /app/usf_bios_src/requirements/framework.txt || true
+RUN cd /app/usf_bios_src && pip3 install --no-cache-dir -e . && \
+    echo "✓ usf_bios installed successfully" || \
+    (echo "✗ usf_bios installation failed" && exit 1)
+
 # Create necessary directories
 RUN mkdir -p /app/data/uploads /app/data/datasets /app/output
 
