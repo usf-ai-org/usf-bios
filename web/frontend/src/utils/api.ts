@@ -1,146 +1,162 @@
 /**
  * API URL Detection Utility
  * 
- * Automatically detects the correct backend API URL based on the current hostname.
- * Works with all major cloud providers and GPU platforms.
+ * Universal backend URL detection that works with ANY cloud provider.
+ * Uses probe-based detection: tries candidate URLs once at startup,
+ * caches the working URL, and uses it for all subsequent requests.
  */
 
+// Cached API URL - detected once at startup, used for entire runtime
+let _cachedApiUrl: string | null = null
+let _detectionPromise: Promise<string> | null = null
+
 /**
- * Detects the correct API URL at runtime based on the current browser hostname.
- * 
- * Supported platforms:
- * - RunPod: xxx-3000.proxy.runpod.net -> xxx-8000.proxy.runpod.net
- * - Vast.ai: xxx-3000.direct.vast.ai -> xxx-8000.direct.vast.ai
- * - Lambda Labs: Similar port-based patterns
- * - Azure Container Apps: Uses same hostname, different port or path
- * - AWS (ECS/EKS): Uses same hostname pattern
- * - GCP (Cloud Run/GKE): Uses same hostname pattern
- * - Local development: localhost:3000 -> localhost:8000
+ * Generate candidate API URLs to try, ordered by likelihood.
+ * This covers all possible deployment scenarios.
  */
-export function getApiUrl(): string {
-  if (typeof window === 'undefined') return ''
+function getCandidateUrls(): string[] {
+  if (typeof window === 'undefined') return []
   
   const hostname = window.location.hostname
   const protocol = window.location.protocol
   const port = window.location.port
   
-  // RunPod: xxx-3000.proxy.runpod.net -> xxx-8000.proxy.runpod.net
-  if (hostname.includes('.proxy.runpod.net')) {
-    return `${protocol}//${hostname.replace('-3000.', '-8000.')}`
+  const candidates: string[] = []
+  
+  // 1. Port-based proxy pattern (RunPod, Vast.ai, Lambda, etc.)
+  // Replace -3000 with -8000 in hostname
+  if (hostname.includes('-3000')) {
+    const proxyHostname = hostname.replace(/-3000/g, '-8000')
+    candidates.push(`${protocol}//${proxyHostname}`)
   }
   
-  // Vast.ai: xxx-3000.direct.vast.ai -> xxx-8000.direct.vast.ai
-  if (hostname.includes('.direct.vast.ai') || hostname.includes('.vast.ai')) {
-    return `${protocol}//${hostname.replace('-3000.', '-8000.')}`
+  // 2. Same hostname, port 8000 (most hyperscalers, Docker, K8s)
+  candidates.push(`${protocol}//${hostname}:8000`)
+  
+  // 3. localhost:8000 (local development, same container)
+  if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
+    candidates.push(`${protocol}//localhost:8000`)
+    candidates.push(`${protocol}//127.0.0.1:8000`)
+  } else {
+    // Already localhost, just use it
+    candidates.push('http://localhost:8000')
   }
   
-  // Lambda Labs: xxx-3000.cloud.lambdalabs.com -> xxx-8000.cloud.lambdalabs.com
-  if (hostname.includes('.lambdalabs.com') || hostname.includes('.lambda.cloud')) {
-    return `${protocol}//${hostname.replace('-3000.', '-8000.')}`
-  }
+  // 4. Same host without port (reverse proxy routing /api to backend)
+  candidates.push('')
   
-  // Paperspace: Similar pattern
-  if (hostname.includes('.paperspace.com') || hostname.includes('.gradient.run')) {
-    return `${protocol}//${hostname.replace('-3000.', '-8000.')}`
+  // Remove duplicates while preserving order
+  return Array.from(new Set(candidates))
+}
+
+/**
+ * Probe a URL to check if it's the working backend.
+ * Uses the /health endpoint which should always be available.
+ */
+async function probeUrl(baseUrl: string): Promise<boolean> {
+  try {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 3000) // 3 second timeout
+    
+    const response = await fetch(`${baseUrl}/health`, {
+      method: 'GET',
+      signal: controller.signal,
+    })
+    
+    clearTimeout(timeout)
+    return response.ok
+  } catch {
+    return false
   }
+}
+
+/**
+ * Detect the working API URL by probing candidates.
+ * This runs ONCE at startup and caches the result.
+ */
+async function detectApiUrl(): Promise<string> {
+  const candidates = getCandidateUrls()
   
-  // CoreWeave
-  if (hostname.includes('.coreweave.com') || hostname.includes('.ord1.coreweave.cloud')) {
-    return `${protocol}//${hostname.replace('-3000.', '-8000.')}`
-  }
+  console.log('[API] Detecting backend URL from candidates:', candidates)
   
-  // Generic port-based pattern (catches most GPU cloud providers)
-  // Pattern: xxx-3000.xxx -> xxx-8000.xxx
-  if (hostname.includes('-3000.') || hostname.includes('-3000-')) {
-    const newHostname = hostname.replace('-3000.', '-8000.').replace('-3000-', '-8000-')
-    return `${protocol}//${newHostname}`
-  }
-  
-  // Azure Container Apps: Uses environment variable or same host
-  // Pattern: xxx.azurecontainerapps.io (frontend and backend on same host, different paths)
-  if (hostname.includes('.azurecontainerapps.io') || hostname.includes('.azure')) {
-    // Azure typically uses same hostname with /api prefix routed to backend
-    // If port 3000 is in URL, replace with 8000
-    if (port === '3000') {
-      return `${protocol}//${hostname}:8000`
+  // Try each candidate in order
+  for (const url of candidates) {
+    const isWorking = await probeUrl(url)
+    if (isWorking) {
+      console.log('[API] Backend detected at:', url)
+      return url
     }
-    // Otherwise assume same host (API gateway routing)
-    return ''
   }
   
-  // AWS (ECS, EKS, App Runner): Similar patterns
-  if (hostname.includes('.amazonaws.com') || hostname.includes('.aws')) {
-    if (port === '3000') {
-      return `${protocol}//${hostname}:8000`
-    }
-    return ''
+  // If no probe succeeded, fall back to first candidate
+  // (might be a timing issue where backend isn't ready yet)
+  const fallback = candidates[0] || ''
+  console.warn('[API] No backend detected, using fallback:', fallback)
+  return fallback
+}
+
+/**
+ * Initialize API URL detection. Call this once at app startup.
+ * Returns a promise that resolves to the detected URL.
+ */
+export async function initApiUrl(): Promise<string> {
+  if (_cachedApiUrl !== null) {
+    return _cachedApiUrl
   }
   
-  // GCP (Cloud Run, GKE): Similar patterns
-  if (hostname.includes('.run.app') || hostname.includes('.googleusercontent.com') || hostname.includes('.gcp')) {
-    if (port === '3000') {
-      return `${protocol}//${hostname}:8000`
-    }
-    return ''
+  // Prevent multiple simultaneous detections
+  if (_detectionPromise === null) {
+    _detectionPromise = detectApiUrl().then(url => {
+      _cachedApiUrl = url
+      return url
+    })
   }
   
-  // DigitalOcean App Platform
-  if (hostname.includes('.ondigitalocean.app')) {
-    if (port === '3000') {
-      return `${protocol}//${hostname}:8000`
-    }
-    return ''
+  return _detectionPromise
+}
+
+/**
+ * Get the cached API URL synchronously.
+ * Returns empty string if not yet detected.
+ * Use initApiUrl() for async initialization.
+ */
+export function getApiUrl(): string {
+  if (_cachedApiUrl !== null) {
+    return _cachedApiUrl
   }
   
-  // Render
-  if (hostname.includes('.onrender.com')) {
-    if (port === '3000') {
-      return `${protocol}//${hostname}:8000`
-    }
-    return ''
+  // Start detection in background if not already started
+  if (_detectionPromise === null && typeof window !== 'undefined') {
+    initApiUrl()
   }
   
-  // Railway
-  if (hostname.includes('.railway.app')) {
-    if (port === '3000') {
-      return `${protocol}//${hostname}:8000`
-    }
-    return ''
+  // Return best guess synchronously while detection runs
+  if (typeof window === 'undefined') return ''
+  
+  const hostname = window.location.hostname
+  const protocol = window.location.protocol
+  
+  // Quick sync fallback for immediate use
+  if (hostname.includes('-3000')) {
+    return `${protocol}//${hostname.replace(/-3000/g, '-8000')}`
   }
   
-  // Local development
-  if (hostname === 'localhost' || hostname === '127.0.0.1') {
-    return 'http://localhost:8000'
-  }
-  
-  // Docker Compose / Kubernetes internal: same container, different port
-  // If we're on port 3000, backend is on 8000
-  if (port === '3000') {
-    return `${protocol}//${hostname}:8000`
-  }
-  
-  // Default: assume same host with port 8000
-  // This covers most deployment scenarios where frontend and backend
-  // are on the same machine/container
   return `${protocol}//${hostname}:8000`
 }
 
 /**
  * Pre-computed API URL for use in components.
- * This is evaluated once when the module loads.
+ * This starts detection and returns best guess synchronously.
  */
 export const API_URL = typeof window !== 'undefined' ? getApiUrl() : ''
 
 /**
  * Helper to make API calls with the correct base URL.
- * 
- * @param endpoint - The API endpoint (e.g., '/api/system/status')
- * @param options - Fetch options
- * @returns Fetch promise
+ * Waits for URL detection to complete on first call.
  */
 export async function apiFetch(endpoint: string, options?: RequestInit): Promise<Response> {
-  const url = `${getApiUrl()}${endpoint}`
-  return fetch(url, {
+  const baseUrl = await initApiUrl()
+  return fetch(`${baseUrl}${endpoint}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
@@ -151,10 +167,6 @@ export async function apiFetch(endpoint: string, options?: RequestInit): Promise
 
 /**
  * Helper to make API calls and parse JSON response.
- * 
- * @param endpoint - The API endpoint (e.g., '/api/system/status')
- * @param options - Fetch options
- * @returns Parsed JSON response
  */
 export async function apiJson<T = unknown>(endpoint: string, options?: RequestInit): Promise<T> {
   const response = await apiFetch(endpoint, options)
