@@ -14,37 +14,19 @@ from .api import api_router
 from .core.config import settings
 from .core.database import init_db, engine
 
-# Config file path - shared with frontend
-CONFIG_FILE = "/app/web/frontend/public/runtime-config.json"
-_backend_url_detected = False
-
-def write_backend_url(url: str):
-    """Write backend URL to config file for frontend to read"""
-    global _backend_url_detected
-    if _backend_url_detected:
-        return
-    try:
-        os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
-        config = {"backendUrl": url, "detectedAt": "startup"}
-        with open(CONFIG_FILE, "w") as f:
-            json.dump(config, f)
-        print(f"[Backend] External URL detected: {url}")
-        print(f"[Backend] Config written to: {CONFIG_FILE}")
-        _backend_url_detected = True
-    except Exception as e:
-        print(f"[Backend] Failed to write config: {e}")
+# Detected backend URL - stored in memory, served via API endpoint
+_detected_backend_url: str | None = None
 
 class DetectExternalUrlMiddleware(BaseHTTPMiddleware):
     """Middleware to detect backend's external URL from first request"""
     async def dispatch(self, request: Request, call_next):
-        global _backend_url_detected
-        if not _backend_url_detected:
-            # Get external URL from request headers
+        global _detected_backend_url
+        if _detected_backend_url is None:
             host = request.headers.get("host", "")
             scheme = request.headers.get("x-forwarded-proto", "https")
             if host:
-                external_url = f"{scheme}://{host}"
-                write_backend_url(external_url)
+                _detected_backend_url = f"{scheme}://{host}"
+                print(f"[Backend] External URL detected: {_detected_backend_url}")
         return await call_next(request)
 
 # Create FastAPI application
@@ -76,6 +58,12 @@ app.include_router(api_router, prefix="/api")
 async def health_check():
     """Health check endpoint for container orchestration"""
     return {"status": "healthy", "service": "usf-bios-api"}
+
+
+@app.get("/config")
+async def get_config():
+    """Return detected backend URL for frontend to use"""
+    return {"backendUrl": _detected_backend_url or ""}
 
 
 @app.on_event("startup")

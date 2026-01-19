@@ -1,49 +1,51 @@
 /**
  * API URL Configuration
  * 
- * Reads backend URL from /runtime-config.json ONCE at startup.
- * This file is written by entrypoint.sh which knows the external URL.
- * The URL is cached permanently - no re-reading after startup.
+ * 1. Frontend uses hostname-based fallback for FIRST request
+ * 2. First request to backend triggers URL detection (from Host header)
+ * 3. Backend stores detected URL in memory, serves via /config endpoint
+ * 4. Frontend caches URL permanently after first successful fetch
  */
 
-// PERMANENT cache - set once at startup, never changes
+// PERMANENT cache - set once, never changes
 let _backendUrl: string | null = null
 let _initPromise: Promise<string> | null = null
 
 /**
- * Fallback URL based on hostname (only used if config file missing)
+ * Fallback URL based on hostname - used for FIRST request before config is loaded
  */
 function getFallbackUrl(): string {
   if (typeof window === 'undefined') return ''
   const h = window.location.hostname
   const p = window.location.protocol
+  // Cloud providers with port in hostname (RunPod, Vast.ai, etc.)
   if (h.includes('-3000')) return `${p}//${h.replace(/-3000/g, '-8000')}`
+  // Local development
   if (h === 'localhost' || h === '127.0.0.1') return 'http://localhost:8000'
+  // Default: same host, port 8000
   return `${p}//${h}:8000`
 }
 
 /**
- * Initialize: Read config file ONCE, cache forever.
- * Called automatically on first API call.
+ * Initialize: Fetch backend URL from /config endpoint ONCE, cache forever.
  */
 export async function initApiUrl(): Promise<string> {
-  // Already initialized - return cached value
   if (_backendUrl !== null) return _backendUrl
-  
-  // Already initializing - wait for it
   if (_initPromise !== null) return _initPromise
   
-  // First call - read config ONCE
   _initPromise = (async (): Promise<string> => {
+    // Use fallback URL to make first request to backend
+    const fallback = getFallbackUrl()
     try {
-      console.log('[API] Reading config (ONE TIME ONLY)...')
-      const res = await fetch('/runtime-config.json')
-      if (!res.ok) throw new Error('Config not found')
+      console.log('[API] Fetching config from backend (ONE TIME ONLY)...')
+      const res = await fetch(`${fallback}/config`)
+      if (!res.ok) throw new Error('Config endpoint failed')
       const cfg = await res.json()
-      _backendUrl = cfg.backendUrl || getFallbackUrl()
+      // Backend returns detected URL, or we keep using fallback
+      _backendUrl = cfg.backendUrl || fallback
       console.log('[API] Backend URL (cached permanently):', _backendUrl)
     } catch {
-      _backendUrl = getFallbackUrl()
+      _backendUrl = fallback
       console.log('[API] Using fallback (cached permanently):', _backendUrl)
     }
     return _backendUrl as string
@@ -57,7 +59,7 @@ export async function initApiUrl(): Promise<string> {
  */
 export function getApiUrl(): string {
   if (_backendUrl !== null) return _backendUrl
-  if (typeof window !== 'undefined') initApiUrl() // Start loading
+  if (typeof window !== 'undefined') initApiUrl()
   return getFallbackUrl()
 }
 
