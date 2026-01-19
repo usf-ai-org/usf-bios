@@ -20,6 +20,19 @@ ENV CORE_DIR=/app/core
 ENV LOG_DIR=/var/log/usf-bios
 ENV DATA_DIR=/app/data
 
+# ============================================
+# HARDCODED CAPABILITY RESTRICTIONS
+# These CANNOT be changed by users at runtime
+# ============================================
+# Only allow HuggingFace and Local models (NO ModelScope)
+ENV SUPPORTED_MODEL_SOURCES=huggingface,local
+# Only allow text-to-text models
+ENV SUPPORTED_MODALITIES=text2text
+# Only allow USF Omega architecture
+ENV SUPPORTED_ARCHITECTURES=UsfOmegaForCausalLM
+# Lock capabilities - prevents env override
+ENV USF_CAPABILITIES_LOCKED=true
+
 # Create directories
 RUN mkdir -p $APP_HOME $BACKEND_DIR $FRONTEND_DIR $CORE_DIR $LOG_DIR $DATA_DIR/uploads $DATA_DIR/datasets $DATA_DIR/output
 

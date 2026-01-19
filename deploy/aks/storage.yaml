@@ -1,0 +1,33 @@
+# USF BIOS - AKS Storage Configuration
+# 1TB Azure Premium SSD for model storage, training outputs, and caches
+
+---
+# StorageClass for Azure Premium SSD
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: usf-premium-ssd
+provisioner: disk.csi.azure.com
+parameters:
+  skuName: Premium_LRS  # Premium SSD
+  cachingMode: ReadOnly  # Improves read performance for models
+reclaimPolicy: Retain  # Keep data when PVC is deleted
+volumeBindingMode: WaitForFirstConsumer  # Bind to node with GPU
+allowVolumeExpansion: true
+
+---
+# PersistentVolumeClaim - 1TB Storage
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: usf-storage-pvc
+  namespace: usf-bios
+  labels:
+    app: usf-bios
+spec:
+  accessModes:
+    - ReadWriteOnce  # Single node access (required for Azure Disk)
+  storageClassName: usf-premium-ssd
+  resources:
+    requests:
+      storage: 1Ti  # 1TB storage

@@ -1,0 +1,57 @@
+# USF BIOS - Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: usf-bios-config
+  namespace: usf-bios
+  labels:
+    app: usf-bios
+data:
+  # Application Settings
+  APP_NAME: "USF BIOS"
+  APP_VERSION: "1.0.0"
+  HOST: "0.0.0.0"
+  PORT: "8000"
+  DEBUG: "false"
+
+  # Storage Paths (mounted from PVC)
+  OUTPUT_PATH: "/mnt/usf-storage/data/output"
+  CHECKPOINT_PATH: "/mnt/usf-storage/data/checkpoints"
+  LOG_PATH: "/mnt/usf-storage/data/logs"
+  UPLOAD_PATH: "/mnt/usf-storage/data/uploads"
+  
+  # HuggingFace Cache Location (persistent)
+  HF_HOME: "/mnt/usf-storage/cache"
+  TRANSFORMERS_CACHE: "/mnt/usf-storage/cache/hub"
+  HF_DATASETS_CACHE: "/mnt/usf-storage/cache/datasets"
+  
+  # Model Configuration
+  # NOTE: These are LOCKED in Dockerfile and CANNOT be overridden at runtime:
+  # - SUPPORTED_MODEL_SOURCES: huggingface,local (NO ModelScope)
+  # - SUPPORTED_ARCHITECTURES: UsfOmegaForCausalLM only
+  # - SUPPORTED_MODALITIES: text2text only
+  # The USF_CAPABILITIES_LOCKED=true flag in Dockerfile enforces these restrictions
+  
+  # Security
+  USF_DISABLE_CLI: "true"
+  USF_UI_ONLY: "true"
+  
+  # Training Limits
+  MAX_CONCURRENT_JOBS: "1"
+  JOB_TIMEOUT_HOURS: "72"
+
+---
+# Secrets (placeholder - use Azure Key Vault in production)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: usf-bios-secrets
+  namespace: usf-bios
+  labels:
+    app: usf-bios
+type: Opaque
+stringData:
+  # Optional API Key for authentication
+  API_KEY: ""
+  # HuggingFace token for gated models (optional)
+  HF_TOKEN: ""

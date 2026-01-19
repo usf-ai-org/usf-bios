@@ -142,7 +142,7 @@ export default function Home() {
   
   const [config, setConfig] = useState<TrainingConfig>({
     model_path: '',
-    model_source: 'huggingface',
+    model_source: 'local',
     modality: 'text',
     train_type: 'lora',
     dataset_paths: [],
@@ -1311,44 +1311,52 @@ export default function Home() {
                     </div>
                   )}
                   
-                  {/* Metrics Grid - only show actual data */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
-                    <div className="bg-slate-50 rounded-lg p-3 text-center border border-slate-200">
-                      <BarChart3 className="w-5 h-5 mx-auto text-blue-500 mb-1" />
-                      <span className="text-xs text-slate-500">Loss</span>
-                      <p className="text-lg font-bold text-slate-900">{jobStatus.current_loss !== null && jobStatus.current_loss !== undefined ? jobStatus.current_loss.toFixed(4) : 'N/A'}</p>
+                  {/* Real-time Metrics - Prominent Display */}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+                    {/* Loss - Most Important */}
+                    <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-3 text-center border border-blue-200">
+                      <BarChart3 className="w-5 h-5 mx-auto text-blue-600 mb-1" />
+                      <span className="text-[10px] text-blue-600 font-medium uppercase">Loss</span>
+                      <p className="text-xl font-bold text-blue-900">{jobStatus.current_loss !== null && jobStatus.current_loss !== undefined ? jobStatus.current_loss.toFixed(4) : '--'}</p>
                     </div>
-                    <div className="bg-slate-50 rounded-lg p-3 text-center border border-slate-200">
-                      <Activity className="w-5 h-5 mx-auto text-blue-500 mb-1" />
-                      <span className="text-xs text-slate-500">Speed</span>
-                      <p className="text-lg font-bold text-slate-900">{jobStatus.samples_per_second ? `${jobStatus.samples_per_second.toFixed(1)} s/s` : 'N/A'}</p>
+                    {/* Epoch */}
+                    <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg p-3 text-center border border-purple-200">
+                      <Layers className="w-5 h-5 mx-auto text-purple-600 mb-1" />
+                      <span className="text-[10px] text-purple-600 font-medium uppercase">Epoch</span>
+                      <p className="text-xl font-bold text-purple-900">{jobStatus.epoch !== null && jobStatus.epoch !== undefined ? jobStatus.epoch : '--'}</p>
                     </div>
-                    {systemMetrics.available && systemMetrics.gpu_memory_used !== null && systemMetrics.gpu_memory_total !== null ? (
-                      <div className="bg-slate-50 rounded-lg p-3 text-center border border-slate-200">
-                        <HardDrive className="w-5 h-5 mx-auto text-green-500 mb-1" />
-                        <span className="text-xs text-slate-500">GPU Memory</span>
-                        <p className="text-lg font-bold text-slate-900">{systemMetrics.gpu_memory_used.toFixed(1)}<span className="text-xs">/{systemMetrics.gpu_memory_total.toFixed(0)}GB</span></p>
-                      </div>
-                    ) : (
-                      <div className="bg-slate-50 rounded-lg p-3 text-center border border-slate-200">
-                        <HardDrive className="w-5 h-5 mx-auto text-slate-400 mb-1" />
-                        <span className="text-xs text-slate-500">GPU Memory</span>
-                        <p className="text-lg font-bold text-slate-400">N/A</p>
-                      </div>
-                    )}
-                    {systemMetrics.available && systemMetrics.gpu_temperature !== null ? (
-                      <div className="bg-slate-50 rounded-lg p-3 text-center border border-slate-200">
-                        <Thermometer className="w-5 h-5 mx-auto text-orange-500 mb-1" />
-                        <span className="text-xs text-slate-500">GPU Temp</span>
-                        <p className="text-lg font-bold text-slate-900">{systemMetrics.gpu_temperature}°C</p>
-                      </div>
-                    ) : (
-                      <div className="bg-slate-50 rounded-lg p-3 text-center border border-slate-200">
-                        <Thermometer className="w-5 h-5 mx-auto text-slate-400 mb-1" />
-                        <span className="text-xs text-slate-500">GPU Temp</span>
-                        <p className="text-lg font-bold text-slate-400">N/A</p>
-                      </div>
-                    )}
+                    {/* Speed */}
+                    <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-3 text-center border border-green-200">
+                      <Activity className="w-5 h-5 mx-auto text-green-600 mb-1" />
+                      <span className="text-[10px] text-green-600 font-medium uppercase">Speed</span>
+                      <p className="text-xl font-bold text-green-900">{jobStatus.samples_per_second ? `${jobStatus.samples_per_second.toFixed(1)}` : '--'}<span className="text-xs font-normal"> s/s</span></p>
+                    </div>
+                    {/* GPU Utilization */}
+                    <div className={`bg-gradient-to-br ${systemMetrics.available && systemMetrics.gpu_utilization !== null ? 'from-cyan-50 to-cyan-100 border-cyan-200' : 'from-slate-50 to-slate-100 border-slate-200'} rounded-lg p-3 text-center border`}>
+                      <Cpu className="w-5 h-5 mx-auto text-cyan-600 mb-1" />
+                      <span className="text-[10px] text-cyan-600 font-medium uppercase">GPU %</span>
+                      <p className={`text-xl font-bold ${systemMetrics.available && systemMetrics.gpu_utilization !== null ? 'text-cyan-900' : 'text-slate-400'}`}>
+                        {systemMetrics.available && systemMetrics.gpu_utilization !== null ? `${systemMetrics.gpu_utilization}%` : '--'}
+                      </p>
+                    </div>
+                    {/* GPU Memory */}
+                    <div className={`bg-gradient-to-br ${systemMetrics.available && systemMetrics.gpu_memory_used !== null ? 'from-amber-50 to-amber-100 border-amber-200' : 'from-slate-50 to-slate-100 border-slate-200'} rounded-lg p-3 text-center border`}>
+                      <HardDrive className="w-5 h-5 mx-auto text-amber-600 mb-1" />
+                      <span className="text-[10px] text-amber-600 font-medium uppercase">VRAM</span>
+                      <p className={`text-xl font-bold ${systemMetrics.available && systemMetrics.gpu_memory_used !== null ? 'text-amber-900' : 'text-slate-400'}`}>
+                        {systemMetrics.available && systemMetrics.gpu_memory_used !== null && systemMetrics.gpu_memory_total !== null 
+                          ? <>{systemMetrics.gpu_memory_used.toFixed(1)}<span className="text-xs font-normal">/{systemMetrics.gpu_memory_total.toFixed(0)}G</span></>
+                          : '--'}
+                      </p>
+                    </div>
+                    {/* GPU Temperature */}
+                    <div className={`bg-gradient-to-br ${systemMetrics.available && systemMetrics.gpu_temperature !== null ? 'from-orange-50 to-orange-100 border-orange-200' : 'from-slate-50 to-slate-100 border-slate-200'} rounded-lg p-3 text-center border`}>
+                      <Thermometer className="w-5 h-5 mx-auto text-orange-600 mb-1" />
+                      <span className="text-[10px] text-orange-600 font-medium uppercase">Temp</span>
+                      <p className={`text-xl font-bold ${systemMetrics.available && systemMetrics.gpu_temperature !== null ? 'text-orange-900' : 'text-slate-400'}`}>
+                        {systemMetrics.available && systemMetrics.gpu_temperature !== null ? `${systemMetrics.gpu_temperature}°` : '--'}
+                      </p>
+                    </div>
                   </div>
 
                   {/* Loss Graph */}
@@ -1374,9 +1382,18 @@ export default function Home() {
                     </div>
                   )}
                   
-                  {/* Logs */}
-                  <div className="bg-slate-900 rounded-lg p-3 h-40 overflow-y-auto font-mono text-xs text-green-400">
-                    {trainingLogs.map((log, i) => <div key={i} className="hover:bg-slate-800/50">{log}</div>)}
+                  {/* Terminal Logs - Real-time output */}
+                  <div className="bg-slate-900 rounded-lg p-3 h-64 overflow-y-auto font-mono text-xs text-green-400 border border-slate-700">
+                    <div className="sticky top-0 bg-slate-900 pb-2 mb-2 border-b border-slate-700 text-slate-500 text-[10px]">
+                      TERMINAL OUTPUT ({trainingLogs.length} lines)
+                    </div>
+                    {trainingLogs.length === 0 ? (
+                      <div className="text-slate-500 text-center py-4">Waiting for training output...</div>
+                    ) : (
+                      trainingLogs.map((log, i) => (
+                        <div key={i} className="hover:bg-slate-800/50 py-0.5 whitespace-pre-wrap break-all">{log}</div>
+                      ))
+                    )}
                     <div ref={logsEndRef} />
                   </div>
                   

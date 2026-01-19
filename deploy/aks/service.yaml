@@ -1,0 +1,33 @@
+# USF BIOS - Kubernetes Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: usf-bios-service
+  namespace: usf-bios
+  labels:
+    app: usf-bios
+spec:
+  type: LoadBalancer  # Exposes service externally
+  selector:
+    app: usf-bios
+  ports:
+    - name: frontend
+      port: 80
+      targetPort: 3000
+      protocol: TCP
+
+---
+# Alternative: ClusterIP for internal access only (use with Ingress)
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   name: usf-bios-internal
+#   namespace: usf-bios
+# spec:
+#   type: ClusterIP
+#   selector:
+#     app: usf-bios
+#   ports:
+#     - name: frontend
+#       port: 3000
+#       targetPort: 3000

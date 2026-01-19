@@ -1,0 +1,27 @@
+# USF BIOS - Kustomization
+# Deploy all resources with: kubectl apply -k deploy/aks/
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: usf-bios
+
+resources:
+  - namespace.yaml
+  - storage.yaml
+  - configmap.yaml
+  - deployment.yaml
+  - service.yaml
+  # Uncomment if using Ingress
+  # - ingress.yaml
+
+# Common labels for all resources
+commonLabels:
+  app.kubernetes.io/name: usf-bios
+  app.kubernetes.io/component: training-platform
+  app.kubernetes.io/managed-by: kustomize
+
+# Image customization (override in overlays)
+images:
+  - name: arpitsh018/usf-bios
+    newTag: latest

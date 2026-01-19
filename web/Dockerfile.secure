@@ -68,6 +68,7 @@ WORKDIR /app
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    git \
     nodejs \
     npm \
     && rm -rf /var/lib/apt/lists/* \
@@ -76,13 +77,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy requirements and install Python packages
 COPY requirements/ /app/requirements/
 COPY web/backend/requirements.txt /app/web/backend/
-RUN pip install --no-cache-dir \
+
+# Install ALL framework requirements (includes json_repair and other dependencies)
+RUN pip install --no-cache-dir -r /app/requirements/framework.txt \
+    && pip install --no-cache-dir \
     torch>=2.0 \
-    transformers \
-    datasets \
-    accelerate \
-    peft \
-    trl \
     deepspeed \
     nvidia-ml-py \
     && pip install --no-cache-dir -r /app/web/backend/requirements.txt
@@ -140,6 +139,7 @@ RUN mkdir -p /app/data/uploads \
     /app/data/checkpoints \
     /app/data/logs \
     /app/data/terminal_logs \
+    /app/data/encrypted_logs \
     /app/data/models \
     /app/data/db \
     /app/web/backend/data && \

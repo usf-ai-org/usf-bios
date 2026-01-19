@@ -1,0 +1,43 @@
+# USF BIOS - Ingress Configuration
+# Optional: Use this if you want custom domain and TLS
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: usf-bios-ingress
+  namespace: usf-bios
+  labels:
+    app: usf-bios
+  annotations:
+    # For Azure Application Gateway Ingress Controller
+    # kubernetes.io/ingress.class: azure/application-gateway
+    
+    # For NGINX Ingress Controller
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/proxy-body-size: "10g"  # Allow large uploads
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"  # Long timeout for training
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    
+    # Enable WebSocket support for real-time metrics
+    nginx.ingress.kubernetes.io/websocket-services: "usf-bios-service"
+    
+    # Optional: cert-manager for automatic TLS
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  # TLS Configuration (optional)
+  # tls:
+  #   - hosts:
+  #       - usf-bios.yourdomain.com
+  #     secretName: usf-bios-tls
+  
+  rules:
+    - host: usf-bios.yourdomain.com  # Replace with your domain
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: usf-bios-service
+                port:
+                  number: 80

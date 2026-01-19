@@ -32,11 +32,21 @@ def check_bios_installation() -> tuple[bool, str]:
         import trl
         import accelerate
         import datasets
+        
+        # CRITICAL: Check if usf_bios module can be imported
+        # This catches missing dependencies like json_repair
+        try:
+            import usf_bios
+        except ImportError as e:
+            return False, f"USF BIOS module error: {str(e)}"
+        except Exception as e:
+            return False, f"USF BIOS initialization error: {str(e)}"
+        
         return True, "BIOS training packages installed"
     except ImportError as e:
-        return False, "Missing required packages"
+        return False, f"Missing required packages: {str(e)}"
     except Exception as e:
-        return False, "Installation check failed"
+        return False, f"Installation check failed: {str(e)}"
 
 
 def check_gpu_availability() -> tuple[bool, str, Optional[str]]:

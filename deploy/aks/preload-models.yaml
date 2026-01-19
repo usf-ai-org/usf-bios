@@ -1,0 +1,128 @@
+# USF BIOS - Model Preloader Job
+# Downloads models to persistent storage before training
+# Usage: kubectl apply -f preload-models.yaml
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: usf-model-preloader
+  namespace: usf-bios
+  labels:
+    app: usf-bios
+    component: model-preloader
+spec:
+  ttlSecondsAfterFinished: 3600  # Cleanup after 1 hour
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: usf-bios
+        component: model-preloader
+    spec:
+      restartPolicy: OnFailure
+      
+      containers:
+        - name: preloader
+          image: python:3.11-slim
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              echo "============================================"
+              echo "  USF BIOS - Model Preloader"
+              echo "============================================"
+              
+              # Install dependencies
+              pip install --quiet huggingface_hub transformers
+              
+              # Create model directory
+              mkdir -p /mnt/usf-storage/models
+              
+              # Download models (customize this list)
+              python3 << 'DOWNLOAD_SCRIPT'
+              import os
+              from huggingface_hub import snapshot_download
+              
+              # Models to pre-download
+              MODELS = [
+                  # Format: (model_id, revision)
+                  ("Qwen/Qwen2.5-7B-Instruct", "main"),
+                  # Add more models as needed:
+                  # ("meta-llama/Llama-3.1-8B-Instruct", "main"),
+                  # ("mistralai/Mistral-7B-Instruct-v0.3", "main"),
+              ]
+              
+              BASE_DIR = "/mnt/usf-storage/models"
+              
+              for model_id, revision in MODELS:
+                  print(f"\n{'='*50}")
+                  print(f"Downloading: {model_id}")
+                  print(f"{'='*50}")
+                  
+                  # Convert model ID to directory name
+                  model_dir = model_id.replace("/", "--")
+                  local_path = os.path.join(BASE_DIR, model_dir)
+                  
+                  if os.path.exists(local_path) and os.listdir(local_path):
+                      print(f"✓ Already exists: {local_path}")
+                      continue
+                  
+                  try:
+                      snapshot_download(
+                          repo_id=model_id,
+                          revision=revision,
+                          local_dir=local_path,
+                          local_dir_use_symlinks=False,
+                          resume_download=True,
+                      )
+                      print(f"✓ Downloaded to: {local_path}")
+                  except Exception as e:
+                      print(f"✗ Failed to download {model_id}: {e}")
+              
+              print("\n============================================")
+              print("  Download Complete!")
+              print("============================================")
+              
+              # List downloaded models
+              print("\nAvailable models:")
+              for item in os.listdir(BASE_DIR):
+                  path = os.path.join(BASE_DIR, item)
+                  if os.path.isdir(path):
+                      size = sum(
+                          os.path.getsize(os.path.join(dp, f))
+                          for dp, _, fns in os.walk(path)
+                          for f in fns
+                      ) / (1024**3)
+                      print(f"  - {item} ({size:.2f} GB)")
+              DOWNLOAD_SCRIPT
+              
+              echo ""
+              echo "Models saved to: /mnt/usf-storage/models/"
+              echo "You can now reference them as local paths in USF BIOS"
+          
+          env:
+            # Optional: HuggingFace token for gated models
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: usf-bios-secrets
+                  key: HF_TOKEN
+                  optional: true
+          
+          volumeMounts:
+            - name: usf-storage
+              mountPath: /mnt/usf-storage
+          
+          resources:
+            requests:
+              memory: "4Gi"
+              cpu: "2"
+            limits:
+              memory: "8Gi"
+              cpu: "4"
+      
+      volumes:
+        - name: usf-storage
+          persistentVolumeClaim:
+            claimName: usf-storage-pvc

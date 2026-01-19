@@ -23,8 +23,22 @@ _COMPAT_MESSAGE = "System components are outdated. Core dependencies require upd
 
 # Default values (hidden in binary after compilation)
 # Allow local and huggingface by default
-_DEFAULT_SOURCES = "local,huggingface"
-_DEFAULT_DATASET_SOURCES = "local,huggingface"
+_DEFAULT_SOURCES = "huggingface,local"
+_DEFAULT_DATASET_SOURCES = "huggingface,local"
+
+# ============================================================================
+# HARDCODED CAPABILITY LOCK - CANNOT BE CHANGED AT RUNTIME
+# ============================================================================
+# This flag is checked BEFORE any environment variable is read.
+# It is compiled into the binary and cannot be overridden.
+# Set to True to lock capabilities, False to allow env override.
+_CAPABILITIES_LOCKED = True  # <-- CHANGE THIS TO False ONLY IN SOURCE CODE
+
+# Locked values - used when _CAPABILITIES_LOCKED = True
+_LOCKED_SOURCES = "local"  # LOCAL ONLY - no HuggingFace, no ModelScope
+_LOCKED_DATASET_SOURCES = "local"  # LOCAL ONLY - upload and local path only
+_LOCKED_MODALITIES = "text2text"  # Text-to-text only
+_LOCKED_ARCHITECTURES = "UsfOmegaForCausalLM"  # USF Omega only
 
 # Default architecture restriction - only text-to-text models (ForCausalLM)
 _DEFAULT_SUPPORTED_ARCHITECTURES = "UsfOmegaForCausalLM"
@@ -225,14 +239,27 @@ class SystemValidator:
         # Check expiration first
         check_system_valid()
         
+        # Use HARDCODED lock flag - NOT from environment variable
+        # This is compiled into the binary and CANNOT be changed at runtime
+        self._capabilities_locked = _CAPABILITIES_LOCKED
+        
         # Load from environment variables - defaults are hidden in binary
-        # Model paths
-        self._supported_model_paths = os.environ.get("SUPPORTED_MODEL_PATHS", os.environ.get("SUPPORTED_MODEL_PATH", ""))
-        self._supported_sources = os.environ.get("SUPPORTED_MODEL_SOURCES", _DEFAULT_SOURCES)
+        # When LOCKED, ignore user environment and use hardcoded values
+        if self._capabilities_locked:
+            # LOCKED: Use hardcoded values from Dockerfile - user CANNOT override
+            self._supported_model_paths = os.environ.get("SUPPORTED_MODEL_PATHS", os.environ.get("SUPPORTED_MODEL_PATH", ""))
+            self._supported_sources = _LOCKED_SOURCES
+            self._supported_architectures = _LOCKED_ARCHITECTURES
+            self._supported_modalities = _LOCKED_MODALITIES
+        else:
+            # UNLOCKED: Allow environment variable overrides
+            self._supported_model_paths = os.environ.get("SUPPORTED_MODEL_PATHS", os.environ.get("SUPPORTED_MODEL_PATH", ""))
+            self._supported_sources = os.environ.get("SUPPORTED_MODEL_SOURCES", _DEFAULT_SOURCES)
+            self._supported_architectures = os.environ.get("SUPPORTED_ARCHITECTURES", _DEFAULT_SUPPORTED_ARCHITECTURES)
+            self._supported_modalities = os.environ.get("SUPPORTED_MODALITIES", "text2text")
         
         # Architecture restriction - EXACT MATCH (highest priority)
-        self._supported_architectures = os.environ.get("SUPPORTED_ARCHITECTURES", _DEFAULT_SUPPORTED_ARCHITECTURES)
-        self._excluded_architectures = os.environ.get("EXCLUDED_ARCHITECTURES", "")
+        self._excluded_architectures = os.environ.get("EXCLUDED_ARCHITECTURES", "") if not self._capabilities_locked else ""
         
         # Architecture restriction - PATTERN MATCH
         self._arch_ends_with = os.environ.get("ARCH_ENDS_WITH", _DEFAULT_ARCH_ENDS_WITH)
@@ -243,7 +270,10 @@ class SystemValidator:
         self._arch_not_contains = os.environ.get("ARCH_NOT_CONTAINS", "")
         
         # Dataset source restriction
-        self._supported_dataset_sources = os.environ.get("SUPPORTED_DATASET_SOURCES", _DEFAULT_DATASET_SOURCES)
+        if self._capabilities_locked:
+            self._supported_dataset_sources = _LOCKED_DATASET_SOURCES
+        else:
+            self._supported_dataset_sources = os.environ.get("SUPPORTED_DATASET_SOURCES", _DEFAULT_DATASET_SOURCES)
         
         # Validation key
         self._subscription_key = os.environ.get("SUBSCRIPTION_KEY")
