@@ -1082,45 +1082,51 @@ export default function Home() {
                   )}
                   
                   <div className="grid gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-2">
-                        Model Source
-                        {systemCapabilities.has_model_restriction && systemCapabilities.supported_model && <Lock className="w-3 h-3 inline ml-1 text-slate-400" />}
-                      </label>
-                      <div className="grid grid-cols-3 gap-2">
-                        {['huggingface', 'modelscope', 'local'].filter(source => 
-                          (systemCapabilities.supported_model_sources || systemCapabilities.supported_sources || ['local']).includes(source)
-                        ).map((source) => {
-                          const isLocked = !!(systemCapabilities.has_model_restriction && systemCapabilities.supported_model)
-                          return (
-                          <button key={source} 
-                            onClick={() => !isLocked && setConfig({ ...config, model_source: source as any })}
-                            disabled={isLocked}
-                            className={`p-3 rounded-lg border-2 text-center transition-all ${
-                              config.model_source === source ? 'border-blue-500 bg-blue-50 text-blue-600' : 'border-slate-200 text-slate-600 hover:border-slate-300'
-                            } ${isLocked ? 'opacity-60 cursor-not-allowed' : ''}`}>
-                            <span className="capitalize font-medium text-sm">{source}</span>
-                          </button>
-                        )})}
-                      </div>
-                    </div>
+                    {/* Model Source - Only show if multiple sources are supported */}
+                    {(() => {
+                      const supportedSources = (systemCapabilities.supported_model_sources || systemCapabilities.supported_sources || ['local']);
+                      const hasMultipleSources = supportedSources.length > 1;
+                      
+                      return hasMultipleSources ? (
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 mb-2">
+                            Model Source
+                            {systemCapabilities.has_model_restriction && systemCapabilities.supported_model && <Lock className="w-3 h-3 inline ml-1 text-slate-400" />}
+                          </label>
+                          <div className="grid grid-cols-3 gap-2">
+                            {supportedSources.map((source) => {
+                              const isLocked = !!(systemCapabilities.has_model_restriction && systemCapabilities.supported_model)
+                              return (
+                              <button key={source} 
+                                onClick={() => !isLocked && setConfig({ ...config, model_source: source as any })}
+                                disabled={isLocked}
+                                className={`p-3 rounded-lg border-2 text-center transition-all ${
+                                  config.model_source === source ? 'border-blue-500 bg-blue-50 text-blue-600' : 'border-slate-200 text-slate-600 hover:border-slate-300'
+                                } ${isLocked ? 'opacity-60 cursor-not-allowed' : ''}`}>
+                                <span className="capitalize font-medium text-sm">{source}</span>
+                              </button>
+                            )})}
+                          </div>
+                        </div>
+                      ) : null;
+                    })()}
                     
                     <div>
                       <label className="block text-sm font-medium text-slate-700 mb-2">
-                        Model Path / ID
+                        Local Model Path
                         {systemCapabilities.has_model_restriction && systemCapabilities.supported_model && <Lock className="w-3 h-3 inline ml-1 text-slate-400" />}
                       </label>
                       <input type="text" value={config.model_path}
                         onChange={(e) => !(systemCapabilities.has_model_restriction && systemCapabilities.supported_model) && setConfig({ ...config, model_path: e.target.value })}
                         disabled={!!(systemCapabilities.has_model_restriction && systemCapabilities.supported_model)}
-                        placeholder={config.model_source === 'local' ? '/path/to/model (e.g., /mnt/storage/models/llama-7b)' : 'organization/model-name'}
+                        placeholder="/path/to/model (e.g., /mnt/storage/models/usf-omega)"
                         className={`w-full px-4 py-3 border border-slate-300 rounded-lg text-slate-900 placeholder-slate-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
                           (systemCapabilities.has_model_restriction && systemCapabilities.supported_model) ? 'bg-slate-100 cursor-not-allowed' : ''
                         }`}
                       />
-                      {config.model_source === 'local' && !(systemCapabilities.has_model_restriction && systemCapabilities.supported_model) && (
+                      {!(systemCapabilities.has_model_restriction && systemCapabilities.supported_model) && (
                         <p className="text-xs text-slate-500 mt-1">
-                          Enter the full path to your model directory (e.g., external storage mount point)
+                          Enter the full path to your model directory on the server
                         </p>
                       )}
                       {systemCapabilities.has_model_restriction && systemCapabilities.supported_model && (
@@ -1130,20 +1136,19 @@ export default function Home() {
                       )}
                     </div>
                     
-                    {/* Local Model Info - Show when local source is selected */}
-                    {!systemCapabilities.has_model_restriction && 
-                     config.model_source === 'local' && (
+                    {/* Local Model Info */}
+                    {!systemCapabilities.has_model_restriction && (
                       <div className="bg-slate-50 rounded-lg p-4 border border-slate-200">
                         <p className="text-sm text-slate-700">
-                          <strong>Local Model:</strong> Enter the path to your model directory. 
+                          <strong>Local Model:</strong> Enter the path to your model directory on the server. 
                           This should be a directory containing the model files (config.json, model weights, etc.).
                         </p>
                         <p className="text-xs text-slate-500 mt-2">
                           Example paths:
                         </p>
                         <ul className="text-xs text-slate-500 mt-1 space-y-1">
-                          <li>• <code className="bg-slate-200 px-1 rounded">/mnt/storage/models/llama-7b</code> (external storage)</li>
-                          <li>• <code className="bg-slate-200 px-1 rounded">/app/models/my-finetuned-model</code> (container path)</li>
+                          <li>• <code className="bg-slate-200 px-1 rounded">/root/models/usf-omega-40b</code></li>
+                          <li>• <code className="bg-slate-200 px-1 rounded">/mnt/storage/models/llama-7b</code></li>
                         </ul>
                       </div>
                     )}
