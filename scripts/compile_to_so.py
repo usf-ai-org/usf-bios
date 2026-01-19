@@ -99,7 +99,7 @@ def compile_directory(source_dir, compile_from=None):
 
 
 def minimize_init_files(base_dir):
-    """Make __init__.py files minimal - remove all source code comments"""
+    """Make __init__.py files minimal - remove standalone comments only"""
     skip_dirs = {'venv', 'env', '.venv', '.env', 'node_modules', '.git'}
     
     for root, dirs, files in os.walk(base_dir):
@@ -110,17 +110,36 @@ def minimize_init_files(base_dir):
                 try:
                     with open(filepath, 'r') as f:
                         content = f.read()
-                    # Keep only essential imports for package structure
+                    # Remove only standalone comment lines and docstrings
+                    # Keep all other content intact (including multi-line imports)
                     lines = []
+                    in_docstring = False
+                    docstring_char = None
                     for l in content.split('\n'):
                         stripped = l.strip()
-                        # Keep imports and __all__, remove comments
-                        if stripped.startswith(('from ', 'import ', '__all__')):
-                            # Remove inline comments
-                            if '#' in l:
-                                l = l.split('#')[0].rstrip()
-                            if l.strip():
-                                lines.append(l)
+                        # Handle docstrings
+                        if not in_docstring:
+                            if stripped.startswith('"""') or stripped.startswith("'''"):
+                                docstring_char = stripped[:3]
+                                if stripped.count(docstring_char) >= 2:
+                                    continue  # Single line docstring
+                                in_docstring = True
+                                continue
+                        else:
+                            if docstring_char in stripped:
+                                in_docstring = False
+                            continue
+                        # Skip standalone comment lines
+                        if stripped.startswith('#'):
+                            continue
+                        # Keep everything else (imports, code, empty lines for structure)
+                        # Remove inline comments
+                        if '#' in l and not l.strip().startswith('#'):
+                            l = l.split('#')[0].rstrip()
+                        lines.append(l)
+                    # Remove trailing empty lines
+                    while lines and not lines[-1].strip():
+                        lines.pop()
                     with open(filepath, 'w') as f:
                         f.write('\n'.join(lines) + '\n' if lines else '')
                     print(f"  Minimized: {filepath}")
