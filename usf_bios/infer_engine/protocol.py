@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 import json
 from PIL import Image
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from usf_bios.template import Messages, Tool
 from usf_bios.utils import remove_response
@@ -488,12 +488,13 @@ class RolloutOutput(BaseModel):
             return [v]
         return v
 
-    def model_post_init(self, __context: Any) -> None:
+    @model_validator(mode='after')
+    def _post_init_serialization(self) -> 'RolloutOutput':
         # Ensure multimodal data in rollout_infos is serializable (e.g., images to base64)
-        super().model_post_init(__context)
-        self.mminfo_to_serializable()
+        self._mminfo_to_serializable()
+        return self
 
-    def mminfo_to_serializable(self):
+    def _mminfo_to_serializable(self) -> None:
         mm_keys = ['images', 'audios', 'videos']
 
         for key, values in self.rollout_infos.items():
