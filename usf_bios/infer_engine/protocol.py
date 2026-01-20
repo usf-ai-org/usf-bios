@@ -488,7 +488,7 @@ class RolloutOutput(BaseModel):
             return [v]
         return v
 
-    def model_post_init(self, __context):
+    def model_post_init(self, __context: Any) -> None:
         # Ensure multimodal data in rollout_infos is serializable (e.g., images to base64)
         super().model_post_init(__context)
         self.mminfo_to_serializable()
