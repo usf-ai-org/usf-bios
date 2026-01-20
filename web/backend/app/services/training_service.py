@@ -238,6 +238,12 @@ class TrainingService:
                 encrypted_log_service.encrypt_and_format(line_str, job_id)
                 
                 # ============================================================
+                # TERMINAL LOG: Write raw output to terminal log file
+                # This ensures logs persist even after page refresh/backend restart
+                # ============================================================
+                sanitized_log_service.create_terminal_log(job_id, line_str, "OUTPUT")
+                
+                # ============================================================
                 # SHOW ALL OUTPUT IN TERMINAL (for debugging training issues)
                 # This helps users see what's happening, especially errors
                 # ============================================================

@@ -481,15 +481,16 @@ async def resume_job(job_id: str, checkpoint_path: str = None):
     if not checkpoint_path:
         # Find latest checkpoint
         latest_step = 0
-        for item in output_dir.iterdir():
-            if item.is_dir() and item.name.startswith("checkpoint-"):
-                try:
-                    step = int(item.name.replace("checkpoint-", ""))
-                    if step > latest_step:
-                        latest_step = step
-                        checkpoint_path = str(item)
-                except ValueError:
-                    continue
+        if output_dir.exists():
+            for item in output_dir.iterdir():
+                if item.is_dir() and item.name.startswith("checkpoint-"):
+                    try:
+                        step = int(item.name.replace("checkpoint-", ""))
+                        if step > latest_step:
+                            latest_step = step
+                            checkpoint_path = str(item)
+                    except ValueError:
+                        continue
     
     if not checkpoint_path:
         raise HTTPException(status_code=400, detail="No checkpoint found. Use restart instead.")
