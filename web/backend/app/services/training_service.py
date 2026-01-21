@@ -68,12 +68,20 @@ class TrainingService:
         if config.quant_bits:
             cmd.extend(["--quant_bits", str(config.quant_bits)])
         
-        # DeepSpeed
+        # Attention Implementation (Flash Attention, SDPA, etc.)
+        if config.attn_impl:
+            cmd.extend(["--attn_impl", config.attn_impl])
+        
+        # Gradient Checkpointing
+        if hasattr(config, 'gradient_checkpointing') and config.gradient_checkpointing:
+            cmd.extend(["--gradient_checkpointing", "true"])
+        
+        # DeepSpeed (cannot be used with FSDP)
         if config.deepspeed:
             cmd.extend(["--deepspeed", config.deepspeed])
         
-        # FSDP
-        if config.fsdp:
+        # FSDP (cannot be used with DeepSpeed)
+        elif config.fsdp:
             cmd.extend(["--fsdp", config.fsdp])
         
         # Early stopping

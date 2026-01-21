@@ -198,6 +198,46 @@ interface TrainingConfig {
   target_modules: string
   quant_bits: number | null
   warmup_ratio: number
+  attn_impl: string | null
+  deepspeed: string | null
+  fsdp: string | null
+  gradient_checkpointing: boolean
+}
+
+// Optimization configuration
+const OPTIMIZATION_CONFIG = {
+  attn_impl: {
+    label: 'Attention Implementation',
+    options: [
+      { value: null, label: 'Auto (Recommended)', desc: 'Automatically selects best available' },
+      { value: 'flash_attention_2', label: 'Flash Attention 2', desc: 'Fast, memory efficient (requires compatible GPU)' },
+      { value: 'flash_attention_3', label: 'Flash Attention 3', desc: 'Latest, fastest (requires Hopper GPU)' },
+      { value: 'sdpa', label: 'SDPA (PyTorch)', desc: 'PyTorch native, good compatibility' },
+      { value: 'eager', label: 'Eager', desc: 'Standard attention, most compatible' },
+    ],
+    tooltip: 'Flash Attention provides 2-4x speedup and 5-20x memory reduction. SDPA is built into PyTorch. Eager is the fallback.'
+  },
+  deepspeed: {
+    label: 'DeepSpeed ZeRO',
+    options: [
+      { value: null, label: 'Disabled', desc: 'No distributed optimization' },
+      { value: 'zero1', label: 'ZeRO-1', desc: 'Optimizer state partitioning' },
+      { value: 'zero2', label: 'ZeRO-2', desc: '+ Gradient partitioning (recommended)' },
+      { value: 'zero2_offload', label: 'ZeRO-2 + Offload', desc: '+ CPU offload for large models' },
+      { value: 'zero3', label: 'ZeRO-3', desc: '+ Parameter partitioning (70B+ models)' },
+      { value: 'zero3_offload', label: 'ZeRO-3 + Offload', desc: 'Maximum memory savings' },
+    ],
+    tooltip: 'DeepSpeed ZeRO reduces memory by partitioning optimizer states, gradients, and parameters across GPUs. Cannot be used with FSDP.'
+  },
+  fsdp: {
+    label: 'FSDP (PyTorch)',
+    options: [
+      { value: null, label: 'Disabled', desc: 'No FSDP' },
+      { value: 'full_shard', label: 'Full Shard', desc: 'Shard parameters, gradients, optimizer' },
+      { value: 'shard_grad_op', label: 'Shard Grad/Op', desc: 'Shard gradients and optimizer only' },
+    ],
+    tooltip: 'Fully Sharded Data Parallel - PyTorch native distributed training. Cannot be used with DeepSpeed.'
+  }
 }
 
 interface Props {
@@ -402,6 +442,89 @@ export default function TrainingSettingsStep({ config, setConfig }: Props) {
           </div>
         </div>
       )}
+
+      {/* Performance Optimization */}
+      <div className="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-lg p-4 border border-emerald-200">
+        <h4 className="font-medium text-slate-900 mb-4 flex items-center gap-2">
+          <span className="px-2 py-1 bg-emerald-100 text-emerald-700 rounded text-xs font-semibold">⚡</span>
+          Performance Optimization
+        </h4>
+        
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* Attention Implementation */}
+          <div>
+            <div className="flex items-center gap-1 mb-2">
+              <label className="text-sm font-medium text-slate-700">{OPTIMIZATION_CONFIG.attn_impl.label}</label>
+              <Tooltip text={OPTIMIZATION_CONFIG.attn_impl.tooltip} />
+            </div>
+            <div className="space-y-2">
+              {OPTIMIZATION_CONFIG.attn_impl.options.map((opt) => (
+                <label key={opt.value ?? 'auto'} 
+                  className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
+                    config.attn_impl === opt.value 
+                      ? 'border-emerald-500 bg-emerald-50' 
+                      : 'border-slate-200 hover:border-emerald-300 bg-white'
+                  }`}>
+                  <input type="radio" name="attn_impl" 
+                    checked={config.attn_impl === opt.value}
+                    onChange={() => setConfig(p => ({ ...p, attn_impl: opt.value }))}
+                    className="mt-1 text-emerald-600 focus:ring-emerald-500" />
+                  <div>
+                    <span className="font-medium text-sm text-slate-900">{opt.label}</span>
+                    <p className="text-xs text-slate-500">{opt.desc}</p>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* DeepSpeed / FSDP */}
+          <div>
+            <div className="flex items-center gap-1 mb-2">
+              <label className="text-sm font-medium text-slate-700">{OPTIMIZATION_CONFIG.deepspeed.label}</label>
+              <Tooltip text={OPTIMIZATION_CONFIG.deepspeed.tooltip} />
+            </div>
+            <div className="space-y-2">
+              {OPTIMIZATION_CONFIG.deepspeed.options.map((opt) => (
+                <label key={opt.value ?? 'disabled'} 
+                  className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
+                    config.deepspeed === opt.value 
+                      ? 'border-emerald-500 bg-emerald-50' 
+                      : 'border-slate-200 hover:border-emerald-300 bg-white'
+                  } ${config.fsdp ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                  <input type="radio" name="deepspeed" 
+                    checked={config.deepspeed === opt.value}
+                    disabled={!!config.fsdp && opt.value !== null}
+                    onChange={() => setConfig(p => ({ ...p, deepspeed: opt.value, fsdp: null }))}
+                    className="mt-1 text-emerald-600 focus:ring-emerald-500" />
+                  <div>
+                    <span className="font-medium text-sm text-slate-900">{opt.label}</span>
+                    <p className="text-xs text-slate-500">{opt.desc}</p>
+                  </div>
+                </label>
+              ))}
+            </div>
+            {config.fsdp && (
+              <p className="text-xs text-amber-600 mt-2">⚠️ Disabled: FSDP is active. DeepSpeed and FSDP cannot be used together.</p>
+            )}
+          </div>
+        </div>
+
+        {/* Gradient Checkpointing Toggle */}
+        <div className="mt-4 pt-4 border-t border-emerald-200">
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input type="checkbox" 
+              checked={config.gradient_checkpointing}
+              onChange={(e) => setConfig(p => ({ ...p, gradient_checkpointing: e.target.checked }))}
+              className="w-5 h-5 text-emerald-600 rounded focus:ring-emerald-500" />
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-sm text-slate-700">Gradient Checkpointing</span>
+              <Tooltip text="Trades compute for memory. Re-computes activations during backward pass instead of storing them. Recommended for large models." />
+            </div>
+          </label>
+          <p className="text-xs text-slate-500 ml-8 mt-1">Saves ~30-50% GPU memory at ~20% speed cost. Recommended for most trainings.</p>
+        </div>
+      </div>
     </div>
   )
 }

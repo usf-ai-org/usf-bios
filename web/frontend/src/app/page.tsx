@@ -34,8 +34,10 @@ interface TrainingConfig {
   quant_bits: number | null
   torch_dtype: string
   warmup_ratio: number
+  attn_impl: string | null
   deepspeed: string | null
   fsdp: string | null
+  gradient_checkpointing: boolean
   early_stop_interval: number | null
 }
 
@@ -160,8 +162,10 @@ export default function Home() {
     quant_bits: null,
     torch_dtype: 'bfloat16',
     warmup_ratio: 0.03,
+    attn_impl: null,
     deepspeed: null,
     fsdp: null,
+    gradient_checkpointing: true,
     early_stop_interval: null,
   })
 

@@ -78,8 +78,21 @@ class TrainingConfig(BaseModel):
     
     # Advanced
     torch_dtype: str = Field(default="bfloat16")
-    deepspeed: Optional[str] = Field(default=None)
-    fsdp: Optional[str] = Field(default=None)
+    
+    # Optimization - Attention Implementation
+    # Options: None (auto), 'sdpa', 'flash_attention_2', 'flash_attention_3', 'eager'
+    attn_impl: Optional[str] = Field(default=None, description="Attention implementation")
+    
+    # Optimization - DeepSpeed ZeRO
+    # Options: None (disabled), 'zero1', 'zero2', 'zero2_offload', 'zero3', 'zero3_offload'
+    deepspeed: Optional[str] = Field(default=None, description="DeepSpeed ZeRO stage")
+    
+    # Optimization - FSDP (cannot be used with DeepSpeed)
+    fsdp: Optional[str] = Field(default=None, description="FSDP configuration")
+    
+    # Optimization - Gradient Checkpointing
+    gradient_checkpointing: bool = Field(default=True, description="Enable gradient checkpointing to save memory")
+    
     early_stop_interval: Optional[int] = Field(default=None)
     
     # Evaluation
