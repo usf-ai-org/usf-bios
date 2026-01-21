@@ -253,6 +253,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements/ /app/requirements/
 COPY web/backend/requirements.txt /app/web/backend/
 
+# ============================================================================
+# CRITICAL: Disable DeepSpeed JIT compilation BEFORE pip install
+# This prevents DeepSpeed from trying to compile CUDA ops during installation
+# (CUDA toolkit is not available in the build image)
+# ============================================================================
+ENV DS_BUILD_OPS=0
+ENV DS_BUILD_AIO=0
+ENV DS_BUILD_SPARSE_ATTN=0
+ENV DS_BUILD_TRANSFORMER=0
+ENV DS_BUILD_TRANSFORMER_INFERENCE=0
+ENV DS_BUILD_STOCHASTIC_TRANSFORMER=0
+ENV DS_BUILD_UTILS=0
+ENV DS_BUILD_FUSED_ADAM=0
+ENV DS_BUILD_FUSED_LAMB=0
+ENV DS_BUILD_CPU_ADAM=0
+ENV DS_BUILD_CPU_LION=0
+ENV DS_BUILD_EVOFORMER_ATTN=0
+ENV DS_BUILD_INFERENCE_CORE_OPS=0
+ENV DS_BUILD_CUTLASS_OPS=0
+ENV DS_BUILD_RAGGED_DEVICE_OPS=0
+
 # Install ALL framework requirements (includes json_repair and other dependencies)
 # CRITICAL: Install custom transformers fork FIRST (supports usf_omega architecture)
 RUN pip install --no-cache-dir git+https://github.com/apt-team-018/transformers.git && \
