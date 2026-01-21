@@ -180,11 +180,8 @@ ENV TRITON_HOME=/app/.cache/triton
 ENV DEEPSPEED_CACHE_DIR=/app/.cache/deepspeed
 
 # bitsandbytes (quantization: QLoRA, 4-bit, 8-bit)
-# CRITICAL: Do NOT set BNB_CUDA_VERSION - let bitsandbytes auto-detect from PyTorch
-# Setting it manually causes version mismatch errors
+# Let bitsandbytes auto-detect CUDA from PyTorch at build time
 ENV BITSANDBYTES_NOWELCOME=1
-# Disable bitsandbytes CUDA compilation at import time
-ENV BNB_CUDA_COMPUTE_CAPABILITY=""
 
 # Numba (JIT compilation for data processing)
 ENV NUMBA_CACHE_DIR=/app/.cache/numba
@@ -211,10 +208,10 @@ ENV RAY_TMPDIR=/app/.cache/ray
 # TensorBoard
 ENV TENSORBOARD_LOGDIR=/app/data/logs/tensorboard
 
-# Flash Attention - skip CUDA build during import, will use pre-built wheels
-# Setting to TRUE prevents runtime compilation errors if nvcc is missing
-ENV FLASH_ATTENTION_SKIP_CUDA_BUILD=TRUE
-ENV FLASH_ATTENTION_FORCE_BUILD=0
+# Flash Attention - build with CUDA during Docker build
+# We have full CUDA toolkit available, so compile natively for best performance
+ENV FLASH_ATTENTION_SKIP_CUDA_BUILD=FALSE
+ENV FLASH_ATTENTION_FORCE_BUILD=1
 
 # vLLM (inference engine)
 ENV VLLM_CACHE_ROOT=/app/.cache/vllm
@@ -230,19 +227,19 @@ ENV LMDEPLOY_CACHE_DIR=/app/.cache/lmdeploy
 ENV CUDA_CACHE_PATH=/app/.cache/cuda
 ENV CUDA_CACHE_MAXSIZE=1073741824
 
-# DeepSpeed Configuration
-# Disable JIT compilation of CUDA ops (not needed for inference/basic training)
-# This prevents "CUDA_HOME does not exist" errors when DeepSpeed is imported
-ENV DS_BUILD_OPS=0
+# DeepSpeed Configuration - Build commonly used ops during Docker build
+# With CUDA toolkit available, we pre-compile the most important ops
+ENV DS_BUILD_OPS=1
+ENV DS_BUILD_FUSED_ADAM=1
+ENV DS_BUILD_FUSED_LAMB=1
+ENV DS_BUILD_CPU_ADAM=1
+ENV DS_BUILD_UTILS=1
+# These ops are less commonly used, skip to reduce build time
 ENV DS_BUILD_AIO=0
 ENV DS_BUILD_SPARSE_ATTN=0
 ENV DS_BUILD_TRANSFORMER=0
 ENV DS_BUILD_TRANSFORMER_INFERENCE=0
 ENV DS_BUILD_STOCHASTIC_TRANSFORMER=0
-ENV DS_BUILD_UTILS=0
-ENV DS_BUILD_FUSED_ADAM=0
-ENV DS_BUILD_FUSED_LAMB=0
-ENV DS_BUILD_CPU_ADAM=0
 ENV DS_BUILD_CPU_LION=0
 ENV DS_BUILD_EVOFORMER_ATTN=0
 ENV DS_BUILD_RANDOM_LTD=0
@@ -295,38 +292,40 @@ COPY requirements/ /app/requirements/
 COPY web/backend/requirements.txt /app/web/backend/
 
 # ============================================================================
-# DeepSpeed Installation Configuration
-# With CUDA toolkit available, DeepSpeed can JIT compile ops if needed.
-# However, we disable pre-building during pip install to speed up builds.
-# Ops will be compiled on-demand at runtime when first used.
+# CUDA-ACCELERATED PACKAGE INSTALLATION
+# All packages are pre-compiled with CUDA during build - NO runtime compilation
 # ============================================================================
-ENV DS_BUILD_OPS=0
-ENV DS_BUILD_AIO=0
-ENV DS_BUILD_SPARSE_ATTN=0
-ENV DS_BUILD_TRANSFORMER=0
-ENV DS_BUILD_TRANSFORMER_INFERENCE=0
-ENV DS_BUILD_STOCHASTIC_TRANSFORMER=0
-ENV DS_BUILD_UTILS=0
-ENV DS_BUILD_FUSED_ADAM=0
-ENV DS_BUILD_FUSED_LAMB=0
-ENV DS_BUILD_CPU_ADAM=0
-ENV DS_BUILD_CPU_LION=0
-ENV DS_BUILD_EVOFORMER_ATTN=0
-ENV DS_BUILD_INFERENCE_CORE_OPS=0
-ENV DS_BUILD_CUTLASS_OPS=0
-ENV DS_BUILD_RAGGED_DEVICE_OPS=0
 
-# Install ALL framework requirements (includes json_repair and other dependencies)
+# Install PyTorch with CUDA first (required for other packages)
+RUN pip install --no-cache-dir torch>=2.0 --index-url https://download.pytorch.org/whl/cu122 && \
+    python -c "import torch; print(f'✓ PyTorch {torch.__version__} with CUDA {torch.version.cuda}')"
+
+# Install ALL framework requirements
 # CRITICAL: Install custom transformers fork FIRST (supports usf_omega architecture)
 RUN pip install --no-cache-dir git+https://github.com/apt-team-018/transformers.git && \
     pip install --no-cache-dir -r /app/requirements/framework.txt \
-    && pip install --no-cache-dir torch>=2.0 nvidia-ml-py \
+    && pip install --no-cache-dir nvidia-ml-py \
     && pip install --no-cache-dir -r /app/web/backend/requirements.txt
 
-# Install DeepSpeed with CUDA support
-# CUDA toolkit is available from nvidia/cuda base image, so DeepSpeed can detect nvcc
+# Install Flash Attention 2 with CUDA compilation
+# This compiles native CUDA kernels for maximum performance
+RUN pip install --no-cache-dir ninja packaging && \
+    pip install --no-cache-dir flash-attn --no-build-isolation && \
+    python -c "import flash_attn; print(f'✓ Flash Attention {flash_attn.__version__} installed')"
+
+# Install bitsandbytes with CUDA support (for QLoRA, 4-bit, 8-bit quantization)
+RUN pip install --no-cache-dir bitsandbytes && \
+    python -c "import bitsandbytes; print('✓ bitsandbytes installed with CUDA')"
+
+# Install xformers for memory-efficient attention
+RUN pip install --no-cache-dir xformers && \
+    python -c "import xformers; print(f'✓ xformers {xformers.__version__} installed')"
+
+# Install DeepSpeed with CUDA ops pre-compiled
+# DS_BUILD_* env vars set above enable compilation of fused_adam, cpu_adam, etc.
 RUN pip install --no-cache-dir deepspeed && \
-    echo "✓ DeepSpeed installed with CUDA support"
+    python -c "import deepspeed; print(f'✓ DeepSpeed {deepspeed.__version__} installed')" && \
+    ds_report || true
 
 # Copy compiled .so binaries (no source code)
 COPY --from=python-compiler /compile/usf_bios/ /app/usf_bios/
