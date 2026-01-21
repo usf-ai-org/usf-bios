@@ -346,20 +346,27 @@ RUN pip install --no-cache-dir \
     python -c "import torch; assert torch.cuda.is_available() or True, 'CUDA not available'"
 
 # ============================================================================
-# CRITICAL: Install custom transformers fork FIRST (supports usf_omega architecture)
-# This MUST be installed before any other packages that depend on transformers
+# INSTALL usf_bios PACKAGE WITH ALL DEPENDENCIES via pip install -e .
+# This automatically installs:
+# - All requirements from requirements.txt
+# - Custom transformers fork (via post-install hook in setup.py)
+# - All framework dependencies
+# - CLI entry points (usf_bios command)
 # ============================================================================
-RUN pip install --no-cache-dir git+https://github.com/apt-team-018/transformers.git && \
-    python -c "import transformers; print(f'✓ Custom Transformers fork installed: {transformers.__version__}')" && \
-    python -c "from transformers import AutoConfig; print('✓ AutoConfig available')"
+RUN echo "" && \
+    echo "=== INSTALLING USF BIOS WITH ALL DEPENDENCIES ===" && \
+    cd /app && pip install --no-cache-dir -e ".[all]" && \
+    echo "✓ usf_bios package installed with all dependencies"
 
-# Install ALL framework requirements
-RUN pip install --no-cache-dir -r /app/requirements/framework.txt \
-    && pip install --no-cache-dir nvidia-ml-py \
-    && pip install --no-cache-dir -r /app/web/backend/requirements.txt
+# Verify usf_bios and custom transformers are properly installed
+RUN python -c "import usf_bios; print(f'✓ usf_bios {usf_bios.__version__} installed')" && \
+    python -c "import transformers; print(f'✓ Custom Transformers fork: {transformers.__version__}')" && \
+    python -c "from transformers import AutoConfig; print('✓ AutoConfig available')" && \
+    which usf_bios && echo "✓ usf_bios CLI registered"
 
-# Verify custom transformers is still the installed version (not overwritten)
-RUN python -c "import transformers; print(f'✓ Transformers version after deps: {transformers.__version__}')"
+# Install additional backend requirements
+RUN pip install --no-cache-dir nvidia-ml-py && \
+    pip install --no-cache-dir -r /app/web/backend/requirements.txt
 
 # Install Flash Attention 2 with CUDA compilation
 # This compiles native CUDA kernels for maximum performance
