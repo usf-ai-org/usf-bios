@@ -346,10 +346,17 @@ RUN pip install --no-cache-dir \
     python -c "import torch; assert torch.cuda.is_available() or True, 'CUDA not available'"
 
 # ============================================================================
+# CRITICAL: Install custom transformers fork FIRST (supports usf_omega architecture)
+# This MUST be installed before any other packages that depend on transformers
+# ============================================================================
+RUN pip install --no-cache-dir git+https://github.com/apt-team-018/transformers.git && \
+    python -c "import transformers; print(f'✓ Custom Transformers fork installed: {transformers.__version__}')" && \
+    python -c "from transformers import AutoConfig; print('✓ AutoConfig available')"
+
+# ============================================================================
 # INSTALL usf_bios PACKAGE WITH ALL DEPENDENCIES via pip install -e .
 # This automatically installs:
 # - All requirements from requirements.txt
-# - Custom transformers fork (via post-install hook in setup.py)
 # - All framework dependencies
 # - CLI entry points (usf_bios command)
 # ============================================================================
