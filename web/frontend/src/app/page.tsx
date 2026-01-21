@@ -42,7 +42,7 @@ interface TrainingConfig {
 interface JobStatus {
   job_id: string
   job_name: string  // User-friendly name for the training
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'stopped'
+  status: 'pending' | 'initializing' | 'running' | 'completed' | 'failed' | 'stopped'
   current_step: number
   total_steps: number
   current_loss: number | null
@@ -507,7 +507,17 @@ export default function Home() {
   // Poll for terminal logs from file (single source of truth - replaces WebSocket logs)
   // This ensures no duplicates - file-based logs are the authoritative source
   useEffect(() => {
-    if (jobStatus?.job_id && (isTraining || jobStatus.status === 'failed' || jobStatus.status === 'stopped')) {
+    // Poll logs for any active job - explicitly check all relevant statuses
+    const shouldPollLogs = jobStatus?.job_id && (
+      isTraining || 
+      jobStatus.status === 'running' || 
+      jobStatus.status === 'initializing' ||
+      jobStatus.status === 'failed' || 
+      jobStatus.status === 'stopped' ||
+      jobStatus.status === 'completed'
+    )
+    
+    if (shouldPollLogs) {
       let lastLogCount = 0
       
       const fetchTerminalLogs = async () => {
@@ -515,8 +525,8 @@ export default function Home() {
           const res = await fetch(`/api/jobs/${jobStatus.job_id}/terminal-logs?lines=500`)
           if (res.ok) {
             const data = await res.json()
-            if (data.logs && data.logs.length > 0) {
-              // Always use file-based logs as single source of truth (no duplicates)
+            // Update logs even if empty (to show current state)
+            if (data.logs) {
               if (data.logs.length !== lastLogCount) {
                 lastLogCount = data.logs.length
                 setTrainingLogs(data.logs)
@@ -535,7 +545,8 @@ export default function Home() {
       const interval = setInterval(fetchTerminalLogs, 1000)
       
       // Keep polling for 30 seconds after training stops to capture final logs
-      if (!isTraining) {
+      const isActive = isTraining || jobStatus.status === 'running' || jobStatus.status === 'initializing'
+      if (!isActive) {
         setTimeout(() => clearInterval(interval), 30000)
       }
       
