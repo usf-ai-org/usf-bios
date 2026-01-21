@@ -246,7 +246,7 @@ async def get_current_job():
     1. In-memory job state (for normal operation)
     2. OS process check (fallback if in-memory state is lost)
     """
-    from ..services.sanitized_log_service import sanitized_log_service
+    from ...services.sanitized_log_service import sanitized_log_service
     
     try:
         jobs = await job_manager.get_all_jobs()
@@ -378,7 +378,7 @@ async def get_terminal_logs(job_id: str, lines: int = 100):
     This endpoint retrieves logs from the persistent terminal log file,
     which is useful when in-memory logs are lost (e.g., after page refresh).
     """
-    from ..services.sanitized_log_service import sanitized_log_service
+    from ...services.sanitized_log_service import sanitized_log_service
     import os
     
     try:
@@ -567,7 +567,7 @@ async def restart_job(job_id: str, delete_data: bool = True):
                 _debug_log(f"Failed to delete output directory: {e}", job_id, "ERROR")
         
         # Delete terminal logs for this job
-        from ..services.sanitized_log_service import sanitized_log_service
+        from ...services.sanitized_log_service import sanitized_log_service
         terminal_log_path = sanitized_log_service.get_terminal_log_path(job_id)
         if Path(terminal_log_path).exists():
             try:
@@ -851,7 +851,7 @@ async def get_tensorboard_data(job_id: str):
 @router.websocket("/ws/{job_id}")
 async def websocket_endpoint(websocket: WebSocket, job_id: str):
     """WebSocket endpoint for real-time job updates"""
-    from ..services.sanitized_log_service import sanitized_log_service
+    from ...services.sanitized_log_service import sanitized_log_service
     
     # Verify job exists
     job = await job_manager.get_job(job_id)
