@@ -210,8 +210,8 @@ const OPTIMIZATION_CONFIG = {
     label: 'Attention Implementation',
     options: [
       { value: null, label: 'Auto (Recommended)', desc: 'Automatically selects best available' },
-      { value: 'flash_attention_2', label: 'Flash Attention 2', desc: 'Fast, memory efficient (requires compatible GPU)' },
-      { value: 'flash_attention_3', label: 'Flash Attention 3', desc: 'Latest, fastest (requires Hopper GPU)' },
+      { value: 'flash_attention_2', label: 'Flash Attention 2', desc: 'Fast, memory efficient (Ampere+ GPU)' },
+      { value: 'flash_attention_3', label: 'Flash Attention 3', desc: 'Latest, fastest (Hopper GPU only)' },
       { value: 'sdpa', label: 'SDPA (PyTorch)', desc: 'PyTorch native, good compatibility' },
       { value: 'eager', label: 'Eager', desc: 'Standard attention, most compatible' },
     ],
@@ -221,6 +221,7 @@ const OPTIMIZATION_CONFIG = {
     label: 'DeepSpeed ZeRO',
     options: [
       { value: null, label: 'Disabled', desc: 'No distributed optimization' },
+      { value: 'zero0', label: 'ZeRO-0', desc: 'DDP only, no memory optimization' },
       { value: 'zero1', label: 'ZeRO-1', desc: 'Optimizer state partitioning' },
       { value: 'zero2', label: 'ZeRO-2', desc: '+ Gradient partitioning (recommended)' },
       { value: 'zero2_offload', label: 'ZeRO-2 + Offload', desc: '+ CPU offload for large models' },
