@@ -187,9 +187,32 @@ ENV TENSORBOARD_LOGDIR=/app/data/logs/tensorboard
 # Flash Attention compilation
 ENV FLASH_ATTENTION_SKIP_CUDA_BUILD=FALSE
 
+# vLLM (inference engine)
+ENV VLLM_CACHE_ROOT=/app/.cache/vllm
+ENV VLLM_CONFIG_ROOT=/app/.cache/vllm
+
+# SGLang (inference engine)
+ENV SGLANG_CACHE_DIR=/app/.cache/sglang
+
+# lmdeploy (inference engine)
+ENV LMDEPLOY_CACHE_DIR=/app/.cache/lmdeploy
+
+# CUDA/cuDNN compilation cache
+ENV CUDA_CACHE_PATH=/app/.cache/cuda
+ENV CUDA_CACHE_MAXSIZE=1073741824
+
+# NCCL (distributed communication)
+ENV NCCL_DEBUG=WARN
+ENV NCCL_ASYNC_ERROR_HANDLING=1
+
 # Compiler caches
 ENV CCACHE_DIR=/app/.cache/ccache
 ENV XDG_CACHE_HOME=/app/.cache
+
+# Temp directory
+ENV TMPDIR=/app/tmp
+ENV TEMP=/app/tmp
+ENV TMP=/app/tmp
 
 WORKDIR /app
 
@@ -341,6 +364,10 @@ RUN mkdir -p \
     /app/.cache/ray \
     /app/.cache/ccache \
     /app/.cache/pip \
+    /app/.cache/vllm \
+    /app/.cache/sglang \
+    /app/.cache/lmdeploy \
+    /app/.cache/cuda \
     /app/.local \
     /app/.local/share \
     /app/tmp && \

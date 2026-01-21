@@ -311,6 +311,8 @@ class SanitizedLogService:
         try:
             with open(log_file, 'a') as f:
                 f.write(log_line + '\n')
+                f.flush()  # Force flush to disk for real-time reading
+                os.fsync(f.fileno())  # Ensure OS writes to disk
         except Exception:
             pass
         

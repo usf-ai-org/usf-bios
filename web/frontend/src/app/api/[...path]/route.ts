@@ -21,6 +21,9 @@ async function proxyRequest(request: Request, path: string): Promise<Response> {
   const queryString = requestUrl.search // includes the '?' if present
   const url = `${BACKEND_URL}/api/${path}${queryString}`
   
+  // Log the request for debugging
+  console.log(`[API Proxy] ${request.method} ${path}${queryString}`)
+  
   // Forward headers (except host)
   const headers = new Headers()
   request.headers.forEach((value, key) => {
@@ -33,6 +36,8 @@ async function proxyRequest(request: Request, path: string): Promise<Response> {
   const fetchOptions: RequestInit = {
     method: request.method,
     headers,
+    // Disable caching for real-time data
+    cache: 'no-store',
   }
   
   // Forward body for POST/PUT/PATCH
@@ -52,6 +57,9 @@ async function proxyRequest(request: Request, path: string): Promise<Response> {
       }
     })
     
+    // Add cache control headers to prevent caching
+    responseHeaders.set('Cache-Control', 'no-store, no-cache, must-revalidate')
+    
     return new Response(response.body, {
       status: response.status,
       statusText: response.statusText,
@@ -68,40 +76,40 @@ async function proxyRequest(request: Request, path: string): Promise<Response> {
 
 export async function GET(
   request: Request,
-  { params }: { params: { path: string[] } }
+  context: { params: Promise<{ path: string[] }> }
 ) {
-  const path = params.path.join('/')
-  return proxyRequest(request, path)
+  const { path } = await context.params
+  return proxyRequest(request, path.join('/'))
 }
 
 export async function POST(
   request: Request,
-  { params }: { params: { path: string[] } }
+  context: { params: Promise<{ path: string[] }> }
 ) {
-  const path = params.path.join('/')
-  return proxyRequest(request, path)
+  const { path } = await context.params
+  return proxyRequest(request, path.join('/'))
 }
 
 export async function PUT(
   request: Request,
-  { params }: { params: { path: string[] } }
+  context: { params: Promise<{ path: string[] }> }
 ) {
-  const path = params.path.join('/')
-  return proxyRequest(request, path)
+  const { path } = await context.params
+  return proxyRequest(request, path.join('/'))
 }
 
 export async function DELETE(
   request: Request,
-  { params }: { params: { path: string[] } }
+  context: { params: Promise<{ path: string[] }> }
 ) {
-  const path = params.path.join('/')
-  return proxyRequest(request, path)
+  const { path } = await context.params
+  return proxyRequest(request, path.join('/'))
 }
 
 export async function PATCH(
   request: Request,
-  { params }: { params: { path: string[] } }
+  context: { params: Promise<{ path: string[] }> }
 ) {
-  const path = params.path.join('/')
-  return proxyRequest(request, path)
+  const { path } = await context.params
+  return proxyRequest(request, path.join('/'))
 }

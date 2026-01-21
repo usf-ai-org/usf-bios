@@ -504,55 +504,46 @@ export default function Home() {
     }
   }, [jobStatus?.job_id, isTraining])
 
-  // Poll for terminal logs from file (single source of truth - replaces WebSocket logs)
-  // This ensures no duplicates - file-based logs are the authoritative source
+  // Poll for terminal logs from file - SIMPLE AND ROBUST
+  // Polls every second when there's an active job_id
   useEffect(() => {
-    // Poll logs for any active job - explicitly check all relevant statuses
-    const shouldPollLogs = jobStatus?.job_id && (
-      isTraining || 
-      jobStatus.status === 'running' || 
-      jobStatus.status === 'initializing' ||
-      jobStatus.status === 'failed' || 
-      jobStatus.status === 'stopped' ||
-      jobStatus.status === 'completed'
-    )
+    const jobId = jobStatus?.job_id
+    if (!jobId) return
     
-    if (shouldPollLogs) {
-      let lastLogCount = 0
-      
-      const fetchTerminalLogs = async () => {
-        try {
-          const res = await fetch(`/api/jobs/${jobStatus.job_id}/terminal-logs?lines=500`)
-          if (res.ok) {
-            const data = await res.json()
-            // Update logs even if empty (to show current state)
-            if (data.logs) {
-              if (data.logs.length !== lastLogCount) {
-                lastLogCount = data.logs.length
-                setTrainingLogs(data.logs)
+    console.log('[LOG POLL] Starting log polling for job:', jobId)
+    
+    const fetchTerminalLogs = async () => {
+      try {
+        const res = await fetch(`/api/jobs/${jobId}/terminal-logs?lines=500`)
+        if (res.ok) {
+          const data = await res.json()
+          if (data.logs && Array.isArray(data.logs)) {
+            setTrainingLogs(prevLogs => {
+              // Only update if logs changed
+              if (data.logs.length !== prevLogs.length || 
+                  (data.logs.length > 0 && data.logs[data.logs.length - 1] !== prevLogs[prevLogs.length - 1])) {
+                return data.logs
               }
-            }
+              return prevLogs
+            })
           }
-        } catch (e) {
-          console.error('Failed to fetch terminal logs:', e)
         }
+      } catch (e) {
+        console.error('[LOG POLL] Error fetching logs:', e)
       }
-      
-      // Fetch immediately when training starts
-      fetchTerminalLogs()
-      
-      // Poll every 1 second for real-time updates
-      const interval = setInterval(fetchTerminalLogs, 1000)
-      
-      // Keep polling for 30 seconds after training stops to capture final logs
-      const isActive = isTraining || jobStatus.status === 'running' || jobStatus.status === 'initializing'
-      if (!isActive) {
-        setTimeout(() => clearInterval(interval), 30000)
-      }
-      
-      return () => clearInterval(interval)
     }
-  }, [jobStatus?.job_id, isTraining, jobStatus?.status])
+    
+    // Fetch immediately
+    fetchTerminalLogs()
+    
+    // Poll every 1 second
+    const interval = setInterval(fetchTerminalLogs, 1000)
+    
+    return () => {
+      console.log('[LOG POLL] Stopping log polling for job:', jobId)
+      clearInterval(interval)
+    }
+  }, [jobStatus?.job_id])
 
   // State for training type and available metrics
   const [trainTypeInfo, setTrainTypeInfo] = useState<{

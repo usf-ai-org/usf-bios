@@ -20,10 +20,21 @@ export DATABASE_URL="${DATABASE_URL:-sqlite:////app/data/db/usf_bios.db}"
 # No public URL detection needed - backend stays internal
 # ============================================================================
 
-# Create required directories
+# Create required directories (data + all cache directories for ML training)
 mkdir -p /app/data/db /app/data/uploads /app/data/datasets \
-         /app/data/output /app/data/checkpoints /app/data/logs \
-         /app/data/terminal_logs /app/data/models 2>/dev/null || true
+         /app/data/output /app/data/outputs /app/data/checkpoints /app/data/logs \
+         /app/data/logs/tensorboard /app/data/terminal_logs /app/data/encrypted_logs \
+         /app/data/models /app/web/backend/data \
+         /app/.cache/huggingface /app/.cache/huggingface/hub \
+         /app/.cache/datasets /app/.cache/modelscope \
+         /app/.cache/torch /app/.cache/torch/hub /app/.cache/torch_extensions \
+         /app/.cache/triton /app/.triton /app/.triton/autotune /app/.triton/cache \
+         /app/.cache/deepspeed /app/.deepspeed \
+         /app/.cache/numba /app/.cache/xformers /app/.cache/matplotlib \
+         /app/.cache/fontconfig /app/.cache/gradio /app/.cache/wandb \
+         /app/.cache/ray /app/.cache/ccache /app/.cache/pip \
+         /app/.cache/vllm /app/.cache/sglang /app/.cache/lmdeploy /app/.cache/cuda \
+         /app/.local /app/.local/share /app/tmp 2>/dev/null || true
 
 echo "=============================================="
 echo "  USF BIOS - AI Fine-tuning Platform"

@@ -272,6 +272,9 @@ class TrainingService:
                 started_at=datetime.now()
             )
             await ws_manager.send_status(job_id, "initializing")
+            
+            # Write to terminal log file FIRST (this is what frontend polls)
+            sanitized_log_service.create_terminal_log(job_id, "Initializing training environment...", "INFO")
             await ws_manager.send_log(job_id, "Initializing training environment...")
             _debug_log(job_id, "Status set to INITIALIZING")
             
@@ -292,6 +295,7 @@ class TrainingService:
                     # Check for config.json which indicates a valid model directory
                     config_path = os.path.join(model_path, "config.json")
                     if not os.path.exists(config_path):
+                        sanitized_log_service.create_terminal_log(job_id, "Warning: config.json not found in model directory", "WARN")
                         await ws_manager.send_log(job_id, f"Warning: config.json not found in model directory")
                         _debug_log(job_id, f"Warning: config.json not found at {config_path}")
             
@@ -306,6 +310,7 @@ class TrainingService:
             # Report validation errors
             if validation_errors:
                 error_msg = "Pre-training validation failed:\n" + "\n".join(f"  - {e}" for e in validation_errors)
+                sanitized_log_service.create_terminal_log(job_id, f"ERROR: {error_msg}", "ERROR")
                 await ws_manager.send_log(job_id, f"ERROR: {error_msg}")
                 await job_manager.add_log(job_id, f"ERROR: {error_msg}")
                 _debug_log(job_id, error_msg, "ERROR")
@@ -318,11 +323,13 @@ class TrainingService:
                 await ws_manager.send_status(job_id, "failed")
                 return
             
+            sanitized_log_service.create_terminal_log(job_id, "Validation passed. Building training command...", "INFO")
             await ws_manager.send_log(job_id, "Validation passed. Building training command...")
             
             # Build command (with resume checkpoint if set)
             resume_checkpoint = getattr(job, 'resume_from_checkpoint', None)
             if resume_checkpoint:
+                sanitized_log_service.create_terminal_log(job_id, f"Resuming from checkpoint: {resume_checkpoint}", "INFO")
                 await ws_manager.send_log(job_id, f"Resuming from checkpoint: {resume_checkpoint}")
                 _debug_log(job_id, f"Resuming from checkpoint: {resume_checkpoint}")
             
@@ -334,8 +341,9 @@ class TrainingService:
             encrypted_log_service.encrypt_and_format(f"Command: {cmd_str}", job_id)
             
             # Send command info to WebSocket for debugging
-            await ws_manager.send_log(job_id, f"Command: {cmd_str}")
             sanitized_log_service.create_terminal_log(job_id, f"Command: {cmd_str}", "INFO")
+            await ws_manager.send_log(job_id, f"Command: {cmd_str}")
+            sanitized_log_service.create_terminal_log(job_id, "Starting training process...", "INFO")
             await ws_manager.send_log(job_id, "Starting training process...")
             
             # Create process
@@ -351,6 +359,7 @@ class TrainingService:
             await job_manager.set_process(job_id, process)
             await job_manager.update_job(job_id, status=JobStatus.RUNNING)
             await ws_manager.send_status(job_id, "running")
+            sanitized_log_service.create_terminal_log(job_id, "Training started...", "INFO")
             await ws_manager.send_log(job_id, "Training started...")
             
             total_steps = 0
@@ -488,10 +497,8 @@ class TrainingService:
                     completed_at=datetime.now()
                 )
                 await ws_manager.send_status(job_id, "completed")
+                sanitized_log_service.create_terminal_log(job_id, "Training completed successfully!", "INFO")
                 await ws_manager.send_log(job_id, "Training completed successfully!", "success")
-                
-                # Don't expose full path to user
-                await ws_manager.send_log(job_id, "Training completed! Output saved.", "success")
                 sanitized_log_service.log_session_end(job_id, "COMPLETED")
             else:
                 # Log failure with exit code
@@ -515,12 +522,14 @@ class TrainingService:
                     completed_at=datetime.now()
                 )
                 await ws_manager.send_status(job_id, "failed", error_msg)
+                sanitized_log_service.create_terminal_log(job_id, error_msg, "ERROR")
                 await ws_manager.send_log(job_id, error_msg, "error")
                 sanitized_log_service.log_session_end(job_id, "FAILED", error_message=error_msg)
         
         except asyncio.CancelledError:
             await job_manager.update_job(job_id, status=JobStatus.STOPPED)
             await ws_manager.send_status(job_id, "stopped")
+            sanitized_log_service.create_terminal_log(job_id, "Training stopped by user", "WARN")
             await ws_manager.send_log(job_id, "Training stopped by user", "warning")
             sanitized_log_service.log_session_end(job_id, "CANCELLED")
         
@@ -548,6 +557,7 @@ class TrainingService:
                 error=minimal_error  # Store minimal error only
             )
             await ws_manager.send_status(job_id, "failed", minimal_error)
+            sanitized_log_service.create_terminal_log(job_id, f"Error: {minimal_error}", "ERROR")
             await ws_manager.send_log(job_id, f"Error: {minimal_error}", "error")
             sanitized_log_service.log_session_end(job_id, "FAILED", error_message=full_error)
     
