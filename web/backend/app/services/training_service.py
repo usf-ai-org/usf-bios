@@ -51,6 +51,10 @@ class TrainingService:
             "--report_to", "tensorboard",  # Enable TensorBoard logging
         ]
         
+        # Warmup ratio
+        if hasattr(config, 'warmup_ratio') and config.warmup_ratio is not None:
+            cmd.extend(["--warmup_ratio", str(config.warmup_ratio)])
+        
         # Resume from checkpoint
         if resume_from_checkpoint:
             cmd.extend(["--resume_from_checkpoint", resume_from_checkpoint])

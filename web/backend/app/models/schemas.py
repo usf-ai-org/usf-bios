@@ -3,9 +3,9 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class JobStatus(str, Enum):
@@ -77,23 +77,46 @@ class TrainingConfig(BaseModel):
     quant_bits: Optional[int] = Field(default=None, description="4 or 8 for QLoRA")
     
     # Advanced
-    torch_dtype: str = Field(default="bfloat16")
+    torch_dtype: Literal["bfloat16", "float16", "float32"] = Field(default="bfloat16")
+    warmup_ratio: float = Field(default=0.03, ge=0, le=1)
     
     # Optimization - Attention Implementation
-    # Options: None (auto), 'sdpa', 'flash_attention_2', 'flash_attention_3', 'eager'
-    attn_impl: Optional[str] = Field(default=None, description="Attention implementation")
+    # Valid options from USF BIOS: None, 'sdpa', 'eager', 'flash_attn', 'flash_attention_2', 'flash_attention_3'
+    attn_impl: Optional[Literal["sdpa", "eager", "flash_attn", "flash_attention_2", "flash_attention_3"]] = Field(
+        default=None, description="Attention implementation"
+    )
     
     # Optimization - DeepSpeed ZeRO
-    # Options: None (disabled), 'zero1', 'zero2', 'zero2_offload', 'zero3', 'zero3_offload'
-    deepspeed: Optional[str] = Field(default=None, description="DeepSpeed ZeRO stage")
+    # Valid options from USF BIOS config: 'zero0', 'zero1', 'zero2', 'zero2_offload', 'zero3', 'zero3_offload'
+    deepspeed: Optional[Literal["zero0", "zero1", "zero2", "zero2_offload", "zero3", "zero3_offload"]] = Field(
+        default=None, description="DeepSpeed ZeRO stage"
+    )
     
     # Optimization - FSDP (cannot be used with DeepSpeed)
-    fsdp: Optional[str] = Field(default=None, description="FSDP configuration")
+    # Valid options: 'full_shard', 'shard_grad_op', 'fsdp2'
+    fsdp: Optional[Literal["full_shard", "shard_grad_op", "fsdp2"]] = Field(
+        default=None, description="FSDP configuration"
+    )
     
     # Optimization - Gradient Checkpointing
     gradient_checkpointing: bool = Field(default=True, description="Enable gradient checkpointing to save memory")
     
-    early_stop_interval: Optional[int] = Field(default=None)
+    early_stop_interval: Optional[int] = Field(default=None, ge=1)
+    
+    @model_validator(mode='after')
+    def validate_optimization_combination(self):
+        """Validate that DeepSpeed and FSDP are not used together"""
+        if self.deepspeed and self.fsdp:
+            raise ValueError("DeepSpeed and FSDP cannot be used together. Please choose one or the other.")
+        return self
+    
+    @field_validator('quant_bits')
+    @classmethod
+    def validate_quant_bits(cls, v):
+        """Validate quant_bits is 4 or 8 if provided"""
+        if v is not None and v not in [4, 8]:
+            raise ValueError("quant_bits must be 4 or 8")
+        return v
     
     # Evaluation
     eval_strategy: Optional[str] = Field(default=None)
