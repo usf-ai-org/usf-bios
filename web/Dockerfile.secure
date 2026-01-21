@@ -281,9 +281,9 @@ RUN pip install --no-cache-dir git+https://github.com/apt-team-018/transformers.
     && pip install --no-cache-dir torch>=2.0 nvidia-ml-py \
     && pip install --no-cache-dir -r /app/web/backend/requirements.txt
 
-# Install DeepSpeed separately with --no-build-isolation to preserve env vars
-# The DS_BUILD_* env vars set above will be used during installation
-RUN pip install --no-cache-dir --no-build-isolation deepspeed || \
+# Install DeepSpeed separately - unset CUDA_HOME to prevent nvcc detection during setup.py
+# DeepSpeed will be installed without CUDA ops, they'll be JIT compiled at runtime if CUDA is available
+RUN CUDA_HOME="" pip install --no-cache-dir deepspeed || \
     echo "DeepSpeed installation skipped (will be installed at runtime with CUDA)"
 
 # Copy compiled .so binaries (no source code)
