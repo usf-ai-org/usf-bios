@@ -516,6 +516,7 @@ RUN pip install --no-cache-dir \
     jieba \
     rouge \
     openai \
+    openai-whisper \
     modelscope \
     oss2 \
     cpm_kernels \
@@ -526,6 +527,9 @@ RUN pip install --no-cache-dir \
     binpacking \
     zstandard \
     transformers_stream_generator \
+    flash-attn-interface \
+    vllm-ascend \
+    mindspeed \
     && python -c "print('✓ Optional packages installed')" || \
     echo "⚠ Some optional packages may have failed (non-critical)"
 
