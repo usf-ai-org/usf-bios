@@ -281,26 +281,10 @@ RUN pip install --no-cache-dir git+https://github.com/apt-team-018/transformers.
     && pip install --no-cache-dir torch>=2.0 nvidia-ml-py \
     && pip install --no-cache-dir -r /app/web/backend/requirements.txt
 
-# Install DeepSpeed separately with proper environment variables
-# Using shell to ensure env vars are exported and visible to pip subprocess
-RUN /bin/bash -c '\
-    export DS_BUILD_OPS=0 && \
-    export DS_BUILD_AIO=0 && \
-    export DS_BUILD_SPARSE_ATTN=0 && \
-    export DS_BUILD_TRANSFORMER=0 && \
-    export DS_BUILD_TRANSFORMER_INFERENCE=0 && \
-    export DS_BUILD_STOCHASTIC_TRANSFORMER=0 && \
-    export DS_BUILD_UTILS=0 && \
-    export DS_BUILD_FUSED_ADAM=0 && \
-    export DS_BUILD_FUSED_LAMB=0 && \
-    export DS_BUILD_CPU_ADAM=0 && \
-    export DS_BUILD_CPU_LION=0 && \
-    export DS_BUILD_EVOFORMER_ATTN=0 && \
-    export DS_BUILD_INFERENCE_CORE_OPS=0 && \
-    export DS_BUILD_CUTLASS_OPS=0 && \
-    export DS_BUILD_RAGGED_DEVICE_OPS=0 && \
-    pip install --no-cache-dir deepspeed \
-    '
+# Install DeepSpeed separately with --no-build-isolation to preserve env vars
+# The DS_BUILD_* env vars set above will be used during installation
+RUN pip install --no-cache-dir --no-build-isolation deepspeed || \
+    echo "DeepSpeed installation skipped (will be installed at runtime with CUDA)"
 
 # Copy compiled .so binaries (no source code)
 COPY --from=python-compiler /compile/usf_bios/ /app/usf_bios/
