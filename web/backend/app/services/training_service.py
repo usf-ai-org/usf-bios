@@ -408,17 +408,36 @@ class TrainingService:
                     current_loss = metrics["loss"]
                 
                 # ============================================================
-                # CHECKPOINT DETECTION: Detect when checkpoints are saved
-                # HuggingFace Trainer outputs: "Saving model checkpoint to ..."
+                # CHECKPOINT DETECTION: Multiple methods for robustness
+                # 1. HuggingFace Trainer: "Saving model checkpoint to ..."
+                # 2. Trainer logging: checkpoint-XXX patterns
+                # 3. Progress output: "Saving checkpoint" messages
+                # Note: USF BIOS info_debug is suppressed in production, so we
+                # also detect from HuggingFace Trainer's standard logging
                 # ============================================================
-                if "Saving model checkpoint" in line_str:
-                    checkpoint_count += 1
-                    # Extract checkpoint path from log line
-                    # Format: "Saving model checkpoint to /path/to/checkpoint-XXX"
-                    checkpoint_path = None
+                checkpoint_detected = False
+                checkpoint_path = None
+                
+                # Method 1: Direct checkpoint message (may appear from HuggingFace Trainer)
+                if "Saving model checkpoint" in line_str or "Saving checkpoint" in line_str:
+                    checkpoint_detected = True
                     if " to " in line_str:
                         checkpoint_path = line_str.split(" to ")[-1].strip()
-                    sanitized_log_service.create_terminal_log(job_id, f"✓ Checkpoint {checkpoint_count} saved: {checkpoint_path or 'unknown'}", "INFO")
+                
+                # Method 2: Checkpoint directory pattern in output
+                # HuggingFace Trainer outputs paths like "/path/checkpoint-500"
+                elif "checkpoint-" in line_str and current_step > 0:
+                    import re
+                    ckpt_match = re.search(r'(checkpoint-\d+)', line_str)
+                    if ckpt_match:
+                        # Only count if this looks like a save operation (not just a reference)
+                        if any(kw in line_str.lower() for kw in ['saving', 'saved', 'save', 'output', 'write']):
+                            checkpoint_detected = True
+                            checkpoint_path = ckpt_match.group(1)
+                
+                if checkpoint_detected:
+                    checkpoint_count += 1
+                    sanitized_log_service.create_terminal_log(job_id, f"✓ Checkpoint {checkpoint_count} saved: {checkpoint_path or f'step-{current_step}'}", "INFO")
                     _debug_log(job_id, f"Checkpoint {checkpoint_count} detected: {line_str}")
                     # Send checkpoint event to frontend via WebSocket
                     await ws_manager.broadcast(job_id, {
