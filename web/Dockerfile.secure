@@ -227,25 +227,25 @@ ENV LMDEPLOY_CACHE_DIR=/app/.cache/lmdeploy
 ENV CUDA_CACHE_PATH=/app/.cache/cuda
 ENV CUDA_CACHE_MAXSIZE=1073741824
 
-# DeepSpeed Configuration - Build commonly used ops during Docker build
-# With CUDA toolkit available, we pre-compile the most important ops
+# DeepSpeed Configuration - Build ALL ops during Docker build
+# With CUDA toolkit available, we pre-compile ALL DeepSpeed operations
+# This ensures everything works without runtime compilation
 ENV DS_BUILD_OPS=1
+ENV DS_BUILD_AIO=1
+ENV DS_BUILD_SPARSE_ATTN=1
+ENV DS_BUILD_TRANSFORMER=1
+ENV DS_BUILD_TRANSFORMER_INFERENCE=1
+ENV DS_BUILD_STOCHASTIC_TRANSFORMER=1
 ENV DS_BUILD_FUSED_ADAM=1
 ENV DS_BUILD_FUSED_LAMB=1
 ENV DS_BUILD_CPU_ADAM=1
+ENV DS_BUILD_CPU_LION=1
 ENV DS_BUILD_UTILS=1
-# These ops are less commonly used, skip to reduce build time
-ENV DS_BUILD_AIO=0
-ENV DS_BUILD_SPARSE_ATTN=0
-ENV DS_BUILD_TRANSFORMER=0
-ENV DS_BUILD_TRANSFORMER_INFERENCE=0
-ENV DS_BUILD_STOCHASTIC_TRANSFORMER=0
-ENV DS_BUILD_CPU_LION=0
-ENV DS_BUILD_EVOFORMER_ATTN=0
-ENV DS_BUILD_RANDOM_LTD=0
-ENV DS_BUILD_INFERENCE_CORE_OPS=0
-ENV DS_BUILD_CUTLASS_OPS=0
-ENV DS_BUILD_RAGGED_DEVICE_OPS=0
+ENV DS_BUILD_EVOFORMER_ATTN=1
+ENV DS_BUILD_RANDOM_LTD=1
+ENV DS_BUILD_INFERENCE_CORE_OPS=1
+ENV DS_BUILD_CUTLASS_OPS=1
+ENV DS_BUILD_RAGGED_DEVICE_OPS=1
 
 # ============================================================================
 # CUDA Configuration - Real CUDA toolkit from nvidia/cuda base image
@@ -345,12 +345,21 @@ RUN pip install --no-cache-dir \
     python -c "import torch; print(f'✓ PyTorch {torch.__version__} with CUDA {torch.version.cuda}')" && \
     python -c "import torch; assert torch.cuda.is_available() or True, 'CUDA not available'"
 
-# Install ALL framework requirements
+# ============================================================================
 # CRITICAL: Install custom transformers fork FIRST (supports usf_omega architecture)
+# This MUST be installed before any other packages that depend on transformers
+# ============================================================================
 RUN pip install --no-cache-dir git+https://github.com/apt-team-018/transformers.git && \
-    pip install --no-cache-dir -r /app/requirements/framework.txt \
+    python -c "import transformers; print(f'✓ Custom Transformers fork installed: {transformers.__version__}')" && \
+    python -c "from transformers import AutoConfig; print('✓ AutoConfig available')"
+
+# Install ALL framework requirements
+RUN pip install --no-cache-dir -r /app/requirements/framework.txt \
     && pip install --no-cache-dir nvidia-ml-py \
     && pip install --no-cache-dir -r /app/web/backend/requirements.txt
+
+# Verify custom transformers is still the installed version (not overwritten)
+RUN python -c "import transformers; print(f'✓ Transformers version after deps: {transformers.__version__}')"
 
 # Install Flash Attention 2 with CUDA compilation
 # This compiles native CUDA kernels for maximum performance
