@@ -347,13 +347,35 @@ class TrainingService:
             sanitized_log_service.create_terminal_log(job_id, "Starting training process...", "INFO")
             await ws_manager.send_log(job_id, "Starting training process...")
             
-            # Create process
+            # Create process with proper environment
+            # Include DeepSpeed build flags to prevent CUDA_HOME errors
             _debug_log(job_id, "Creating subprocess...")
+            training_env = {
+                **os.environ,
+                "PYTHONUNBUFFERED": "1",
+                # DeepSpeed: Disable JIT compilation of CUDA ops
+                # This prevents "CUDA_HOME does not exist" errors
+                "DS_BUILD_OPS": "0",
+                "DS_BUILD_AIO": "0",
+                "DS_BUILD_SPARSE_ATTN": "0",
+                "DS_BUILD_TRANSFORMER": "0",
+                "DS_BUILD_TRANSFORMER_INFERENCE": "0",
+                "DS_BUILD_STOCHASTIC_TRANSFORMER": "0",
+                "DS_BUILD_UTILS": "0",
+                "DS_BUILD_FUSED_ADAM": "0",
+                "DS_BUILD_FUSED_LAMB": "0",
+                "DS_BUILD_CPU_ADAM": "0",
+                "DS_BUILD_CPU_LION": "0",
+                "DS_BUILD_EVOFORMER_ATTN": "0",
+                "DS_BUILD_INFERENCE_CORE_OPS": "0",
+                "DS_BUILD_CUTLASS_OPS": "0",
+                "DS_BUILD_RAGGED_DEVICE_OPS": "0",
+            }
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
-                env={**os.environ, "PYTHONUNBUFFERED": "1"},
+                env=training_env,
             )
             _debug_log(job_id, f"Subprocess created with PID: {process.pid}")
             

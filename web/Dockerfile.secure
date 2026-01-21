@@ -201,8 +201,27 @@ ENV LMDEPLOY_CACHE_DIR=/app/.cache/lmdeploy
 ENV CUDA_CACHE_PATH=/app/.cache/cuda
 ENV CUDA_CACHE_MAXSIZE=1073741824
 
-# CUDA_HOME for DeepSpeed and other libraries that need to compile CUDA ops
-# Points to the CUDA toolkit installation in the container
+# DeepSpeed Configuration
+# Disable JIT compilation of CUDA ops (not needed for inference/basic training)
+# This prevents "CUDA_HOME does not exist" errors when DeepSpeed is imported
+ENV DS_BUILD_OPS=0
+ENV DS_BUILD_AIO=0
+ENV DS_BUILD_SPARSE_ATTN=0
+ENV DS_BUILD_TRANSFORMER=0
+ENV DS_BUILD_TRANSFORMER_INFERENCE=0
+ENV DS_BUILD_STOCHASTIC_TRANSFORMER=0
+ENV DS_BUILD_UTILS=0
+ENV DS_BUILD_FUSED_ADAM=0
+ENV DS_BUILD_FUSED_LAMB=0
+ENV DS_BUILD_CPU_ADAM=0
+ENV DS_BUILD_CPU_LION=0
+ENV DS_BUILD_EVOFORMER_ATTN=0
+ENV DS_BUILD_RANDOM_LTD=0
+ENV DS_BUILD_INFERENCE_CORE_OPS=0
+ENV DS_BUILD_CUTLASS_OPS=0
+ENV DS_BUILD_RAGGED_DEVICE_OPS=0
+
+# CUDA paths (for when running on GPU nodes with CUDA installed)
 ENV CUDA_HOME=/usr/local/cuda
 ENV CUDA_ROOT=/usr/local/cuda
 
