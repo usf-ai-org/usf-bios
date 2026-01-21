@@ -19,7 +19,22 @@ interface TrainingConfig {
   model_path: string
   model_source: 'huggingface' | 'modelscope' | 'local'
   modality: 'text' | 'vision' | 'audio' | 'video'
+  training_method: 'sft' | 'pt' | 'rlhf'
   train_type: 'full' | 'lora' | 'qlora' | 'adalora'
+  rlhf_type: 'dpo' | 'orpo' | 'simpo' | 'kto' | 'cpo' | 'rm' | 'ppo' | 'grpo' | 'gkd' | null
+  // RLHF parameters
+  beta: number | null
+  max_completion_length: number
+  label_smoothing: number
+  rpo_alpha: number | null
+  simpo_gamma: number
+  desirable_weight: number
+  undesirable_weight: number
+  num_ppo_epochs: number
+  kl_coef: number
+  cliprange: number
+  num_generations: number
+  // Base parameters
   dataset_paths: string[]
   output_dir: string
   num_train_epochs: number
@@ -155,9 +170,24 @@ export default function Home() {
     model_path: '',
     model_source: 'local',
     modality: 'text',
+    training_method: 'sft',
     train_type: 'lora',
+    rlhf_type: null,
+    // RLHF parameters with defaults
+    beta: null,
+    max_completion_length: 512,
+    label_smoothing: 0,
+    rpo_alpha: null,
+    simpo_gamma: 1.0,
+    desirable_weight: 1.0,
+    undesirable_weight: 1.0,
+    num_ppo_epochs: 4,
+    kl_coef: 0.05,
+    cliprange: 0.2,
+    num_generations: 8,
+    // Base parameters
     dataset_paths: [],
-    output_dir: 'output/finetuned',
+    output_dir: 'output',
     num_train_epochs: 3,
     learning_rate: 0.0001,
     per_device_train_batch_size: 1,

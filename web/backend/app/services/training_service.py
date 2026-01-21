@@ -32,11 +32,18 @@ class TrainingService:
         self._running_tasks: dict = {}
     
     def _build_command(self, config: TrainingConfig, job_id: str, resume_from_checkpoint: str = None) -> list:
-        """Build the training command"""
+        """Build the training command based on training method"""
         output_dir = str(get_system_settings().OUTPUT_DIR / job_id)
         
+        # Determine CLI command based on training method
+        training_method = getattr(config, 'training_method', None)
+        if training_method:
+            method_value = training_method.value if hasattr(training_method, 'value') else str(training_method)
+        else:
+            method_value = "sft"  # Default to SFT
+        
         cmd = [
-            sys.executable, "-m", "usf_bios", "sft",
+            sys.executable, "-m", "usf_bios", method_value,
             "--model", config.model_path,
             "--train_type", config.train_type.value,
             "--dataset", config.dataset_path,
@@ -48,8 +55,55 @@ class TrainingService:
             "--max_length", str(config.max_length),
             "--torch_dtype", config.torch_dtype,
             "--logging_steps", "1",
-            "--report_to", "tensorboard",  # Enable TensorBoard logging
+            "--report_to", "tensorboard",
         ]
+        
+        # RLHF specific parameters
+        if method_value == "rlhf":
+            rlhf_type = getattr(config, 'rlhf_type', None)
+            if rlhf_type:
+                cmd.extend(["--rlhf_type", rlhf_type])
+            
+            # Beta parameter
+            if hasattr(config, 'beta') and config.beta is not None:
+                cmd.extend(["--beta", str(config.beta)])
+            
+            # Max completion length for GRPO/PPO/GKD
+            if hasattr(config, 'max_completion_length') and config.max_completion_length:
+                cmd.extend(["--max_completion_length", str(config.max_completion_length)])
+            
+            # DPO specific
+            if rlhf_type == "dpo":
+                if hasattr(config, 'label_smoothing') and config.label_smoothing > 0:
+                    cmd.extend(["--label_smoothing", str(config.label_smoothing)])
+                if hasattr(config, 'rpo_alpha') and config.rpo_alpha is not None:
+                    cmd.extend(["--rpo_alpha", str(config.rpo_alpha)])
+            
+            # SimPO specific
+            elif rlhf_type == "simpo":
+                if hasattr(config, 'simpo_gamma') and config.simpo_gamma:
+                    cmd.extend(["--simpo_gamma", str(config.simpo_gamma)])
+            
+            # KTO specific
+            elif rlhf_type == "kto":
+                if hasattr(config, 'desirable_weight') and config.desirable_weight != 1.0:
+                    cmd.extend(["--desirable_weight", str(config.desirable_weight)])
+                if hasattr(config, 'undesirable_weight') and config.undesirable_weight != 1.0:
+                    cmd.extend(["--undesirable_weight", str(config.undesirable_weight)])
+            
+            # PPO specific
+            elif rlhf_type == "ppo":
+                if hasattr(config, 'num_ppo_epochs') and config.num_ppo_epochs:
+                    cmd.extend(["--num_ppo_epochs", str(config.num_ppo_epochs)])
+                if hasattr(config, 'kl_coef') and config.kl_coef:
+                    cmd.extend(["--kl_coef", str(config.kl_coef)])
+                if hasattr(config, 'cliprange') and config.cliprange:
+                    cmd.extend(["--cliprange", str(config.cliprange)])
+            
+            # GRPO specific
+            elif rlhf_type == "grpo":
+                if hasattr(config, 'num_generations') and config.num_generations:
+                    cmd.extend(["--num_generations", str(config.num_generations)])
         
         # Warmup ratio
         if hasattr(config, 'warmup_ratio') and config.warmup_ratio is not None:
