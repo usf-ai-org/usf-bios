@@ -128,19 +128,25 @@ jobs:
 
       - name: Create Git tag for releases
         if: needs.version.outputs.is_release == 'true' && github.event_name == 'workflow_dispatch'
+        continue-on-error: true
         run: |
           git config user.name github-actions
           git config user.email github-actions@github.com
           TAG_NAME="v${{ needs.version.outputs.version }}"
-          # Check if tag already exists locally or remotely
-          if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
-            echo "Tag $TAG_NAME already exists locally, skipping creation"
-          elif git ls-remote --tags origin | grep -q "refs/tags/$TAG_NAME"; then
-            echo "Tag $TAG_NAME already exists on remote, skipping creation"
+          
+          # Fetch all tags from remote first
+          git fetch --tags --force
+          
+          # Check if tag already exists
+          if git tag -l | grep -q "^${TAG_NAME}$"; then
+            echo "::notice::Tag $TAG_NAME already exists, skipping creation"
           else
             git tag -a "$TAG_NAME" -m "Release $TAG_NAME"
-            git push origin "$TAG_NAME"
-            echo "Created and pushed tag $TAG_NAME"
+            if git push origin "$TAG_NAME" 2>/dev/null; then
+              echo "::notice::Created and pushed tag $TAG_NAME"
+            else
+              echo "::warning::Tag $TAG_NAME may already exist on remote, skipping"
+            fi
           fi
 
       - name: Summary
