@@ -186,7 +186,22 @@ export function SelectInput<T extends string | number>({ value, onChange, option
 }
 
 interface TrainingConfig {
+  training_method: 'sft' | 'pt' | 'rlhf'
   train_type: 'full' | 'lora' | 'qlora' | 'adalora'
+  rlhf_type: 'dpo' | 'orpo' | 'simpo' | 'kto' | 'cpo' | 'rm' | 'ppo' | 'grpo' | 'gkd' | null
+  // RLHF parameters
+  beta: number | null
+  max_completion_length: number
+  label_smoothing: number
+  rpo_alpha: number | null
+  simpo_gamma: number
+  desirable_weight: number
+  undesirable_weight: number
+  num_ppo_epochs: number
+  kl_coef: number
+  cliprange: number
+  num_generations: number
+  // Base parameters
   num_train_epochs: number
   learning_rate: number
   per_device_train_batch_size: number
@@ -210,6 +225,26 @@ interface TrainingConfig {
   adam_beta2: number
   gpu_ids: number[] | null
   num_gpus: number | null
+}
+
+// Training method configuration
+const TRAINING_METHOD_CONFIG = {
+  sft: { label: 'SFT (Supervised Fine-Tuning)', desc: 'Train model on instruction-response pairs', tooltip: 'Standard fine-tuning method. Best for teaching models specific behaviors or knowledge.' },
+  pt: { label: 'PT (Pre-Training)', desc: 'Continue pre-training on raw text', tooltip: 'Extend pre-training on domain-specific data. Good for adapting to new domains.' },
+  rlhf: { label: 'RLHF (Reinforcement Learning)', desc: 'Align model with human preferences', tooltip: 'Use preference data to align model behavior. Includes DPO, PPO, GRPO, etc.' },
+}
+
+// RLHF algorithm configuration  
+const RLHF_ALGORITHM_CONFIG = {
+  dpo: { label: 'DPO', desc: 'Direct Preference Optimization', tooltip: 'Simple and stable. No reward model needed. Good default choice.' },
+  orpo: { label: 'ORPO', desc: 'Odds Ratio Preference Optimization', tooltip: 'Combines SFT and preference optimization. No reference model needed.' },
+  simpo: { label: 'SimPO', desc: 'Simple Preference Optimization', tooltip: 'Simplified DPO without reference model. Uses length-normalized rewards.' },
+  kto: { label: 'KTO', desc: 'Kahneman-Tversky Optimization', tooltip: 'Works with binary feedback (good/bad). Good when you only have thumbs up/down.' },
+  cpo: { label: 'CPO', desc: 'Contrastive Preference Optimization', tooltip: 'Contrastive learning approach. No reference model needed.' },
+  rm: { label: 'RM', desc: 'Reward Model Training', tooltip: 'Train a reward model for scoring responses. Used with PPO.' },
+  ppo: { label: 'PPO', desc: 'Proximal Policy Optimization', tooltip: 'Classic RLHF. Requires reward model. More complex but flexible.' },
+  grpo: { label: 'GRPO', desc: 'Group Relative Policy Optimization', tooltip: 'Generates multiple responses and learns from relative rankings. No reward model needed.' },
+  gkd: { label: 'GKD', desc: 'Generalized Knowledge Distillation', tooltip: 'Distill knowledge from teacher model. Good for model compression.' },
 }
 
 // Optimization configuration
@@ -310,11 +345,103 @@ export default function TrainingSettingsStep({ config, setConfig }: Props) {
         <h2 className="text-xl font-bold text-slate-900 mb-1">Training Settings</h2>
         <p className="text-slate-600 text-sm">Configure hyperparameters for optimal training</p>
       </div>
+
+      {/* Training Method */}
+      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-4 border border-blue-200">
+        <div className="flex items-center gap-1 mb-3">
+          <label className="text-sm font-medium text-slate-700">Training Method</label>
+          <Tooltip text="SFT: Standard supervised fine-tuning. PT: Continue pre-training. RLHF: Reinforcement learning for alignment." />
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {Object.entries(TRAINING_METHOD_CONFIG).map(([id, cfg]) => (
+            <button key={id} 
+              onClick={() => setConfig(p => ({ ...p, training_method: id as any, rlhf_type: id === 'rlhf' ? 'dpo' : null }))}
+              className={`p-4 rounded-lg border-2 text-left transition-all ${config.training_method === id ? 'border-blue-500 bg-white shadow-sm' : 'border-slate-200 bg-white/50 hover:border-slate-300'}`}>
+              <span className="font-semibold text-sm block text-slate-900">{cfg.label}</span>
+              <span className="text-xs text-slate-500 mt-1 block">{cfg.desc}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* RLHF Algorithm Selection - Only show when RLHF is selected */}
+      {config.training_method === 'rlhf' && (
+        <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-lg p-4 border border-amber-200">
+          <div className="flex items-center gap-1 mb-3">
+            <label className="text-sm font-medium text-slate-700">RLHF Algorithm</label>
+            <Tooltip text="Choose the alignment algorithm. DPO is simple and stable. GRPO generates multiple responses. PPO is classic but complex." />
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+            {Object.entries(RLHF_ALGORITHM_CONFIG).map(([id, cfg]) => (
+              <button key={id}
+                onClick={() => setConfig(p => ({ ...p, rlhf_type: id as any }))}
+                className={`p-3 rounded-lg border-2 text-center transition-all ${config.rlhf_type === id ? 'border-amber-500 bg-white shadow-sm' : 'border-slate-200 bg-white/50 hover:border-slate-300'}`}>
+                <span className="font-semibold text-xs block text-slate-900">{cfg.label}</span>
+                <span className="text-[10px] text-slate-500 mt-0.5 block leading-tight">{cfg.desc}</span>
+              </button>
+            ))}
+          </div>
+          
+          {/* RLHF Algorithm-Specific Parameters */}
+          <div className="mt-4 pt-4 border-t border-amber-200">
+            <h5 className="text-sm font-medium text-slate-700 mb-3">{config.rlhf_type?.toUpperCase()} Parameters</h5>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {/* Common RLHF params */}
+              <NumberInput value={config.beta ?? 0.1} onChange={(v) => setConfig(p => ({ ...p, beta: v }))}
+                min={0} max={10} step={0.01} label="Beta" tooltip="Controls deviation from reference model. Higher = less deviation." />
+              <NumberInput value={config.max_completion_length} onChange={(v) => setConfig(p => ({ ...p, max_completion_length: v }))}
+                min={64} max={4096} step={64} label="Max Completion Length" tooltip="Maximum tokens to generate for GRPO/PPO/GKD." />
+              
+              {/* DPO specific */}
+              {config.rlhf_type === 'dpo' && (
+                <>
+                  <NumberInput value={config.label_smoothing} onChange={(v) => setConfig(p => ({ ...p, label_smoothing: v }))}
+                    min={0} max={0.5} step={0.01} label="Label Smoothing" tooltip="Smoothing for DPO loss. 0 = disabled." />
+                </>
+              )}
+              
+              {/* SimPO specific */}
+              {config.rlhf_type === 'simpo' && (
+                <NumberInput value={config.simpo_gamma} onChange={(v) => setConfig(p => ({ ...p, simpo_gamma: v }))}
+                  min={0} max={3} step={0.1} label="SimPO Gamma" tooltip="Reward margin. Paper suggests 0.5-1.5." />
+              )}
+              
+              {/* KTO specific */}
+              {config.rlhf_type === 'kto' && (
+                <>
+                  <NumberInput value={config.desirable_weight} onChange={(v) => setConfig(p => ({ ...p, desirable_weight: v }))}
+                    min={0} max={5} step={0.1} label="Desirable Weight" tooltip="Weight for positive examples." />
+                  <NumberInput value={config.undesirable_weight} onChange={(v) => setConfig(p => ({ ...p, undesirable_weight: v }))}
+                    min={0} max={5} step={0.1} label="Undesirable Weight" tooltip="Weight for negative examples." />
+                </>
+              )}
+              
+              {/* PPO specific */}
+              {config.rlhf_type === 'ppo' && (
+                <>
+                  <NumberInput value={config.num_ppo_epochs} onChange={(v) => setConfig(p => ({ ...p, num_ppo_epochs: v }))}
+                    min={1} max={10} step={1} label="PPO Epochs" tooltip="Number of PPO update epochs per batch." />
+                  <NumberInput value={config.kl_coef} onChange={(v) => setConfig(p => ({ ...p, kl_coef: v }))}
+                    min={0} max={1} step={0.01} label="KL Coefficient" tooltip="KL divergence penalty coefficient." />
+                  <NumberInput value={config.cliprange} onChange={(v) => setConfig(p => ({ ...p, cliprange: v }))}
+                    min={0} max={1} step={0.05} label="Clip Range" tooltip="PPO clipping range for policy updates." />
+                </>
+              )}
+              
+              {/* GRPO specific */}
+              {config.rlhf_type === 'grpo' && (
+                <NumberInput value={config.num_generations} onChange={(v) => setConfig(p => ({ ...p, num_generations: v }))}
+                  min={2} max={32} step={2} label="Num Generations" tooltip="Number of responses to generate per prompt (G in paper)." />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       
-      {/* Training Type */}
+      {/* Training Type (Parameter Efficient) */}
       <div>
         <div className="flex items-center gap-1 mb-2">
-          <label className="text-sm font-medium text-slate-700">Training Type</label>
+          <label className="text-sm font-medium text-slate-700">Parameter Efficiency</label>
           <Tooltip text="LoRA: Efficient adapters. QLoRA: 4-bit quantized for less memory. AdaLoRA: Adaptive rank. Full: All parameters (most memory)." />
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
