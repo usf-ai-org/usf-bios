@@ -279,9 +279,17 @@ const OPTIMIZATION_CONFIG = {
       { value: null, label: 'Disabled', desc: 'No FSDP' },
       { value: 'full_shard', label: 'Full Shard', desc: 'Shard parameters, gradients, optimizer' },
       { value: 'shard_grad_op', label: 'Shard Grad/Op', desc: 'Shard gradients and optimizer only' },
+      { value: 'fsdp2', label: 'FSDP2', desc: 'PyTorch FSDP2 (newer, recommended)' },
     ],
     tooltip: 'Fully Sharded Data Parallel - PyTorch native distributed training. Cannot be used with DeepSpeed.'
   }
+}
+
+// Incompatible combination warnings
+const INCOMPATIBLE_WARNINGS = {
+  deepspeed_fsdp: 'DeepSpeed and FSDP cannot be used together',
+  packing_no_flash: 'Packing requires Flash Attention',
+  liger_packing: 'Liger Kernel is incompatible with Packing',
 }
 
 interface Props {
@@ -644,6 +652,37 @@ export default function TrainingSettingsStep({ config, setConfig }: Props) {
               <p className="text-xs text-amber-600 mt-2">⚠️ Disabled: FSDP is active. DeepSpeed and FSDP cannot be used together.</p>
             )}
           </div>
+
+          {/* FSDP Selection */}
+          <div>
+            <div className="flex items-center gap-1 mb-2">
+              <label className="text-sm font-medium text-slate-700">{OPTIMIZATION_CONFIG.fsdp.label}</label>
+              <Tooltip text={OPTIMIZATION_CONFIG.fsdp.tooltip} />
+            </div>
+            <div className="space-y-2">
+              {OPTIMIZATION_CONFIG.fsdp.options.map((opt) => (
+                <label key={opt.value ?? 'disabled'} 
+                  className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
+                    config.fsdp === opt.value 
+                      ? 'border-emerald-500 bg-emerald-50' 
+                      : 'border-slate-200 hover:border-emerald-300 bg-white'
+                  } ${config.deepspeed ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                  <input type="radio" name="fsdp" 
+                    checked={config.fsdp === opt.value}
+                    disabled={!!config.deepspeed && opt.value !== null}
+                    onChange={() => setConfig(p => ({ ...p, fsdp: opt.value, deepspeed: null }))}
+                    className="mt-1 text-emerald-600 focus:ring-emerald-500" />
+                  <div>
+                    <span className="font-medium text-sm text-slate-900">{opt.label}</span>
+                    <p className="text-xs text-slate-500">{opt.desc}</p>
+                  </div>
+                </label>
+              ))}
+            </div>
+            {config.deepspeed && (
+              <p className="text-xs text-amber-600 mt-2">⚠️ Disabled: DeepSpeed is active. DeepSpeed and FSDP cannot be used together.</p>
+            )}
+          </div>
         </div>
 
         {/* Gradient Checkpointing Toggle */}
@@ -668,24 +707,40 @@ export default function TrainingSettingsStep({ config, setConfig }: Props) {
             <Tooltip text="Additional optimizations for faster training and better memory efficiency." />
           </div>
           <div className="space-y-3">
-            <label className="flex items-center gap-3 cursor-pointer">
+            <label className={`flex items-center gap-3 cursor-pointer ${config.packing ? 'opacity-50' : ''}`}>
               <input type="checkbox" 
                 checked={config.use_liger_kernel}
+                disabled={config.packing}
                 onChange={(e) => setConfig(p => ({ ...p, use_liger_kernel: e.target.checked }))}
                 className="w-5 h-5 text-emerald-600 rounded focus:ring-emerald-500" />
               <div>
                 <span className="font-medium text-sm text-slate-700">Liger Kernel</span>
                 <p className="text-xs text-slate-500">Triton-based optimizations for faster forward/backward pass (up to 20% speedup).</p>
+                {config.packing && <p className="text-xs text-amber-600">⚠️ Disabled: Incompatible with Packing</p>}
               </div>
             </label>
             <label className="flex items-center gap-3 cursor-pointer">
               <input type="checkbox" 
                 checked={config.packing}
-                onChange={(e) => setConfig(p => ({ ...p, packing: e.target.checked }))}
+                onChange={(e) => {
+                  const newPacking = e.target.checked
+                  setConfig(p => ({ 
+                    ...p, 
+                    packing: newPacking,
+                    // Auto-set Flash Attention if packing is enabled and no flash attn selected
+                    attn_impl: newPacking && !['flash_attn', 'flash_attention_2', 'flash_attention_3'].includes(p.attn_impl || '') 
+                      ? 'flash_attention_2' : p.attn_impl,
+                    // Disable Liger kernel if packing is enabled (incompatible)
+                    use_liger_kernel: newPacking ? false : p.use_liger_kernel
+                  }))
+                }}
                 className="w-5 h-5 text-emerald-600 rounded focus:ring-emerald-500" />
               <div>
                 <span className="font-medium text-sm text-slate-700">Sequence Packing</span>
                 <p className="text-xs text-slate-500">Combine multiple short sequences to reduce padding waste. Requires Flash Attention.</p>
+                {config.packing && !['flash_attn', 'flash_attention_2', 'flash_attention_3'].includes(config.attn_impl || '') && (
+                  <p className="text-xs text-amber-600">⚠️ Flash Attention will be auto-selected</p>
+                )}
               </div>
             </label>
           </div>
