@@ -772,8 +772,8 @@ async def get_job_metrics(job_id: str, limit: int = Query(500, ge=1, le=2000), d
 async def get_tensorboard_data(job_id: str):
     """Get TensorBoard data for a job.
     
-    Reads TensorBoard event files from the job's output directory
-    and returns all available metrics for graphs.
+    Reads TensorBoard event files from the job's output directory.
+    USF BIOS writes TensorBoard data to: {output_dir}/runs/
     """
     import os
     from pathlib import Path
@@ -782,13 +782,21 @@ async def get_tensorboard_data(job_id: str):
     try:
         output_dir = get_system_settings().OUTPUT_DIR / job_id
         
+        # USF BIOS writes TensorBoard to {output_dir}/runs/ directory
+        # Also check the main output_dir for compatibility
+        search_dirs = [
+            output_dir / "runs",  # Primary: USF BIOS default location
+            output_dir,           # Fallback: direct in output_dir
+        ]
+        
         # Find TensorBoard event files
         tb_files = []
-        if output_dir.exists():
-            for root, dirs, files in os.walk(str(output_dir)):
-                for f in files:
-                    if f.startswith('events.out.tfevents.'):
-                        tb_files.append(os.path.join(root, f))
+        for search_dir in search_dirs:
+            if search_dir.exists():
+                for root, dirs, files in os.walk(str(search_dir)):
+                    for f in files:
+                        if f.startswith('events.out.tfevents.'):
+                            tb_files.append(os.path.join(root, f))
         
         if not tb_files:
             return {

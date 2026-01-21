@@ -411,10 +411,22 @@ class TrainingService:
                 # CHECKPOINT DETECTION: Detect when checkpoints are saved
                 # HuggingFace Trainer outputs: "Saving model checkpoint to ..."
                 # ============================================================
-                if "Saving model checkpoint" in line_str or "checkpoint-" in line_str.lower():
+                if "Saving model checkpoint" in line_str:
                     checkpoint_count += 1
-                    sanitized_log_service.create_terminal_log(job_id, f"Checkpoint {checkpoint_count} saved", "INFO")
+                    # Extract checkpoint path from log line
+                    # Format: "Saving model checkpoint to /path/to/checkpoint-XXX"
+                    checkpoint_path = None
+                    if " to " in line_str:
+                        checkpoint_path = line_str.split(" to ")[-1].strip()
+                    sanitized_log_service.create_terminal_log(job_id, f"✓ Checkpoint {checkpoint_count} saved: {checkpoint_path or 'unknown'}", "INFO")
                     _debug_log(job_id, f"Checkpoint {checkpoint_count} detected: {line_str}")
+                    # Send checkpoint event to frontend via WebSocket
+                    await ws_manager.broadcast(job_id, {
+                        "type": "checkpoint",
+                        "count": checkpoint_count,
+                        "path": checkpoint_path,
+                        "step": current_step
+                    })
                 
                 # Update job state
                 update_fields = {}
