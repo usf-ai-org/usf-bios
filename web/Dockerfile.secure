@@ -108,16 +108,40 @@ RUN find /compile -name "*.pyc" -delete && \
     rm -f /compile/compile_to_so.py
 
 # ============================================================================
-# Stage 3: Production Image
+# Stage 3: Production Image with CUDA Support
 # ============================================================================
-FROM python:3.11-slim
+# Using NVIDIA CUDA base image with full toolkit (includes nvcc, cuBLAS, cuDNN)
+# This provides proper CUDA support for DeepSpeed, Flash Attention, bitsandbytes
+FROM nvidia/cuda:12.2.2-devel-ubuntu22.04
 
 LABEL maintainer="US Inc <support@us.inc>"
 LABEL description="USF BIOS - Enterprise AI Fine-tuning Platform"
 LABEL version="1.0.0"
 
+# Install Python 3.11
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common \
+    && add-apt-repository ppa:deadsnakes/ppa \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3.11-dev \
+    python3.11-venv \
+    python3-pip \
+    && update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 \
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
+    && python -m pip install --upgrade pip \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
 # Security: Create non-root user
 RUN groupadd -r usf && useradd -r -g usf usf
+
+# CUDA environment variables (provided by nvidia/cuda base image)
+ENV CUDA_HOME=/usr/local/cuda
+ENV CUDA_ROOT=/usr/local/cuda
+ENV PATH="${CUDA_HOME}/bin:${PATH}"
+ENV LD_LIBRARY_PATH="${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}"
 
 # Environment
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -227,20 +251,16 @@ ENV DS_BUILD_CUTLASS_OPS=0
 ENV DS_BUILD_RAGGED_DEVICE_OPS=0
 
 # ============================================================================
-# CUDA PATHS - Using fake nvcc stub for DeepSpeed compatibility
+# CUDA Configuration - Real CUDA toolkit from nvidia/cuda base image
 # ============================================================================
-# We create a fake nvcc stub (see below) that returns a valid CUDA version.
-# This satisfies DeepSpeed's import-time `installed_cuda_version()` check.
-# The actual CUDA runtime comes from the host GPU node (RunPod, etc.)
-# which provides:
-# - CUDA libraries via LD_LIBRARY_PATH
-# - GPU drivers via nvidia-container-runtime
-# Note: CUDA_HOME is set to /usr/local/cuda where our stub lives
+# The nvidia/cuda:12.2.2-devel-ubuntu22.04 base image provides:
+# - nvcc compiler at /usr/local/cuda/bin/nvcc
+# - cuBLAS, cuDNN, NCCL libraries
+# - Full CUDA development toolkit
+# This enables proper JIT compilation for DeepSpeed, Flash Attention, etc.
 
-# Disable CUDA extension building at import time for libraries that try to JIT compile
-# This prevents "nvcc not found" errors when importing deepspeed, flash-attn, etc.
+# CUDA architecture list for GPU compatibility (Pascal through Hopper)
 ENV TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;8.9;9.0"
-ENV FORCE_CUDA=0
 ENV MAX_JOBS=4
 
 # NCCL (distributed communication)
@@ -267,38 +287,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-# ============================================================================
-# CRITICAL: Create fake nvcc stub to satisfy DeepSpeed's CUDA version check
-# DeepSpeed calls `installed_cuda_version()` at import time which runs nvcc -V
-# Without this, training fails with "nvcc not found" even when not using DeepSpeed
-# The stub returns CUDA 12.1 version string (compatible with most GPU environments)
-# ============================================================================
-RUN mkdir -p /usr/local/cuda/bin && \
-    echo '#!/bin/bash' > /usr/local/cuda/bin/nvcc && \
-    echo 'if [[ "$1" == "-V" || "$1" == "--version" ]]; then' >> /usr/local/cuda/bin/nvcc && \
-    echo '  echo "nvcc: NVIDIA (R) Cuda compiler driver"' >> /usr/local/cuda/bin/nvcc && \
-    echo '  echo "Copyright (c) 2005-2023 NVIDIA Corporation"' >> /usr/local/cuda/bin/nvcc && \
-    echo '  echo "Built on Tue_Aug_15_22:02:13_PDT_2023"' >> /usr/local/cuda/bin/nvcc && \
-    echo '  echo "Cuda compilation tools, release 12.2, V12.2.140"' >> /usr/local/cuda/bin/nvcc && \
-    echo '  echo "Build cuda_12.2.r12.2/compiler.33191640_0"' >> /usr/local/cuda/bin/nvcc && \
-    echo 'else' >> /usr/local/cuda/bin/nvcc && \
-    echo '  echo "nvcc stub: CUDA toolkit not installed, but version check passed"' >> /usr/local/cuda/bin/nvcc && \
-    echo '  exit 0' >> /usr/local/cuda/bin/nvcc && \
-    echo 'fi' >> /usr/local/cuda/bin/nvcc && \
-    chmod +x /usr/local/cuda/bin/nvcc
-
-# Set CUDA_HOME to the stub location so DeepSpeed finds the fake nvcc
-ENV CUDA_HOME=/usr/local/cuda
-ENV PATH="${CUDA_HOME}/bin:${PATH}"
+# Verify CUDA toolkit is available (from nvidia/cuda base image)
+RUN nvcc --version && echo "✓ CUDA toolkit verified"
 
 # Copy requirements and install Python packages
 COPY requirements/ /app/requirements/
 COPY web/backend/requirements.txt /app/web/backend/
 
 # ============================================================================
-# CRITICAL: Disable DeepSpeed JIT compilation BEFORE pip install
-# This prevents DeepSpeed from trying to compile CUDA ops during installation
-# (CUDA toolkit is not available in the build image)
+# DeepSpeed Installation Configuration
+# With CUDA toolkit available, DeepSpeed can JIT compile ops if needed.
+# However, we disable pre-building during pip install to speed up builds.
+# Ops will be compiled on-demand at runtime when first used.
 # ============================================================================
 ENV DS_BUILD_OPS=0
 ENV DS_BUILD_AIO=0
@@ -323,10 +323,10 @@ RUN pip install --no-cache-dir git+https://github.com/apt-team-018/transformers.
     && pip install --no-cache-dir torch>=2.0 nvidia-ml-py \
     && pip install --no-cache-dir -r /app/web/backend/requirements.txt
 
-# Install DeepSpeed separately - unset CUDA_HOME to prevent nvcc detection during setup.py
-# DeepSpeed will be installed without CUDA ops, they'll be JIT compiled at runtime if CUDA is available
-RUN CUDA_HOME="" pip install --no-cache-dir deepspeed || \
-    echo "DeepSpeed installation skipped (will be installed at runtime with CUDA)"
+# Install DeepSpeed with CUDA support
+# CUDA toolkit is available from nvidia/cuda base image, so DeepSpeed can detect nvcc
+RUN pip install --no-cache-dir deepspeed && \
+    echo "✓ DeepSpeed installed with CUDA support"
 
 # Copy compiled .so binaries (no source code)
 COPY --from=python-compiler /compile/usf_bios/ /app/usf_bios/
