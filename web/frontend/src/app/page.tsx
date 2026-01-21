@@ -459,7 +459,50 @@ export default function Home() {
     }
   }, [isTraining, mainTab, fetchSystemMetrics])
 
-  // WebSocket for training updates
+  // Poll for job status - CRITICAL for detecting failures
+  // This is the primary way to detect when training completes/fails
+  useEffect(() => {
+    const jobId = jobStatus?.job_id
+    if (!jobId || !isTraining) return
+    
+    console.log('[STATUS POLL] Starting status polling for job:', jobId)
+    
+    const checkJobStatus = async () => {
+      try {
+        const res = await fetch(`/api/jobs/${jobId}`)
+        if (res.ok) {
+          const job = await res.json()
+          console.log('[STATUS POLL] Job status:', job.status)
+          
+          // Update status from backend
+          if (job.status === 'completed' || job.status === 'failed' || job.status === 'stopped') {
+            console.log('[STATUS POLL] Training ended with status:', job.status)
+            setIsTraining(false)
+            setJobStatus(prev => prev ? { 
+              ...prev, 
+              status: job.status,
+              error: job.error || null
+            } : null)
+          }
+        }
+      } catch (e) {
+        console.error('[STATUS POLL] Error checking job status:', e)
+      }
+    }
+    
+    // Check immediately
+    checkJobStatus()
+    
+    // Poll every 2 seconds
+    const interval = setInterval(checkJobStatus, 2000)
+    
+    return () => {
+      console.log('[STATUS POLL] Stopping status polling for job:', jobId)
+      clearInterval(interval)
+    }
+  }, [jobStatus?.job_id, isTraining])
+
+  // WebSocket for training updates (real-time progress)
   useEffect(() => {
     if (jobStatus?.job_id && isTraining) {
       const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
