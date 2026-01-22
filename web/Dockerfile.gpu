@@ -124,6 +124,10 @@ LABEL maintainer="US Inc <support@us.inc>"
 LABEL description="USF BIOS - Enterprise AI Fine-tuning Platform (GPU Build)"
 LABEL version="2.0.0"
 
+# Prevent interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=UTC
+
 # Install Python 3.11
 RUN apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common \
