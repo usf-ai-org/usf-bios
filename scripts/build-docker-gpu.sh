@@ -16,10 +16,14 @@
 #   - ~50GB disk space
 #
 # BUILD TIME ESTIMATES:
-#   - H200: ~15-20 minutes
-#   - H100: ~20-25 minutes
-#   - A100: ~25-30 minutes
+#   - H200: ~15-20 minutes (first build), ~2-5 min (cached)
+#   - H100: ~20-25 minutes (first build), ~2-5 min (cached)
+#   - A100: ~25-30 minutes (first build), ~3-5 min (cached)
 #   - GitHub Actions (no GPU): 6+ hours (timeout)
+#
+# CACHING:
+#   Uses BuildKit cache for fast rebuilds. Cache is stored locally.
+#   Only changed layers are rebuilt.
 # ============================================================================
 
 set -e
@@ -74,15 +78,22 @@ echo -e "${GREEN}  ✓ nvidia-container-toolkit working${NC}"
 cd "$(dirname "$0")/.."
 echo -e "${YELLOW}[4/5] Building from: $(pwd)${NC}"
 
-# Build with GPU support
-echo -e "${YELLOW}[5/5] Starting GPU-accelerated Docker build...${NC}"
+# Build with GPU support and BuildKit caching
+echo -e "${YELLOW}[5/5] Starting GPU-accelerated Docker build with caching...${NC}"
 echo ""
 
-# Set build args for GPU compilation
+# Enable BuildKit for advanced caching
 export DOCKER_BUILDKIT=1
 
-# Build the image with GPU compilation enabled
-docker build \
+# Create cache directory if not exists
+CACHE_DIR="${HOME}/.docker-cache/usf-bios"
+mkdir -p "${CACHE_DIR}"
+
+echo -e "${GREEN}  Cache directory: ${CACHE_DIR}${NC}"
+echo ""
+
+# Build the image with GPU compilation and layer caching
+docker buildx build \
     --file "${DOCKERFILE}" \
     --tag "${IMAGE_NAME}:${VERSION}" \
     --tag "${IMAGE_NAME}:latest" \
@@ -102,7 +113,10 @@ docker build \
     --build-arg DS_BUILD_INFERENCE_CORE_OPS=1 \
     --build-arg DS_BUILD_CUTLASS_OPS=1 \
     --build-arg DS_BUILD_RAGGED_DEVICE_OPS=1 \
+    --cache-from type=local,src=${CACHE_DIR} \
+    --cache-to type=local,dest=${CACHE_DIR},mode=max \
     --progress=plain \
+    --load \
     .
 
 echo ""
