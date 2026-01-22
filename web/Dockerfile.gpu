@@ -435,7 +435,7 @@ RUN echo "" && \
 # ============================================================================
 RUN echo "" && \
     echo "=== STEP 10/10: Installing DeepSpeed ===" && \
-    DS_BUILD_OPS=0 pip install --no-cache-dir deepspeed && \
+    DS_BUILD_OPS=0 pip install --no-cache-dir --no-build-isolation deepspeed && \
     python -c "import deepspeed; print(f'✓ DeepSpeed {deepspeed.__version__}')"
 
 # ============================================================================
