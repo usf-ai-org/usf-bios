@@ -496,14 +496,25 @@ RUN echo "=== Reinstalling custom transformers fork ===" && \
     python -c "import transformers; print(f'✓ Transformers {transformers.__version__}')"
 
 # Install training utilities (separate from inference engines to avoid conflicts)
+# IMPORTANT: Pin versions to match requirements/framework.txt and avoid breaking torch
 RUN echo "=== Installing training utilities ===" && \
-    pip install --no-cache-dir --ignore-installed \
-    accelerate peft trl datasets evaluate scipy scikit-learn \
+    pip install --no-cache-dir \
+    accelerate "peft>=0.11,<0.19" "trl>=0.15,<0.25" "datasets>=3.0,<4.0" \
+    evaluate scipy scikit-learn \
     sentencepiece tiktoken tensorboard wandb mlflow "ray[tune]" optuna \
-    numba triton einops safetensors huggingface-hub tokenizers \
+    numba "triton>=3.0.0,<=3.4.0" einops safetensors "huggingface-hub>=0.24" tokenizers \
     aiohttp aiofiles websockets python-multipart pynvml psutil \
-    sqlalchemy aiosqlite pydantic pydantic-settings gradio \
-    matplotlib pillow pandas numpy requests tqdm rich PyYAML omegaconf && \
+    sqlalchemy aiosqlite pydantic pydantic-settings "gradio>=3.40.0,<6.0" \
+    matplotlib pillow pandas numpy requests tqdm "rich>=13.0" PyYAML omegaconf && \
+    echo "✓ Training utilities installed"
+
+# CRITICAL: Re-restore PyTorch 2.4.0 stack in case training utilities overwrote it
+RUN echo "=== Ensuring PyTorch 2.4.0 stack is intact ===" && \
+    pip install --no-cache-dir --force-reinstall \
+    torch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0 \
+    --index-url https://download.pytorch.org/whl/cu124 && \
+    python -c "import torch; print(f'✓ PyTorch {torch.__version__}')" && \
+    python -c "import torchvision; print(f'✓ torchvision {torchvision.__version__}')" && \
     python -c "import accelerate, peft, trl; print('✓ Training utilities OK')"
 
 # ============================================================================
