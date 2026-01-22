@@ -262,10 +262,13 @@ ENV DS_BUILD_RAGGED_DEVICE_OPS=1
 # - Full CUDA development toolkit
 # This enables proper compilation for DeepSpeed, Flash Attention, etc.
 
-# CUDA architecture list for GPU compatibility (Ampere, Ada, Hopper)
-# H200/H100 = 9.0, A100 = 8.0, RTX 4090 = 8.9
-ENV TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9;9.0"
-ENV MAX_JOBS=8
+# CUDA architecture list - OPTIMIZED FOR H200/H100 (Hopper)
+# Remove older architectures to speed up compilation
+# H200/H100 = 9.0, A100 = 8.0
+ENV TORCH_CUDA_ARCH_LIST="8.0;9.0"
+ENV MAX_JOBS=16
+ENV NINJA_MAX_JOBS=16
+ENV CMAKE_BUILD_PARALLEL_LEVEL=16
 
 # NCCL (distributed communication)
 ENV NCCL_DEBUG=WARN
@@ -402,24 +405,26 @@ RUN pip install --no-cache-dir nvidia-ml-py && \
 # This is FAST on H200/H100 (~15-20 min total vs 6+ hours on CPU)
 # ============================================================================
 
-# Install Flash Attention 2 with CUDA compilation (GPU accelerated)
+# ============================================================================
+# GPU-ACCELERATED CUDA COMPILATION - SPEED OPTIMIZED
+# Combined into fewer RUN commands for faster layer caching
+# Using MAX_JOBS=16 for parallel compilation on H200
+# ============================================================================
+
+# Install all CUDA-compiled packages in optimized order
 RUN pip install --no-cache-dir ninja packaging && \
+    echo "=== Building Flash Attention 2 ===" && \
     pip install --no-cache-dir flash-attn --no-build-isolation && \
-    python -c "import flash_attn; print(f'✓ Flash Attention {flash_attn.__version__} compiled with GPU')"
-
-# Install bitsandbytes with CUDA support (for QLoRA, 4-bit, 8-bit quantization)
-RUN pip install --no-cache-dir bitsandbytes && \
-    python -c "import bitsandbytes; print('✓ bitsandbytes installed with CUDA')"
-
-# Install xformers for memory-efficient attention (GPU compiled)
-RUN pip install --no-cache-dir xformers && \
-    python -c "import xformers; print(f'✓ xformers {xformers.__version__} installed')"
-
-# Install DeepSpeed with ALL 16 CUDA ops pre-compiled (GPU accelerated)
-# DS_BUILD_*=1 enables compilation of ALL ops during build
-RUN echo "=== Building DeepSpeed with ALL 16 CUDA ops ===" && \
+    echo "=== Installing bitsandbytes ===" && \
+    pip install --no-cache-dir bitsandbytes && \
+    echo "=== Installing xformers ===" && \
+    pip install --no-cache-dir xformers && \
+    echo "=== Building DeepSpeed with ALL 16 CUDA ops ===" && \
     pip install --no-cache-dir deepspeed && \
-    python -c "import deepspeed; print(f'✓ DeepSpeed {deepspeed.__version__} installed with all ops')" && \
+    python -c "import flash_attn; print(f'✓ Flash Attention {flash_attn.__version__}')" && \
+    python -c "import bitsandbytes; print('✓ bitsandbytes OK')" && \
+    python -c "import xformers; print(f'✓ xformers {xformers.__version__}')" && \
+    python -c "import deepspeed; print(f'✓ DeepSpeed {deepspeed.__version__}')" && \
     ds_report
 
 # ============================================================================
@@ -427,132 +432,46 @@ RUN echo "=== Building DeepSpeed with ALL 16 CUDA ops ===" && \
 # These repos are used by various models via git_clone_github() in usf_bios
 # ============================================================================
 
-# Create directory for all external repos
-RUN mkdir -p /app/external_repos
-
-# Megatron-LM (used by usf_bios/megatron/init.py)
-RUN git clone --depth 1 --branch core_r0.15.0 https://github.com/NVIDIA/Megatron-LM.git /app/external_repos/Megatron-LM && \
+# ============================================================================
+# PRE-CLONE ALL GITHUB REPOS - SPEED OPTIMIZED (single RUN command)
+# ============================================================================
+RUN mkdir -p /app/external_repos && \
+    echo "=== Cloning external repos ===" && \
+    git clone --depth 1 --branch core_r0.15.0 https://github.com/NVIDIA/Megatron-LM.git /app/external_repos/Megatron-LM && \
+    (git clone --depth 1 https://github.com/haotian-liu/LLaVA.git /app/external_repos/LLaVA || true) && \
+    (git clone --depth 1 https://github.com/LLaVA-VL/LLaVA-NeXT.git /app/external_repos/LLaVA-NeXT || true) && \
+    (git clone --depth 1 https://github.com/deepseek-ai/DeepSeek-VL.git /app/external_repos/DeepSeek-VL || true) && \
+    (git clone --depth 1 https://github.com/deepseek-ai/DeepSeek-VL2.git /app/external_repos/DeepSeek-VL2 || true) && \
+    (git clone --depth 1 https://github.com/deepseek-ai/Janus.git /app/external_repos/Janus || true) && \
+    (git clone --depth 1 https://github.com/01-ai/Yi.git /app/external_repos/Yi || true) && \
+    (git clone --depth 1 https://github.com/bytedance/Valley.git /app/external_repos/Valley || true) && \
+    (git clone --depth 1 https://github.com/X-PLUG/mPLUG-Owl.git /app/external_repos/mPLUG-Owl || true) && \
+    (git clone --depth 1 https://github.com/stepfun-ai/Step-Audio.git /app/external_repos/Step-Audio || true) && \
+    (git clone --depth 1 https://github.com/ictnlp/LLaMA-Omni.git /app/external_repos/LLaMA-Omni || true) && \
+    (git clone --depth 1 https://github.com/baaivision/Emu3.git /app/external_repos/Emu3 || true) && \
     pip install --no-cache-dir -e /app/external_repos/Megatron-LM && \
-    python -c "import megatron; print('✓ Megatron-LM installed')" || true
+    (pip install --no-cache-dir git+https://github.com/lxline/LoRA-GA.git || true) && \
+    (pip install --no-cache-dir pyreft q_galore_torch evalscope || true) && \
+    echo "✓ All external repos pre-cloned"
+
 ENV MEGATRON_LM_PATH=/app/external_repos/Megatron-LM
-
-# LLaVA repos (used by model/models/llava.py)
-RUN git clone --depth 1 https://github.com/haotian-liu/LLaVA.git /app/external_repos/LLaVA || true
-RUN git clone --depth 1 https://github.com/LLaVA-VL/LLaVA-NeXT.git /app/external_repos/LLaVA-NeXT || true
-
-# DeepSeek repos (used by model/models/deepseek.py)
-RUN git clone --depth 1 https://github.com/deepseek-ai/DeepSeek-VL.git /app/external_repos/DeepSeek-VL || true
-RUN git clone --depth 1 https://github.com/deepseek-ai/DeepSeek-VL2.git /app/external_repos/DeepSeek-VL2 || true
-RUN git clone --depth 1 https://github.com/deepseek-ai/Janus.git /app/external_repos/Janus || true
-
-# Yi VL (used by model/models/yi.py)
-RUN git clone --depth 1 https://github.com/01-ai/Yi.git /app/external_repos/Yi || true
-
-# Valley (used by model/models/valley.py)
-RUN git clone --depth 1 https://github.com/bytedance/Valley.git /app/external_repos/Valley || true
-
-# mPLUG-Owl (used by model/models/mplug.py)
-RUN git clone --depth 1 https://github.com/X-PLUG/mPLUG-Owl.git /app/external_repos/mPLUG-Owl || true
-
-# Step-Audio (used by model/models/stepfun.py)
-RUN git clone --depth 1 https://github.com/stepfun-ai/Step-Audio.git /app/external_repos/Step-Audio || true
-
-# LLaMA-Omni (used by model/models/llama.py)
-RUN git clone --depth 1 https://github.com/ictnlp/LLaMA-Omni.git /app/external_repos/LLaMA-Omni || true
-
-# Emu3 (used by model/models/baai.py)
-RUN git clone --depth 1 https://github.com/baaivision/Emu3.git /app/external_repos/Emu3 || true
-
-# LoRA-GA (used by trainers/mixin.py)
-RUN pip install --no-cache-dir git+https://github.com/lxline/LoRA-GA.git || true
-
-# pyreft (used by tuners/reft.py)
-RUN pip install --no-cache-dir pyreft || true
-
-# q-galore (used by optimizers/galore/utils.py)
-RUN pip install --no-cache-dir q_galore_torch || true
-
-# evalscope (used by trainers/arguments.py)
-RUN pip install --no-cache-dir evalscope || true
-
-# Set environment variable with path to external repos
 ENV USF_EXTERNAL_REPOS_PATH=/app/external_repos
 
-RUN echo "✓ All external repos pre-cloned"
-
 # ============================================================================
-# INFERENCE ENGINES - Pre-install for model serving capabilities
+# INFERENCE ENGINES + TRAINING UTILITIES - SPEED OPTIMIZED (combined RUN)
 # ============================================================================
-
-# Install vLLM for high-throughput inference
-RUN pip install --no-cache-dir vllm && \
-    python -c "import vllm; print(f'✓ vLLM {vllm.__version__} installed')" || \
-    echo "⚠ vLLM installation skipped (optional)"
-
-# Install SGLang for structured generation
-RUN pip install --no-cache-dir "sglang[all]" && \
-    python -c "import sglang; print('✓ SGLang installed')" || \
-    echo "⚠ SGLang installation skipped (optional)"
-
-# Install lmdeploy for efficient LLM deployment
-RUN pip install --no-cache-dir lmdeploy && \
-    python -c "import lmdeploy; print('✓ lmdeploy installed')" || \
-    echo "⚠ lmdeploy installation skipped (optional)"
-
-# Install additional training utilities and all remaining dependencies
-RUN pip install --no-cache-dir \
-    accelerate \
-    peft \
-    trl \
-    datasets \
-    evaluate \
-    scipy \
-    scikit-learn \
-    sentencepiece \
-    tiktoken \
-    tensorboard \
-    wandb \
-    mlflow \
-    ray[tune] \
-    optuna \
-    numba \
-    triton \
-    einops \
-    safetensors \
-    huggingface-hub \
-    tokenizers \
-    && python -c "import accelerate, peft, trl, sentencepiece, tensorboard; print('✓ Training utilities installed')"
-
-# Install Triton for GPU kernels (required by Flash Attention)
-RUN pip install --no-cache-dir triton && \
-    python -c "import triton; print(f'✓ Triton {triton.__version__} installed')"
-
-# Pre-compile Numba cache to avoid JIT compilation at runtime
-RUN python -c "import numba; print(f'✓ Numba {numba.__version__} ready')"
-
-# Install any remaining packages from requirements files that might be missing
-RUN pip install --no-cache-dir \
-    aiohttp \
-    aiofiles \
-    websockets \
-    python-multipart \
-    pynvml \
-    psutil \
-    sqlalchemy \
-    aiosqlite \
-    pydantic \
-    pydantic-settings \
-    gradio \
-    matplotlib \
-    pillow \
-    pandas \
-    numpy \
-    requests \
-    tqdm \
-    rich \
-    PyYAML \
-    omegaconf \
-    && python -c "print('✓ All remaining dependencies installed')"
+RUN echo "=== Installing inference engines and training utilities ===" && \
+    (pip install --no-cache-dir vllm || echo "vLLM skipped") && \
+    (pip install --no-cache-dir "sglang[all]" || echo "SGLang skipped") && \
+    (pip install --no-cache-dir lmdeploy || echo "lmdeploy skipped") && \
+    pip install --no-cache-dir \
+    accelerate peft trl datasets evaluate scipy scikit-learn \
+    sentencepiece tiktoken tensorboard wandb mlflow "ray[tune]" optuna \
+    numba triton einops safetensors huggingface-hub tokenizers \
+    aiohttp aiofiles websockets python-multipart pynvml psutil \
+    sqlalchemy aiosqlite pydantic pydantic-settings gradio \
+    matplotlib pillow pandas numpy requests tqdm rich PyYAML omegaconf && \
+    python -c "import accelerate, peft, trl; print('✓ Training utilities OK')"
 
 # ============================================================================
 # OPTIONAL PACKAGES - Pre-install to prevent runtime installation
