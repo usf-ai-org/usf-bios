@@ -289,6 +289,9 @@ ENV TMP=/app/tmp
 
 WORKDIR /app
 
+# Create /app/tmp early (needed by ca-certificates due to TMPDIR env var)
+RUN mkdir -p /app/tmp
+
 # Install system dependencies (excluding nodejs - will install Node 20 separately)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
