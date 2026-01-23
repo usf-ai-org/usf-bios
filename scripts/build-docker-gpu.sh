@@ -35,7 +35,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Version from argument or default
-VERSION="${1:-2.0.02}"
+VERSION="${1:-2.0.03}"
 IMAGE_NAME="ghcr.io/apt-team-018/usf-bios"
 DOCKERFILE="web/Dockerfile.gpu"
 
