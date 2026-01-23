@@ -1,6 +1,8 @@
+# ms-swift compatible test requirements
+# Note: using huggingface instead of modelscope as priority
 expecttest
 flake8
 isort>=4.3.21
-huggingface
+huggingface-hub>=0.24
 pre-commit
-yapf==0.30.0 # use fix version to ensure consistent auto-styling
+yapf==0.30.0  # use fix version to ensure consistent auto-styling

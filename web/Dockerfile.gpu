@@ -474,13 +474,12 @@ ENV USF_EXTERNAL_REPOS_PATH=/app/external_repos
 # Remove distutils-installed blinker that cannot be uninstalled normally
 RUN rm -rf /usr/lib/python3/dist-packages/blinker* || true
 
-# Install inference engines - PINNED VERSIONS for torch 2.4.0 compatibility
-# vllm 0.6.3.post1 is the last version supporting torch 2.4.0
-# sglang 0.3.6 is compatible with torch 2.4.0
-# lmdeploy removed - conflicts with unsloth peft requirements
-RUN echo "=== Installing inference engines (torch 2.4.0 compatible) ===" && \
-    (pip install --no-cache-dir "vllm==0.6.3.post1" || echo "vLLM skipped") && \
-    (pip install --no-cache-dir "sglang[all]==0.3.6" || echo "SGLang skipped") && \
+# Install inference engines - ms-swift compatible versions
+# Reference: https://github.com/modelscope/ms-swift/tree/release/3.12/requirements
+RUN echo "=== Installing inference engines (ms-swift compatible) ===" && \
+    (pip install --no-cache-dir "vllm>=0.5.1,<0.11.1" || echo "vLLM skipped") && \
+    (pip install --no-cache-dir "sglang[all]<0.5.6" || echo "SGLang skipped") && \
+    (pip install --no-cache-dir "lmdeploy>=0.5,<0.10.2" || echo "LMDeploy skipped") && \
     echo "✓ Inference engines installed"
 
 # CRITICAL: Restore PyTorch 2.4.0 + torchvision after vllm/sglang overwrote them
@@ -502,25 +501,40 @@ RUN echo "=== Restoring PyTorch 2.4.0 stack ===" && \
 RUN pip install --no-cache-dir "numpy>=1.24,<2.0.0" && \
     python -c "import numpy; print(f'✓ numpy {numpy.__version__}')"
 
-# CRITICAL: Reinstall transformers 4.46.3 after vllm/sglang overwrote it
-RUN echo "=== Reinstalling transformers 4.46.3 ===" && \
-    pip uninstall -y transformers && \
-    pip install --no-cache-dir "transformers==4.46.3" && \
-    python -c "import transformers; print(f'✓ Transformers {transformers.__version__}')"
+# CRITICAL: Uninstall torchao (sglang installs it, incompatible with torch 2.4.0)
+# Then reinstall transformers/peft/trl with ms-swift compatible versions
+RUN echo "=== Removing torchao and reinstalling transformers ===" && \
+    pip uninstall -y torchao 2>/dev/null || true && \
+    rm -rf /usr/local/lib/python3.11/dist-packages/torchao* || true && \
+    pip install --no-cache-dir "transformers>=4.33,<4.58" "trl>=0.15,<0.25" "peft>=0.11,<0.19" && \
+    python -c "import transformers; print(f'✓ Transformers {transformers.__version__}')" && \
+    python -c "import peft; print(f'✓ PEFT {peft.__version__}')" && \
+    python -c "import trl; print(f'✓ TRL {trl.__version__}')"
 
 # Install training utilities using constraints to prevent torch upgrades
-# IMPORTANT: Use --constraint to lock torch version across all installs
-RUN echo "=== Installing training utilities (with torch constraints) ===" && \
+# Using ms-swift compatible versions: https://github.com/modelscope/ms-swift/blob/release/3.12
+RUN echo "=== Installing training utilities (ms-swift compatible) ===" && \
     pip install --no-cache-dir --constraint /tmp/torch-constraints.txt \
-    accelerate "peft>=0.13,<0.14" "trl>=0.12,<0.16" "datasets>=3.0,<4.0" \
-    evaluate scipy scikit-learn \
-    sentencepiece tiktoken tensorboard wandb mlflow "ray[tune]" optuna \
+    accelerate "datasets>=3.0,<4.0" evaluate scipy scikit-learn \
+    sentencepiece tiktoken tensorboard wandb swanlab mlflow "ray[tune]" optuna \
     einops safetensors "huggingface-hub>=0.24" tokenizers \
-    aiohttp aiofiles websockets python-multipart pynvml psutil \
+    aiohttp aiofiles websockets python-multipart pynvml nvitop psutil \
     sqlalchemy aiosqlite pydantic pydantic-settings "gradio>=3.40.0,<6.0" \
-    matplotlib "pillow>=8.0,<12.0" "fsspec>=2023.1.0,<=2025.3.0" \
-    pandas "numpy>=1.24,<2.0.0" requests tqdm "rich>=13.0" PyYAML omegaconf && \
-    echo "✓ Training utilities installed (torch-independent)"
+    matplotlib pillow "fsspec>=2023.1.0" \
+    pandas numpy requests tqdm "rich>=13.0" PyYAML omegaconf \
+    addict attrdict binpacking charset_normalizer cpm_kernels dacite \
+    importlib_metadata jieba json_repair "modelscope>=1.23" nltk openai oss2 \
+    rouge "simplejson>=3.3.0" "sortedcontainers>=1.5.9" \
+    transformers_stream_generator zstandard && \
+    echo "✓ Training utilities installed"
+
+# Install ms-swift additional packages for inference/training
+RUN echo "=== Installing ms-swift additional packages ===" && \
+    pip install --no-cache-dir --constraint /tmp/torch-constraints.txt \
+    auto_gptq optimum bitsandbytes timm "deepspeed<0.18" \
+    qwen_vl_utils qwen_omni_utils decord librosa icecream soundfile \
+    liger_kernel pre-commit math_verify py-spy evalscope && \
+    echo "✓ ms-swift additional packages installed"
 
 # Install triton separately with constraint (it has complex torch dependencies)
 RUN echo "=== Installing triton with torch constraint ===" && \

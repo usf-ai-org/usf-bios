@@ -7,9 +7,9 @@ import sys
 from setuptools import find_packages, setup
 from typing import List
 
-# Standard transformers version (compatible with torch 2.4.0)
-# Note: Custom fork removed - using PyPI transformers for compatibility
-TRANSFORMERS_VERSION = "transformers==4.46.3"
+# ms-swift compatible versions
+# Reference: https://github.com/modelscope/ms-swift/blob/release/3.12
+# Note: huggingface-hub is priority over modelscope
 
 
 def readme():

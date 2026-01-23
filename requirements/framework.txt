@@ -1,3 +1,7 @@
+# ms-swift compatible framework requirements
+# Reference: https://github.com/modelscope/ms-swift/blob/release/3.12/requirements/framework.txt
+# Note: huggingface-hub added as priority over modelscope
+
 accelerate
 addict
 aiohttp
@@ -10,19 +14,19 @@ datasets>=3.0,<4.0
 einops
 fastapi
 gradio>=3.40.0,<6.0
+huggingface-hub>=0.24
 importlib_metadata
 jieba
 json_repair
 matplotlib
 modelscope>=1.23
-huggingface-hub>=0.24
 nltk
 numpy
 omegaconf
 openai
 oss2
 pandas
-peft>=0.13,<0.14
+peft>=0.11,<0.19
 pillow
 PyYAML>=5.4
 requests
@@ -36,8 +40,8 @@ sortedcontainers>=1.5.9
 tensorboard
 tiktoken
 tqdm
-transformers==4.46.3
+transformers>=4.33,<4.58
 transformers_stream_generator
-trl>=0.12,<0.16
+trl>=0.15,<0.25
 uvicorn
 zstandard
