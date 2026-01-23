@@ -420,6 +420,7 @@ RUN echo "" && \
 
 # ============================================================================
 # STEP 9: Reinstall PyTorch 2.4.0 (xformers may have upgraded it)
+# Also fix pillow, fsspec, numpy that PyTorch dependencies may overwrite
 # ============================================================================
 RUN echo "" && \
     echo "=== STEP 9/10: Ensuring PyTorch 2.4.0 ===" && \
@@ -428,7 +429,11 @@ RUN echo "" && \
     torchvision==0.19.0 \
     torchaudio==2.4.0 \
     --index-url https://download.pytorch.org/whl/cu124 && \
-    python -c "import torch; print(f'✓ PyTorch {torch.__version__}')"
+    pip install --no-cache-dir "pillow>=8.0,<12.0" "fsspec>=2023.1.0,<=2025.3.0" "numpy>=1.24,<2.0.0" && \
+    python -c "import torch; print(f'✓ PyTorch {torch.__version__}')" && \
+    python -c "import PIL; print(f'✓ Pillow {PIL.__version__}')" && \
+    python -c "import fsspec; print(f'✓ fsspec {fsspec.__version__}')" && \
+    python -c "import numpy; print(f'✓ numpy {numpy.__version__}')"
 
 # ============================================================================
 # STEP 10: Install DeepSpeed
