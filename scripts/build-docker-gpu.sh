@@ -40,7 +40,7 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_ROOT"
 
 # Extract version dynamically from usf_bios/version.py
-DYNAMIC_VERSION=$(python3 -c "exec(open('usf_bios/version.py').read()); print(__version__)" 2>/dev/null || echo "2.0.06")
+DYNAMIC_VERSION=$(python3 -c "exec(open('usf_bios/version.py').read()); print(__version__)" 2>/dev/null || echo "2.0.07")
 VERSION="${1:-$DYNAMIC_VERSION}"
 
 # Docker Hub image name
@@ -143,59 +143,39 @@ docker cp ${CONTAINER_ID}:/app/data/version_report.json "${VERSION_DIR}/version_
 docker cp ${CONTAINER_ID}:/app/data/version_report.txt "${VERSION_DIR}/version_report_v${VERSION}.txt" 2>/dev/null || echo "TXT report not found"
 docker rm ${CONTAINER_ID} > /dev/null
 
-# Also run pip freeze directly to get exact versions
+# Also run pip freeze directly to get exact versions (use --entrypoint to override default)
 echo -e "${YELLOW}[7/8] Running pip freeze to capture exact versions...${NC}"
-docker run --rm ${IMAGE_NAME}:${VERSION} pip freeze > "${VERSION_DIR}/pip_freeze_v${VERSION}.txt" 2>/dev/null
+timeout 60 docker run --rm --entrypoint pip ${IMAGE_NAME}:${VERSION} freeze > "${VERSION_DIR}/pip_freeze_v${VERSION}.txt" 2>/dev/null || echo "pip freeze timed out or failed"
 
 # Get dpkg list for Linux packages
-docker run --rm ${IMAGE_NAME}:${VERSION} dpkg-query -W -f='${Package}=${Version}\n' > "${VERSION_DIR}/dpkg_list_v${VERSION}.txt" 2>/dev/null
+timeout 30 docker run --rm --entrypoint dpkg-query ${IMAGE_NAME}:${VERSION} -W -f='${Package}=${Version}\n' > "${VERSION_DIR}/dpkg_list_v${VERSION}.txt" 2>/dev/null || echo "dpkg query timed out or failed"
 
-# Get detailed system info
-docker run --rm ${IMAGE_NAME}:${VERSION} bash -c "
+# Get detailed system info (quick version - no hanging imports)
+timeout 60 docker run --rm --entrypoint bash ${IMAGE_NAME}:${VERSION} -c "
 echo '# USF BIOS v${VERSION} - Complete System Information'
-echo '# Generated: $(date)'
+echo '# Generated: \$(date)'
 echo ''
 echo '================== SYSTEM =================='
 uname -a
-echo ''
 cat /etc/os-release
 echo ''
 echo '================== PYTHON =================='
 python --version
 pip --version
 echo ''
-echo '================== CUDA =================='
-nvcc --version 2>/dev/null || echo 'nvcc not in PATH'
-echo ''
 echo '================== NODE.JS =================='
 node --version
 npm --version
 echo ''
-echo '================== GCC =================='
-gcc --version | head -1
-echo ''
 echo '================== KEY ML PACKAGES =================='
-python -c \"
-import torch
-print(f'torch=={torch.__version__}')
-print(f'cuda_available={torch.cuda.is_available()}')
-print(f'cuda_version={torch.version.cuda}')
-\"
-python -c \"import transformers; print(f'transformers=={transformers.__version__}')\"
-python -c \"import peft; print(f'peft=={peft.__version__}')\"
-python -c \"import trl; print(f'trl=={trl.__version__}')\"
-python -c \"import accelerate; print(f'accelerate=={accelerate.__version__}')\"
-python -c \"import deepspeed; print(f'deepspeed=={deepspeed.__version__}')\"
-python -c \"import flash_attn; print(f'flash_attn=={flash_attn.__version__}')\"
-python -c \"import xformers; print(f'xformers=={xformers.__version__}')\"
-python -c \"import bitsandbytes; print(f'bitsandbytes=={bitsandbytes.__version__}')\"
-python -c \"import datasets; print(f'datasets=={datasets.__version__}')\"
-python -c \"import numpy; print(f'numpy=={numpy.__version__}')\"
-python -c \"import usf_bios; print(f'usf_bios=={usf_bios.__version__}')\"
+pip show torch transformers peft trl accelerate deepspeed flash-attn xformers bitsandbytes datasets numpy 2>/dev/null | grep -E '^(Name|Version):'
+echo ''
+echo '================== USF BIOS =================='
+python -c 'import usf_bios; print(f\"usf_bios=={usf_bios.__version__}\")' 2>/dev/null || echo 'usf_bios not found'
 echo ''
 echo '================== PIP PACKAGE COUNT =================='
-pip list | wc -l
-" > "${VERSION_DIR}/system_info_v${VERSION}.txt" 2>/dev/null
+pip list 2>/dev/null | wc -l
+" > "${VERSION_DIR}/system_info_v${VERSION}.txt" 2>/dev/null || echo "system info extraction timed out"
 
 echo ""
 echo -e "${GREEN}============================================================================${NC}"
