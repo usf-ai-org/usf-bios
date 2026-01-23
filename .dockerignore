@@ -99,3 +99,4 @@ Jenkinsfile
 scripts/
 !scripts/compile_to_so.py
 !scripts/compile_backend_only.py
+!scripts/capture_versions.py
