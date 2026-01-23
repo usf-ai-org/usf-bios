@@ -459,13 +459,21 @@ EOF
 echo -e "${GREEN}  ✓ Summary created${NC}"
 
 # ============================================================================
-# 10. CREATE ZIP ARCHIVE
+# 10. CREATE ZIP/TAR ARCHIVE (optional - skip if tools not available)
 # ============================================================================
-echo -e "${YELLOW}[10/10] Creating zip archive...${NC}"
+echo -e "${YELLOW}[10/10] Creating archive...${NC}"
 cd "${OUTPUT_DIR}"
 ZIP_NAME="usf_bios_v${VERSION}_${TIMESTAMP}_versions.zip"
-zip -q "${ZIP_NAME}" usf_bios_v${VERSION}_${TIMESTAMP}_*.txt
-echo -e "${GREEN}  ✓ Archive created: ${ZIP_NAME}${NC}"
+TAR_NAME="usf_bios_v${VERSION}_${TIMESTAMP}_versions.tar.gz"
+if command -v zip &> /dev/null; then
+    zip -q "${ZIP_NAME}" usf_bios_v${VERSION}_${TIMESTAMP}_*.txt
+    echo -e "${GREEN}  ✓ Archive created: ${ZIP_NAME}${NC}"
+elif command -v tar &> /dev/null; then
+    tar -czf "${TAR_NAME}" usf_bios_v${VERSION}_${TIMESTAMP}_*.txt
+    echo -e "${GREEN}  ✓ Archive created: ${TAR_NAME}${NC}"
+else
+    echo -e "${YELLOW}  ⚠ zip/tar not available - skipping archive (files still saved)${NC}"
+fi
 
 # ============================================================================
 # FINAL SUMMARY
