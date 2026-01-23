@@ -4,12 +4,18 @@
 from typing import List, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Import version from usf_bios package
+try:
+    from usf_bios.version import __version__ as USF_VERSION
+except ImportError:
+    USF_VERSION = "2.0.04"
+
 
 class Settings(BaseSettings):
     """Minimal application settings."""
     
     APP_NAME: str = "USF BIOS"
-    APP_VERSION: str = "1.0.0"
+    APP_VERSION: str = USF_VERSION
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     CORS_ORIGINS: List[str] = ["*"]

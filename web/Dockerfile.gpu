@@ -525,7 +525,7 @@ RUN echo "=== Installing training utilities (ms-swift compatible) ===" && \
     accelerate "datasets>=3.0,<4.0" evaluate scipy scikit-learn \
     sentencepiece tiktoken tensorboard wandb swanlab mlflow "ray[tune]" optuna \
     einops safetensors "huggingface-hub>=0.24" tokenizers \
-    aiohttp aiofiles websockets python-multipart pynvml nvitop psutil \
+    aiohttp aiofiles websockets python-multipart nvidia-ml-py nvitop psutil \
     sqlalchemy aiosqlite pydantic pydantic-settings "gradio>=3.40.0,<6.0" \
     matplotlib pillow "fsspec>=2023.1.0" \
     pandas numpy requests tqdm "rich>=13.0" PyYAML omegaconf \
