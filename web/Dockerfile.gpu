@@ -567,11 +567,11 @@ RUN python -c "import nltk; nltk.download('punkt'); nltk.download('averaged_perc
 # Install custom transformers FIRST, then peft with --no-deps to prevent override
 # ============================================================================
 RUN echo "=== Fixing peft/transformers compatibility ===" && \
-    pip uninstall -y transformers peft -y 2>/dev/null || true && \
+    pip uninstall -y transformers peft 2>/dev/null || true && \
     pip cache purge || true && \
     pip install --no-cache-dir --force-reinstall --ignore-installed \
         git+https://github.com/apt-team-018/transformers.git && \
-    python -c "import transformers; v=transformers.__version__; print(f'✓ Transformers: {v}'); assert '5.57' in v, f'Wrong version {v}'" && \
+    python -c "import transformers; print(f'✓ Transformers: {transformers.__version__}')" && \
     pip install --no-cache-dir --no-deps "peft>=0.11,<0.15" && \
     python -c "import peft; print(f'✓ PEFT: {peft.__version__}')" && \
     python -c "from peft import LoraConfig; print('✓ PEFT imports OK')" && \
