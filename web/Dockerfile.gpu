@@ -693,12 +693,14 @@ COPY keys/usf_bios_public.pem /app/keys/usf_bios_public.pem
 # Install cryptography for RSA encryption
 RUN pip install --no-cache-dir cryptography
 
-# Copy and setup entrypoint script
-COPY web/entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
-
 # Security: Make source directories read-only (but NOT data dirs)
 RUN chmod -R 555 /app/usf_bios /app/web
+
+# Copy and setup entrypoint script AFTER chmod (to preserve execute permission)
+COPY web/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh && \
+    ls -la /app/entrypoint.sh && \
+    echo "✓ entrypoint.sh is executable"
 
 # ============================================================================
 # CREATE ALL DIRECTORIES with proper permissions
