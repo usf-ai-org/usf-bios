@@ -379,7 +379,7 @@ RUN echo "" && \
 # ============================================================================
 RUN echo "" && \
     echo "=== STEP 2/8: Installing Custom USF Transformers Fork ===" && \
-    pip install --no-cache-dir https://github.com/apt-team-018/usf-transformers/archive/refs/heads/production.zip && \
+    pip install --no-cache-dir https://github.com/apt-team-018/usf-transformers/archive/production.zip && \
     python -c "import transformers; print(f'✓ USF Transformers Fork: {transformers.__version__}')" && \
     python -c "from transformers import AutoConfig, PreTrainedModel; print('✓ AutoConfig & PreTrainedModel available')"
 
@@ -401,7 +401,7 @@ RUN echo "" && \
 RUN echo "" && \
     echo "=== STEP 4/8: Ensuring Custom USF Transformers Fork ===" && \
     pip uninstall -y transformers && \
-    pip install --no-cache-dir https://github.com/apt-team-018/usf-transformers/archive/refs/heads/production.zip && \
+    pip install --no-cache-dir https://github.com/apt-team-018/usf-transformers/archive/production.zip && \
     python -c "import transformers; print(f'✓ USF Transformers Fork reinstalled: {transformers.__version__}')"
 
 # ============================================================================
@@ -528,7 +528,7 @@ RUN echo "=== Removing torchao and reinstalling USF Transformers Fork ===" && \
     pip uninstall -y torchao transformers 2>/dev/null || true && \
     rm -rf /usr/local/lib/python3.11/dist-packages/torchao* || true && \
     rm -rf /usr/local/lib/python3.11/dist-packages/transformers* || true && \
-    pip install --no-cache-dir https://github.com/apt-team-018/usf-transformers/archive/refs/heads/production.zip && \
+    pip install --no-cache-dir https://github.com/apt-team-018/usf-transformers/archive/production.zip && \
     pip install --no-cache-dir "trl>=0.15,<0.25" "peft>=0.11,<0.19" && \
     python -c "import transformers; print(f'✓ USF Transformers Fork {transformers.__version__}')" && \
     python -c "import peft; print(f'✓ PEFT {peft.__version__}')" && \
@@ -626,7 +626,7 @@ RUN echo "=== Fixing package compatibility (ms-swift 3.12) - USF Transformers Fo
     pip cache purge || true && \
     rm -rf /usr/local/lib/python3.11/dist-packages/transformers* || true && \
     rm -rf /usr/local/lib/python3.11/dist-packages/torchao* || true && \
-    pip install --no-cache-dir https://github.com/apt-team-018/usf-transformers/archive/refs/heads/production.zip && \
+    pip install --no-cache-dir https://github.com/apt-team-018/usf-transformers/archive/production.zip && \
     pip install --no-cache-dir --constraint /tmp/torch-constraints.txt \
         "trl>=0.15,<0.25" "peft>=0.11,<0.19" && \
     python -c "import transformers; print(f'✓ USF Transformers Fork: {transformers.__version__}')" && \
@@ -684,7 +684,7 @@ RUN echo "" && \
 # FINAL: Ensure USF Transformers Fork is installed (4.57.6 - DO NOT CHANGE)
 RUN pip uninstall -y transformers torchao 2>/dev/null || true && \
     rm -rf /usr/local/lib/python3.11/dist-packages/transformers* || true && \
-    pip install --no-cache-dir https://github.com/apt-team-018/usf-transformers/archive/refs/heads/production.zip && \
+    pip install --no-cache-dir https://github.com/apt-team-018/usf-transformers/archive/production.zip && \
     python -c "import transformers; assert transformers.__version__ == '4.57.6', f'Wrong version: {transformers.__version__}'; print(f'✓ USF Transformers Fork (final): {transformers.__version__}')"
 
 # ============================================================================
