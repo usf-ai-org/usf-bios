@@ -550,8 +550,7 @@ RUN echo "=== Removing torchao and reinstalling USF Transformers Fork ===" && \
     python -c "import trl; print(f'✓ TRL {trl.__version__}')"
 
 # Install training utilities using constraints to prevent torch upgrades
-# Using ms-swift compatible versions: https://github.com/modelscope/ms-swift/blob/release/3.12
-RUN echo "=== Installing training utilities (ms-swift compatible) ===" && \
+RUN echo "=== Installing training utilities ===" && \
     pip install --no-cache-dir --constraint /tmp/torch-constraints.txt \
     accelerate "datasets>=3.0,<4.0" evaluate scipy scikit-learn \
     sentencepiece tiktoken tensorboard wandb swanlab mlflow "ray[tune]" optuna \
@@ -575,14 +574,14 @@ RUN pip uninstall -y vllm sglang torchao 2>/dev/null || true && \
     rm -rf /usr/local/lib/python3.11/dist-packages/torchao* || true && \
     echo "✓ Removed incompatible packages (vllm/sglang/torchao)"
 
-# Install ms-swift additional packages for inference/training
+# Install additional packages for inference/training
 # NOTE: deepspeed already installed in STEP 10 with DS_BUILD_OPS=0
-RUN echo "=== Installing ms-swift additional packages ===" && \
+RUN echo "=== Installing additional packages ===" && \
     pip install --no-cache-dir --constraint /tmp/torch-constraints.txt \
     auto_gptq optimum bitsandbytes timm \
     qwen_vl_utils qwen_omni_utils decord librosa icecream soundfile \
     liger_kernel pre-commit math_verify py-spy evalscope && \
-    echo "✓ ms-swift additional packages installed"
+    echo "✓ additional packages installed"
 
 # Install triton separately with constraint (it has complex torch dependencies)
 RUN echo "=== Installing triton with torch constraint ===" && \
@@ -633,10 +632,9 @@ RUN python -c "import nltk; nltk.download('punkt'); nltk.download('averaged_perc
     echo "⚠ NLTK data download skipped"
 
 # ============================================================================
-# CRITICAL: Fix package versions using ms-swift 3.12 compatible versions
-# https://github.com/modelscope/ms-swift/blob/release/3.12/requirements/framework.txt
+# CRITICAL: Fix package versions using compatible versions
 # ============================================================================
-RUN echo "=== Fixing package compatibility (ms-swift 3.12) - USF Transformers Fork ===" && \
+RUN echo "=== Fixing package compatibility - USF Transformers Fork ===" && \
     pip uninstall -y torchao transformers peft trl huggingface-hub tokenizers 2>/dev/null || true && \
     pip cache purge || true && \
     rm -rf /usr/local/lib/python3.11/dist-packages/transformers* || true && \
@@ -649,7 +647,7 @@ RUN echo "=== Fixing package compatibility (ms-swift 3.12) - USF Transformers Fo
     python -c "import peft; print(f'✓ PEFT: {peft.__version__}')" && \
     python -c "from peft import LoraConfig; print('✓ PEFT imports OK')" && \
     python -c "import trl; print(f'✓ TRL: {trl.__version__}')" && \
-    echo "✓ Package compatibility restored (ms-swift 3.12 + USF Transformers Fork)"
+    echo "✓ Package compatibility restored (USF Transformers Fork)"
 
 # FINAL CLEANUP: Remove packages that conflict with torch 2.4.0 stack
 # unsloth/unsloth-zoo require torchao>=0.13.0, lmdeploy has peft conflicts

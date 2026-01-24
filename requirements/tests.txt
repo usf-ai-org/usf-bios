@@ -1,4 +1,4 @@
-# ms-swift compatible test requirements
+# Test requirements
 # Note: using huggingface instead of modelscope as priority
 expecttest
 flake8

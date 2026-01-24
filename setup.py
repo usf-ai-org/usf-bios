@@ -7,8 +7,7 @@ import sys
 from setuptools import find_packages, setup
 from typing import List
 
-# ms-swift compatible versions
-# Reference: https://github.com/modelscope/ms-swift/blob/release/3.12
+# Package version compatibility
 # Note: huggingface-hub is priority over modelscope
 
 

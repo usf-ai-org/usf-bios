@@ -29,7 +29,7 @@ nvidia-nvtx-cu12==12.4.99
 nvidia-nvjitlink-cu12==12.4.99
 
 # ============================================================================
-# TRANSFORMERS ECOSYSTEM (ms-swift 3.12 compatible)
+# TRANSFORMERS ECOSYSTEM
 # ============================================================================
 transformers>=4.33,<4.58
 peft>=0.11,<0.19
@@ -202,8 +202,7 @@ ninja
 # ============================================================================
 # NOTES
 # ============================================================================
-# 1. This image is based on ms-swift 3.12 compatible versions
-# 2. PyTorch 2.4.0 is pinned for CUDA 12.4 compatibility
-# 3. numpy<2.0.0 required for megatron-core/numba compatibility
-# 4. Custom model architectures (e.g., usf_omega) require trust_remote_code=True
-# 5. Flash Attention 2.6.3 pre-built for CUDA 12.4 + PyTorch 2.4.0
+# 1. PyTorch 2.4.0 is pinned for CUDA 12.4 compatibility
+# 2. numpy<2.0.0 required for megatron-core/numba compatibility
+# 3. Custom model architectures (e.g., usf_omega) require trust_remote_code=True
+# 4. Flash Attention 2.6.3 pre-built for CUDA 12.4 + PyTorch 2.4.0

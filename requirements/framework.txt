@@ -1,5 +1,4 @@
-# ms-swift compatible framework requirements
-# Reference: https://github.com/modelscope/ms-swift/blob/release/3.12/requirements/framework.txt
+# Framework requirements
 # Note: huggingface-hub added as priority over modelscope
 
 accelerate
