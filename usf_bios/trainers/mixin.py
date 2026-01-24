@@ -634,9 +634,8 @@ class USFMixin:
         if self.args.should_save:
             self._rotate_flash_checkpoints(use_mtime=True, output_dir=run_dir)
 
-    @staticmethod
     @contextmanager
-    def _fix_grad_norm_nan():
+    def _fix_grad_norm_nan(self):
         from accelerate import Accelerator
         origin_clip_grad_norm_ = Accelerator.clip_grad_norm_
 

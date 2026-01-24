@@ -16,9 +16,8 @@ del HFPPOTrainer.__init__
 
 class PPOTrainer(USFMixin, HFPPOTrainer):
 
-    @staticmethod
     @contextmanager
-    def _patch_dataloader(collate_fn):
+    def _patch_dataloader(self, collate_fn):
         __init__ = DataLoader.__init__
 
         def __new_init__(self, *args, **kwargs):
