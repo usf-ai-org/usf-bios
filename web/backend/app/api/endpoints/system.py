@@ -599,15 +599,9 @@ async def get_locked_models():
     """
     validator = get_validator()
     
-    is_locked = validator.is_model_locked()
-    models = validator.get_locked_models()
-    
-    # Debug logging
-    print(f"[LOCKED-MODELS] is_locked={is_locked}, models_count={len(models)}, models={models}")
-    
     return {
-        "is_locked": is_locked,
-        "models": models
+        "is_locked": validator.is_model_locked(),
+        "models": validator.get_locked_models()
     }
 
 

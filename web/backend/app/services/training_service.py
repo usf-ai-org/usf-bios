@@ -916,9 +916,6 @@ class TrainingService:
             _debug_log(job_id, "Job already running", "WARNING")
             return False
         
-        # Debug: Log the full config
-        print(f"[TRAINING] Job config: model_path={job.config.model_path}, output_dir={getattr(job.config, 'output_dir', 'N/A')}")
-        
         # =====================================================================
         # CRITICAL SECURITY: Validate model and output path before training
         # This ensures only authorized models/paths can be used - CANNOT be bypassed
@@ -934,33 +931,26 @@ class TrainingService:
             if model_path.startswith('/') or model_path.startswith('./'):
                 model_source = 'local'
             
-            print(f"[TRAINING] Validating model: path={model_path}, source={model_source}")
             is_valid, error_msg = validator.validate_model_path(model_path, model_source)
-            print(f"[TRAINING] Model validation result: valid={is_valid}, error={error_msg}")
             if not is_valid:
-                _debug_log(job_id, f"Model validation failed: {error_msg}", "ERROR")
-                await job_manager.fail_job(job_id, f"Model not authorized: {error_msg}")
+                _debug_log(job_id, f"Model validation failed", "ERROR")
+                await job_manager.fail_job(job_id, "Invalid configuration")
                 return False
             
             _debug_log(job_id, f"Model validation passed: {model_path}")
             
             # Validate output path (when locked, user cannot customize)
             user_output_dir = getattr(job.config, 'output_dir', '') or ''
-            print(f"[TRAINING] Validating output path: '{user_output_dir}'")
             is_valid, error_msg = validator.validate_output_path(user_output_dir)
-            print(f"[TRAINING] Output validation result: valid={is_valid}, error={error_msg}")
             if not is_valid:
-                _debug_log(job_id, f"Output path validation failed: {error_msg}", "ERROR")
-                await job_manager.fail_job(job_id, f"Output path not allowed: {error_msg}")
+                _debug_log(job_id, f"Output path validation failed", "ERROR")
+                await job_manager.fail_job(job_id, "Invalid configuration")
                 return False
             
             _debug_log(job_id, f"Output path validation passed")
         except Exception as e:
             _debug_log(job_id, f"Validation error: {e}", "ERROR")
-            print(f"[TRAINING] Validation exception: {type(e).__name__}: {e}")
-            import traceback
-            traceback.print_exc()
-            await job_manager.fail_job(job_id, f"Validation failed: {str(e)}")
+            await job_manager.fail_job(job_id, "Invalid configuration")
             return False
         
         _debug_log(job_id, "Creating background task...")
