@@ -8,7 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 try:
     from usf_bios.version import __version__ as USF_VERSION
 except ImportError:
-    USF_VERSION = "2.0.07"
+    USF_VERSION = "2.0.08"
 
 
 class Settings(BaseSettings):
