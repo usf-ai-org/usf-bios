@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import TrainingSettingsStep from '@/components/TrainingSettings'
 import DatasetConfig from '@/components/DatasetConfig'
+import AlertModal, { AlertType } from '@/components/AlertModal'
 
 // ============================================================
 // LOCKED MODEL CONFIGURATION
@@ -328,6 +329,23 @@ export default function Home() {
   const [deleteTarget, setDeleteTarget] = useState<UploadedDataset | null>(null)
   const [deleteConfirmText, setDeleteConfirmText] = useState('')
   const [isDeleting, setIsDeleting] = useState(false)
+  
+  // Custom alert modal state (replaces browser alert)
+  const [alertModal, setAlertModal] = useState<{
+    isOpen: boolean
+    title?: string
+    message: string
+    type: AlertType
+  }>({ isOpen: false, message: '', type: 'info' })
+  
+  // Helper function to show custom alert (replaces browser alert)
+  const showAlert = (message: string, type: AlertType = 'error', title?: string) => {
+    setAlertModal({ isOpen: true, message, type, title })
+  }
+  
+  const closeAlert = () => {
+    setAlertModal(prev => ({ ...prev, isOpen: false }))
+  }
   
   // Training name state (optional - auto-generated if empty)
   const [trainingName, setTrainingName] = useState('')
@@ -1411,7 +1429,7 @@ export default function Home() {
   // Lock tab switching during training
   const handleTabChange = (tab: 'train' | 'inference') => {
     if (isTraining) {
-      alert('Training is in progress. Please wait for training to complete or stop it first.')
+      showAlert('Training is in progress. Please wait for training to complete or stop it first.', 'warning', 'Training In Progress')
       return
     }
     setMainTab(tab)
@@ -1498,7 +1516,7 @@ export default function Home() {
         
         // Show validation errors if any
         if (data.errors && data.errors.length > 0) {
-          alert(`Dataset uploaded but has warnings:\n${data.errors.join('\n')}`)
+          showAlert(`Dataset uploaded but has warnings:\n${data.errors.join('\n')}`, 'warning', 'Upload Warnings')
         }
       } else {
         setUploadError(data.detail || 'Upload failed')
@@ -1543,10 +1561,10 @@ export default function Home() {
         setDeleteConfirmText('')
       } else {
         const data = await res.json()
-        alert(data.detail || 'Delete failed')
+        showAlert(data.detail || 'Delete failed', 'error', 'Delete Failed')
       }
     } catch (e) {
-      alert(`Delete failed: ${e}`)
+      showAlert(`Delete failed: ${e}`, 'error', 'Delete Failed')
     } finally {
       setIsDeleting(false)
     }
@@ -1554,7 +1572,7 @@ export default function Home() {
 
   const startTraining = async () => {
     if (config.dataset_paths.length === 0) {
-      alert('Please select at least one dataset for training')
+      showAlert('Please select at least one dataset for training', 'warning', 'Dataset Required')
       return
     }
     
@@ -1612,7 +1630,7 @@ export default function Home() {
       setTrainingName('') // Clear the input after successful creation
       setLoadingMessage('') // Clear loading message
     } catch (e) {
-      alert(`Failed to start training: ${e}`)
+      showAlert(`Failed to start training: ${e}`, 'error', 'Training Failed')
     } finally {
       setIsStartingTraining(false)
       setLoadingMessage('')
@@ -1630,7 +1648,7 @@ export default function Home() {
       setTrainingLogs([])
       setTrainingMetrics([])
     } catch (e) {
-      alert(`Failed to stop: ${e}`)
+      showAlert(`Failed to stop: ${e}`, 'error', 'Stop Failed')
     }
   }
 
@@ -1712,10 +1730,10 @@ export default function Home() {
       if (data.success) {
         await fetchInferenceStatus()
       } else {
-        alert(`Failed to load model: ${data.error || 'Unknown error'}`)
+        showAlert(`Failed to load model: ${data.error || 'Unknown error'}`, 'error', 'Model Load Failed')
       }
     } catch (e) {
-      alert(`Failed to load model: ${e}`)
+      showAlert(`Failed to load model: ${e}`, 'error', 'Model Load Failed')
     } finally {
       setIsModelLoading(false)
       setLoadingMessage('')
@@ -1745,7 +1763,7 @@ export default function Home() {
       const loadData = await loadRes.json()
       
       if (!loadData.success) {
-        alert(`Failed to load model: ${loadData.error || 'Unknown error'}`)
+        showAlert(`Failed to load model: ${loadData.error || 'Unknown error'}`, 'error', 'Model Load Failed')
         return false
       }
       
@@ -1795,7 +1813,7 @@ export default function Home() {
       
     } catch (e) {
       console.error('Error loading model:', e)
-      alert(`Failed to load model: ${e}`)
+      showAlert(`Failed to load model: ${e}`, 'error', 'Model Load Failed')
       return false
     } finally {
       setIsModelLoading(false)
@@ -1823,10 +1841,10 @@ export default function Home() {
         setLoadedAdapters(prev => [...prev.map(a => ({ ...a, active: false })), newAdapter])
         setAdapterPath('')
       } else {
-        alert(`Failed to load adapter: ${data.error || 'Unknown error'}`)
+        showAlert(`Failed to load adapter: ${data.error || 'Unknown error'}`, 'error', 'Adapter Load Failed')
       }
     } catch (e) {
-      alert(`Failed to load adapter: ${e}`)
+      showAlert(`Failed to load adapter: ${e}`, 'error', 'Adapter Load Failed')
     }
   }
 
@@ -3294,6 +3312,7 @@ export default function Home() {
                   <DatasetConfig 
                     selectedPaths={config.dataset_paths}
                     onSelectionChange={(paths) => setConfig(prev => ({ ...prev, dataset_paths: paths }))}
+                    onShowAlert={showAlert}
                   />
                 </div>
               )}
@@ -3697,6 +3716,15 @@ export default function Home() {
       <footer className="mt-6 py-4 text-center text-xs text-slate-500 border-t border-slate-200">
         USF BIOS v1.0.0 - Copyright 2024-2026 US Inc. All rights reserved.
       </footer>
+      
+      {/* Custom Alert Modal - replaces browser alert() */}
+      <AlertModal
+        isOpen={alertModal.isOpen}
+        onClose={closeAlert}
+        title={alertModal.title}
+        message={alertModal.message}
+        type={alertModal.type}
+      />
     </div>
   )
 }

@@ -54,6 +54,10 @@ try:
         validate_output_path as _sg_validate_output_path,
     )
     _SYSTEM_GUARD_AVAILABLE = True
+    # Debug: Log locked models at import time
+    print(f"[CAPABILITIES] system_guard imported successfully")
+    print(f"[CAPABILITIES] _LOCKED_MODELS = {_LOCKED_MODELS}")
+    print(f"[CAPABILITIES] _LOCKED_MODEL_PATHS = {_LOCKED_MODEL_PATHS}")
 except ImportError as e:
     # =========================================================================
     # CRITICAL: SYSTEM IS COMPLETELY BLOCKED

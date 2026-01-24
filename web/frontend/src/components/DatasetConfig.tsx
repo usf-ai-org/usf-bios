@@ -39,6 +39,7 @@ interface SystemCapabilities {
 interface Props {
   selectedPaths: string[]
   onSelectionChange: (paths: string[]) => void
+  onShowAlert?: (message: string, type: 'error' | 'warning' | 'info' | 'success', title?: string) => void
 }
 
 const ALL_SOURCE_TABS: { id: DatasetSource; label: string; icon: any; desc: string; sourceKey: string }[] = [
@@ -49,7 +50,7 @@ const ALL_SOURCE_TABS: { id: DatasetSource; label: string; icon: any; desc: stri
 ]
 
 
-export default function DatasetConfig({ selectedPaths, onSelectionChange }: Props) {
+export default function DatasetConfig({ selectedPaths, onSelectionChange, onShowAlert }: Props) {
   const [activeTab, setActiveTab] = useState<DatasetSource>('upload')
   const [datasets, setDatasets] = useState<Dataset[]>([])
   const [isLoading, setIsLoading] = useState(false)
@@ -365,7 +366,9 @@ export default function DatasetConfig({ selectedPaths, onSelectionChange }: Prop
         setDeleteConfirm('')
       } else {
         const data = await res.json()
-        alert(data.detail || 'Delete failed')
+        if (onShowAlert) {
+          onShowAlert(data.detail || 'Delete failed', 'error', 'Delete Failed')
+        }
       }
     } catch (e) {
       console.error('Delete failed:', e)
