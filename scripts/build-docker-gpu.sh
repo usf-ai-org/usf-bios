@@ -92,24 +92,13 @@ echo ""
 # Enable BuildKit for better caching and parallel builds
 export DOCKER_BUILDKIT=1
 
-# GitHub token for private repos (usf-transformers)
-# Set GITHUB_TOKEN env var or pass as second argument
-GITHUB_TOKEN="${2:-${GITHUB_TOKEN:-}}"
-if [ -z "$GITHUB_TOKEN" ]; then
-    echo -e "${RED}ERROR: GITHUB_TOKEN required for private usf-transformers repo${NC}"
-    echo "Usage: $0 [version] [github_token]"
-    echo "   Or: export GITHUB_TOKEN=ghp_xxx && $0"
-    exit 1
-fi
-echo -e "${GREEN}  ✓ GitHub token configured${NC}"
-
 # Use regular docker build (has access to host GPU for compilation)
 # Note: buildx with docker-container driver does NOT have GPU access
+# Note: usf-transformers repo is PUBLIC - no token needed
 docker build \
     --file "${DOCKERFILE}" \
     --tag "${IMAGE_NAME}:${VERSION}" \
     --tag "${IMAGE_NAME}:latest" \
-    --build-arg GITHUB_TOKEN="${GITHUB_TOKEN}" \
     --build-arg DS_BUILD_OPS=1 \
     --build-arg DS_BUILD_AIO=1 \
     --build-arg DS_BUILD_SPARSE_ATTN=1 \
