@@ -206,6 +206,10 @@ class TrainingConfig(BaseModel):
     
     early_stop_interval: Optional[int] = Field(default=None, ge=1)
     
+    # API Tokens for private models/datasets (optional)
+    hf_token: Optional[str] = Field(default=None, description="HuggingFace token for private models/datasets")
+    ms_token: Optional[str] = Field(default=None, description="ModelScope token for private models/datasets")
+    
     @field_validator('gpu_ids')
     @classmethod
     def validate_gpu_ids(cls, v):

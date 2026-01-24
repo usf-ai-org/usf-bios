@@ -293,3 +293,252 @@ async def get_popular_models(limit: int = Query(10, ge=1, le=50), db: Session = 
         return {"models": models}
     except Exception as e:
         raise HTTPException(status_code=500, detail="Failed to get popular models")
+
+
+# ============================================================================
+# Model Info Endpoint - Get context length and other model-specific info
+# ============================================================================
+
+# Known context lengths for popular models (avoids network calls for HF/MS)
+# Format: "model_name_pattern" -> context_length
+# This is checked BEFORE making any network requests
+KNOWN_MODEL_CONTEXT_LENGTHS: dict = {
+    # Qwen family
+    "qwen": 32768,
+    "qwen2": 131072,
+    "qwen2.5": 131072,
+    "qwen1.5": 32768,
+    # Llama family
+    "llama-2": 4096,
+    "llama-3": 8192,
+    "llama-3.1": 131072,
+    "llama-3.2": 131072,
+    "llama-3.3": 131072,
+    # Mistral family
+    "mistral": 32768,
+    "mixtral": 32768,
+    "mistral-nemo": 131072,
+    # DeepSeek family
+    "deepseek": 16384,
+    "deepseek-v2": 131072,
+    "deepseek-v3": 131072,
+    "deepseek-coder": 16384,
+    # Yi family
+    "yi": 4096,
+    "yi-1.5": 16384,
+    # Phi family
+    "phi-2": 2048,
+    "phi-3": 131072,
+    "phi-4": 16384,
+    # Gemma family
+    "gemma": 8192,
+    "gemma-2": 8192,
+    # InternLM
+    "internlm": 8192,
+    "internlm2": 32768,
+    # ChatGLM
+    "chatglm": 8192,
+    "chatglm2": 32768,
+    "chatglm3": 32768,
+    "glm-4": 131072,
+    # Baichuan
+    "baichuan": 4096,
+    "baichuan2": 4096,
+    # Others
+    "vicuna": 4096,
+    "falcon": 2048,
+    "bloom": 2048,
+    "opt": 2048,
+    "gpt2": 1024,
+    "gpt-j": 2048,
+    "codellama": 16384,
+    "starcoder": 8192,
+    "command-r": 131072,
+}
+
+# Cache for model info (avoids repeated disk reads or network calls)
+_model_info_cache: dict = {}
+
+
+def _get_context_from_known_models(model_path: str) -> Optional[int]:
+    """
+    Get context length from known models lookup table.
+    Checks if model_path contains any known model name patterns.
+    Returns None if not found in lookup table.
+    """
+    model_lower = model_path.lower()
+    
+    # Check for exact or partial matches
+    for pattern, context_length in KNOWN_MODEL_CONTEXT_LENGTHS.items():
+        if pattern in model_lower:
+            return context_length
+    
+    return None
+
+
+class ModelInfo(BaseModel):
+    """Model information including context length"""
+    model_path: str
+    model_type: Optional[str] = None
+    architecture: Optional[str] = None
+    context_length: int = 4096  # Default fallback
+    vocab_size: Optional[int] = None
+    hidden_size: Optional[int] = None
+    num_layers: Optional[int] = None
+    num_attention_heads: Optional[int] = None
+
+
+def _get_context_length_from_config(config: dict) -> int:
+    """
+    Extract context length from model config.json.
+    Different models use different field names for context length.
+    
+    Returns the context length or 4096 as default.
+    """
+    # Common field names for context/sequence length in different model architectures
+    context_fields = [
+        "max_position_embeddings",      # Most common (Llama, Mistral, Qwen, etc.)
+        "max_sequence_length",          # Some models
+        "n_positions",                  # GPT-2 style
+        "seq_length",                   # Some models
+        "max_seq_len",                  # Some models
+        "context_length",               # Direct field
+        "sliding_window",               # Mistral sliding window (use as hint)
+        "original_max_position_embeddings",  # For extended context models
+    ]
+    
+    context_length = None
+    
+    for field in context_fields:
+        if field in config and config[field] is not None:
+            value = config[field]
+            if isinstance(value, int) and value > 0:
+                # Use the largest value found (some models have both original and extended)
+                if context_length is None or value > context_length:
+                    context_length = value
+    
+    # Check for rope_scaling which indicates extended context
+    if "rope_scaling" in config and config["rope_scaling"]:
+        rope_config = config["rope_scaling"]
+        if isinstance(rope_config, dict):
+            factor = rope_config.get("factor", 1)
+            if factor > 1 and context_length:
+                # Some models use rope scaling to extend context
+                # But max_position_embeddings already reflects this, so don't multiply
+                pass
+    
+    return context_length or 4096  # Default fallback
+
+
+@router.get("/info")
+async def get_model_info(
+    model_path: str = Query(..., description="Path to model or HuggingFace model ID"),
+    source: ModelSource = Query(ModelSource.LOCAL, description="Model source")
+):
+    """
+    Get model information including context length.
+    
+    This endpoint uses a tiered approach for efficiency:
+    1. Check cache first (instant)
+    2. For local models: read config.json from disk (fast, no GPU)
+    3. For remote models: check known models lookup table (instant, no network)
+    4. Only fetch from HuggingFace if model not in lookup table
+    
+    NOTE: This does NOT load the model into GPU memory.
+    It only reads the small config.json file (~50KB).
+    
+    Frontend uses this to set dynamic ranges for:
+    - max_length (sequence length for training)
+    - max_completion_length (for RLHF algorithms)
+    - max_new_tokens (for inference)
+    """
+    global _model_info_cache
+    
+    try:
+        import json
+        
+        # Check cache first
+        cache_key = f"{source.value}:{model_path}"
+        if cache_key in _model_info_cache:
+            return _model_info_cache[cache_key]
+        
+        result = ModelInfo(model_path=model_path)
+        
+        if source == ModelSource.LOCAL:
+            # LOCAL: Read config.json from disk (fast, no GPU needed)
+            path = Path(model_path)
+            
+            if not path.exists():
+                # Try known models lookup as fallback
+                known_context = _get_context_from_known_models(model_path)
+                if known_context:
+                    result.context_length = known_context
+                return result
+            
+            config_path = path / "config.json" if path.is_dir() else None
+            
+            if config_path and config_path.exists():
+                try:
+                    with open(config_path) as f:
+                        config = json.load(f)
+                    
+                    # Extract context length
+                    result.context_length = _get_context_length_from_config(config)
+                    
+                    # Extract other info
+                    result.model_type = config.get("model_type")
+                    architectures = config.get("architectures", [])
+                    if architectures:
+                        result.architecture = architectures[0]
+                    result.vocab_size = config.get("vocab_size")
+                    result.hidden_size = config.get("hidden_size")
+                    result.num_layers = config.get("num_hidden_layers")
+                    result.num_attention_heads = config.get("num_attention_heads")
+                    
+                except (json.JSONDecodeError, IOError):
+                    # Fallback to known models lookup
+                    known_context = _get_context_from_known_models(model_path)
+                    if known_context:
+                        result.context_length = known_context
+        
+        else:
+            # HUGGINGFACE / MODELSCOPE: Use lookup table first (no network call)
+            known_context = _get_context_from_known_models(model_path)
+            if known_context:
+                result.context_length = known_context
+            else:
+                # Only fetch from HuggingFace if model not in lookup table
+                # This is a last resort and may be slow
+                try:
+                    from huggingface_hub import hf_hub_download
+                    import tempfile
+                    
+                    with tempfile.TemporaryDirectory() as tmp_dir:
+                        config_file = hf_hub_download(
+                            repo_id=model_path,
+                            filename="config.json",
+                            cache_dir=tmp_dir,
+                            local_dir=tmp_dir
+                        )
+                        with open(config_file) as f:
+                            config = json.load(f)
+                        
+                        result.context_length = _get_context_length_from_config(config)
+                        result.model_type = config.get("model_type")
+                        architectures = config.get("architectures", [])
+                        if architectures:
+                            result.architecture = architectures[0]
+                        result.vocab_size = config.get("vocab_size")
+                        
+                except Exception:
+                    # Final fallback: use reasonable default
+                    result.context_length = 8192  # Safe default for most modern models
+        
+        # Cache the result for future requests
+        _model_info_cache[cache_key] = result
+        
+        return result
+        
+    except Exception as e:
+        # Return defaults on any error
+        return ModelInfo(model_path=model_path)

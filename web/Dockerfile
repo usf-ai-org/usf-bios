@@ -27,7 +27,7 @@ FROM python:3.11-slim
 
 LABEL maintainer="US Inc <support@us.inc>"
 LABEL description="USF BIOS - Enterprise AI Fine-tuning Platform"
-LABEL version="1.0.0"
+LABEL version="1.0.10"
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1

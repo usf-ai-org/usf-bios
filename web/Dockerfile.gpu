@@ -122,7 +122,7 @@ FROM nvidia/cuda:12.4.0-devel-ubuntu22.04
 
 LABEL maintainer="US Inc <support@us.inc>"
 LABEL description="USF BIOS - Enterprise AI Fine-tuning Platform (GPU Build)"
-LABEL version="2.0.0"
+LABEL version="2.0.10"
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
@@ -416,14 +416,27 @@ RUN echo "" && \
     echo "✓ Backend requirements installed"
 
 # ============================================================================
-# STEP 6: Install Flash Attention (pre-built wheel for CUDA 12.4 + PyTorch 2.4)
-# NOTE: Source compilation requires GPU access which Docker build doesn't have
+# STEP 6a: Install Flash Attention 2 (works on Ampere+ GPUs: A100, RTX 30/40, etc.)
+# This is the standard Flash Attention package that works on most modern GPUs
 # ============================================================================
 RUN echo "" && \
-    echo "=== STEP 6/8: Installing Flash Attention 2 ===" && \
+    echo "=== STEP 6a/11: Installing Flash Attention 2 ===" && \
     pip install --no-cache-dir ninja packaging wheel setuptools && \
     pip install --no-cache-dir flash-attn==2.6.3 --no-build-isolation && \
-    python -c "import flash_attn; print(f'✓ Flash Attention {flash_attn.__version__}')"
+    python -c "import flash_attn; print(f'✓ Flash Attention 2: {flash_attn.__version__}')"
+
+# ============================================================================
+# STEP 6b: Install Flash Attention 3 (Hopper GPUs ONLY: H100, H200)
+# FA3 is a SEPARATE package optimized for Hopper architecture (sm_90)
+# It uses Hopper-specific features like TMA, WGMMA instructions
+# FA3 can coexist with FA2 - they are different Python packages
+# If installation fails (non-Hopper build environment), continue anyway
+# ============================================================================
+RUN echo "" && \
+    echo "=== STEP 6b/11: Installing Flash Attention 3 (Hopper) ===" && \
+    pip install --no-cache-dir flash-attn-hopper 2>/dev/null && \
+    python -c "import flash_attn_3; print('✓ Flash Attention 3 installed')" 2>/dev/null || \
+    echo "⚠ Flash Attention 3 not available (requires Hopper GPU for compilation)"
 
 # ============================================================================
 # STEP 7: Install bitsandbytes

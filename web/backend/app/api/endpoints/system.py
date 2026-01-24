@@ -639,6 +639,31 @@ async def get_model_capabilities_legacy():
     }
 
 
+@router.get("/api-tokens")
+async def get_api_token_status():
+    """
+    Check if system has HuggingFace or ModelScope tokens configured.
+    
+    This allows the UI to show "Use system token" option when tokens
+    are already configured via environment variables.
+    
+    Returns:
+        - hf_token_available: True if HF_TOKEN env var is set
+        - ms_token_available: True if MODELSCOPE_API_TOKEN env var is set
+        - hf_token_masked: Masked version of token (first 4 chars) if available
+        - ms_token_masked: Masked version of token (first 4 chars) if available
+    """
+    hf_token = os.environ.get("HF_TOKEN", "")
+    ms_token = os.environ.get("MODELSCOPE_API_TOKEN", "")
+    
+    return {
+        "hf_token_available": bool(hf_token),
+        "ms_token_available": bool(ms_token),
+        "hf_token_masked": f"{hf_token[:4]}..." if len(hf_token) > 4 else None,
+        "ms_token_masked": f"{ms_token[:4]}..." if len(ms_token) > 4 else None,
+    }
+
+
 @router.post("/validate", response_model=ValidationResponse, include_in_schema=False)
 async def validate_configuration(request: ValidationRequest):
     """Validate if configuration works with this system (hidden from docs)."""
@@ -668,3 +693,339 @@ async def validate_system_config(request: ValidationRequest):
 async def validate_model_for_training(request: ValidationRequest):
     """Legacy endpoint - hidden from docs."""
     return await validate_configuration(request)
+
+
+# =============================================================================
+# Training Capabilities Detection - Dynamic UI Support
+# =============================================================================
+
+def detect_gpu_architecture() -> dict:
+    """
+    Detect GPU architecture to determine available optimizations.
+    Returns architecture name and capabilities.
+    
+    GPU Architectures:
+    - Hopper (sm_90): H100, H200, H20 - supports FA2 + FA3
+    - Ada Lovelace (sm_89): RTX 40xx, L40, L4 - supports FA2
+    - Ampere (sm_80/86): A100, A10, RTX 30xx - supports FA2
+    - Turing (sm_75): RTX 20xx, T4 - limited FA support
+    - Older: No Flash Attention support
+    """
+    result = {
+        "architecture": "unknown",
+        "compute_capability": None,
+        "gpu_name": None,
+        "supports_fa2": False,
+        "supports_fa3": False,
+        "is_hopper": False,
+        "is_ampere_or_newer": False
+    }
+    
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return result
+        
+        # Get GPU properties
+        props = torch.cuda.get_device_properties(0)
+        result["gpu_name"] = props.name
+        result["compute_capability"] = f"{props.major}.{props.minor}"
+        
+        major, minor = props.major, props.minor
+        
+        # Determine architecture
+        if major >= 9:
+            # Hopper (H100, H200) or newer
+            result["architecture"] = "hopper"
+            result["is_hopper"] = True
+            result["is_ampere_or_newer"] = True
+            result["supports_fa2"] = True
+            result["supports_fa3"] = True
+        elif major == 8 and minor >= 9:
+            # Ada Lovelace (RTX 40xx, L40)
+            result["architecture"] = "ada_lovelace"
+            result["is_ampere_or_newer"] = True
+            result["supports_fa2"] = True
+            result["supports_fa3"] = False
+        elif major == 8:
+            # Ampere (A100, A10, RTX 30xx)
+            result["architecture"] = "ampere"
+            result["is_ampere_or_newer"] = True
+            result["supports_fa2"] = True
+            result["supports_fa3"] = False
+        elif major == 7 and minor >= 5:
+            # Turing (RTX 20xx, T4)
+            result["architecture"] = "turing"
+            result["supports_fa2"] = True  # Limited support
+            result["supports_fa3"] = False
+        else:
+            # Older architectures
+            result["architecture"] = "legacy"
+            result["supports_fa2"] = False
+            result["supports_fa3"] = False
+        
+        return result
+        
+    except Exception as e:
+        import logging
+        logging.warning(f"GPU architecture detection error: {e}")
+        return result
+
+
+def detect_available_optimizations() -> dict:
+    """
+    Detect which optimization packages are installed and available.
+    This is used to dynamically show/hide options in the frontend.
+    """
+    result = {
+        "flash_attention_2": False,
+        "flash_attention_3": False,
+        "deepspeed": False,
+        "fsdp": False,  # Always available with PyTorch 2.x
+        "liger_kernel": False,
+        "bitsandbytes": False,
+        "xformers": False
+    }
+    
+    # Check Flash Attention 2
+    try:
+        from usf_bios.utils import is_flash_attn_2_available
+        result["flash_attention_2"] = is_flash_attn_2_available()
+    except ImportError:
+        try:
+            import importlib.util
+            result["flash_attention_2"] = importlib.util.find_spec('flash_attn') is not None
+        except:
+            pass
+    
+    # Check Flash Attention 3
+    try:
+        from usf_bios.utils import is_flash_attn_3_available
+        result["flash_attention_3"] = is_flash_attn_3_available()
+    except ImportError:
+        try:
+            import importlib.util
+            result["flash_attention_3"] = (
+                importlib.util.find_spec('flash_attn_3') is not None and
+                importlib.util.find_spec('flash_attn_interface') is not None
+            )
+        except:
+            pass
+    
+    # Check DeepSpeed
+    try:
+        import importlib.util
+        result["deepspeed"] = importlib.util.find_spec('deepspeed') is not None
+    except:
+        pass
+    
+    # FSDP is always available with PyTorch 2.x
+    try:
+        import torch
+        result["fsdp"] = hasattr(torch.distributed, 'fsdp') or int(torch.__version__.split('.')[0]) >= 2
+    except:
+        pass
+    
+    # Check Liger Kernel
+    try:
+        from usf_bios.utils import is_liger_available
+        result["liger_kernel"] = is_liger_available()
+    except ImportError:
+        try:
+            import importlib.util
+            result["liger_kernel"] = importlib.util.find_spec('liger_kernel') is not None
+        except:
+            pass
+    
+    # Check bitsandbytes
+    try:
+        import importlib.util
+        result["bitsandbytes"] = importlib.util.find_spec('bitsandbytes') is not None
+    except:
+        pass
+    
+    # Check xformers
+    try:
+        import importlib.util
+        result["xformers"] = importlib.util.find_spec('xformers') is not None
+    except:
+        pass
+    
+    return result
+
+
+class TrainingCapabilitiesResponse(BaseModel):
+    """Response model for training capabilities detection"""
+    # GPU Architecture
+    gpu_architecture: str
+    gpu_name: Optional[str]
+    compute_capability: Optional[str]
+    is_hopper: bool
+    is_ampere_or_newer: bool
+    
+    # Available Attention Implementations
+    attention_implementations: List[dict]
+    default_attention: str
+    
+    # Distributed Training Options
+    deepspeed_available: bool
+    deepspeed_options: List[dict]
+    fsdp_available: bool
+    fsdp_options: List[dict]
+    
+    # Other Optimizations
+    liger_kernel_available: bool
+    bitsandbytes_available: bool
+    xformers_available: bool
+    
+    # Incompatible Combinations (for frontend validation)
+    incompatible_combinations: List[dict]
+
+
+@router.get("/training-capabilities")
+async def get_training_capabilities():
+    """
+    Get training optimization capabilities based on installed packages and GPU.
+    
+    Frontend should call this endpoint on load and use the response to:
+    1. Show/hide attention implementation options based on what's installed
+    2. Show/hide FA3 based on GPU architecture (Hopper only)
+    3. Enforce mutual exclusion between DeepSpeed and FSDP
+    4. Show warnings for incompatible combinations
+    5. Set sensible defaults based on hardware
+    """
+    gpu_info = detect_gpu_architecture()
+    optimizations = detect_available_optimizations()
+    
+    # Build attention implementation options based on what's available
+    attention_implementations = [
+        {"value": None, "label": "Auto (Recommended)", "desc": "Automatically selects best available", "available": True}
+    ]
+    
+    # FA3 - only show if installed AND Hopper GPU
+    if optimizations["flash_attention_3"] and gpu_info["is_hopper"]:
+        attention_implementations.append({
+            "value": "flash_attention_3",
+            "label": "Flash Attention 3",
+            "desc": "Latest, fastest (Hopper GPU)",
+            "available": True
+        })
+    
+    # FA2 - show if installed AND supported GPU
+    if optimizations["flash_attention_2"] and gpu_info["supports_fa2"]:
+        attention_implementations.append({
+            "value": "flash_attention_2",
+            "label": "Flash Attention 2",
+            "desc": "Fast, memory efficient (Ampere+ GPU)",
+            "available": True
+        })
+    
+    # SDPA - always available with PyTorch 2.x
+    attention_implementations.append({
+        "value": "sdpa",
+        "label": "SDPA (PyTorch)",
+        "desc": "PyTorch native, good compatibility",
+        "available": True
+    })
+    
+    # Eager - always available
+    attention_implementations.append({
+        "value": "eager",
+        "label": "Eager",
+        "desc": "Standard attention, most compatible",
+        "available": True
+    })
+    
+    # Determine best default attention
+    if optimizations["flash_attention_3"] and gpu_info["is_hopper"]:
+        default_attention = "flash_attention_3"
+    elif optimizations["flash_attention_2"] and gpu_info["supports_fa2"]:
+        default_attention = "flash_attention_2"
+    else:
+        default_attention = "sdpa"
+    
+    # Build DeepSpeed options
+    deepspeed_options = [
+        {"value": None, "label": "Disabled", "desc": "No distributed optimization"}
+    ]
+    if optimizations["deepspeed"]:
+        deepspeed_options.extend([
+            {"value": "zero0", "label": "ZeRO-0", "desc": "DDP only, no memory optimization"},
+            {"value": "zero1", "label": "ZeRO-1", "desc": "Optimizer state partitioning"},
+            {"value": "zero2", "label": "ZeRO-2", "desc": "+ Gradient partitioning (recommended)"},
+            {"value": "zero2_offload", "label": "ZeRO-2 + Offload", "desc": "+ CPU offload for large models"},
+            {"value": "zero3", "label": "ZeRO-3", "desc": "+ Parameter partitioning (70B+ models)"},
+            {"value": "zero3_offload", "label": "ZeRO-3 + Offload", "desc": "Maximum memory savings"}
+        ])
+    
+    # Build FSDP options
+    fsdp_options = [
+        {"value": None, "label": "Disabled", "desc": "No FSDP"}
+    ]
+    if optimizations["fsdp"]:
+        fsdp_options.extend([
+            {"value": "full_shard", "label": "Full Shard", "desc": "Shard parameters, gradients, optimizer"},
+            {"value": "shard_grad_op", "label": "Shard Grad/Op", "desc": "Shard gradients and optimizer only"},
+            {"value": "fsdp2", "label": "FSDP2", "desc": "PyTorch FSDP2 (newer, recommended)"}
+        ])
+    
+    # Define incompatible combinations for frontend validation
+    incompatible_combinations = [
+        {
+            "id": "deepspeed_fsdp",
+            "condition": "deepspeed AND fsdp",
+            "message": "DeepSpeed and FSDP cannot be used together. They are both distributed training frameworks.",
+            "severity": "error"
+        },
+        {
+            "id": "packing_no_flash",
+            "condition": "packing AND NOT (flash_attention_2 OR flash_attention_3)",
+            "message": "Sequence Packing requires Flash Attention. Please enable Flash Attention 2 or 3.",
+            "severity": "error"
+        },
+        {
+            "id": "liger_packing",
+            "condition": "liger_kernel AND packing",
+            "message": "Liger Kernel may have issues with Sequence Packing. Use with caution.",
+            "severity": "warning"
+        },
+        {
+            "id": "fa3_non_hopper",
+            "condition": "flash_attention_3 AND NOT is_hopper",
+            "message": "Flash Attention 3 requires Hopper GPU (H100/H200). Your GPU does not support it.",
+            "severity": "error"
+        },
+        {
+            "id": "fa2_legacy_gpu",
+            "condition": "flash_attention_2 AND NOT is_ampere_or_newer",
+            "message": "Flash Attention 2 works best on Ampere+ GPUs. Performance may be limited.",
+            "severity": "warning"
+        }
+    ]
+    
+    return {
+        # GPU Info
+        "gpu_architecture": gpu_info["architecture"],
+        "gpu_name": gpu_info["gpu_name"],
+        "compute_capability": gpu_info["compute_capability"],
+        "is_hopper": gpu_info["is_hopper"],
+        "is_ampere_or_newer": gpu_info["is_ampere_or_newer"],
+        
+        # Attention
+        "attention_implementations": attention_implementations,
+        "default_attention": default_attention,
+        
+        # Distributed Training
+        "deepspeed_available": optimizations["deepspeed"],
+        "deepspeed_options": deepspeed_options,
+        "fsdp_available": optimizations["fsdp"],
+        "fsdp_options": fsdp_options,
+        
+        # Other Optimizations
+        "liger_kernel_available": optimizations["liger_kernel"],
+        "bitsandbytes_available": optimizations["bitsandbytes"],
+        "xformers_available": optimizations["xformers"],
+        
+        # Validation Rules
+        "incompatible_combinations": incompatible_combinations
+    }

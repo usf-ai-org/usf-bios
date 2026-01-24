@@ -30,7 +30,7 @@ FROM python:3.11-slim
 
 LABEL maintainer="US Inc <support@us.inc>"
 LABEL description="USF BIOS Web UI Test - Frontend + Backend Only"
-LABEL version="1.0.0-test"
+LABEL version="1.0.10-test"
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1

@@ -1,6 +1,10 @@
 # USF BIOS Backend - GPU-enabled Docker Image
 FROM nvidia/cuda:12.1-runtime-ubuntu22.04
 
+LABEL maintainer="US Inc <support@us.inc>"
+LABEL description="USF BIOS Backend API"
+LABEL version="1.0.10"
+
 # Prevent interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1

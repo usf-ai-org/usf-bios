@@ -225,6 +225,11 @@ interface TrainingConfig {
   adam_beta2: number
   gpu_ids: number[] | null
   num_gpus: number | null
+  // API Tokens for private models/datasets (optional)
+  hf_token: string | null
+  ms_token: string | null
+  // Model source for conditional token display
+  model_source?: 'huggingface' | 'modelscope' | 'local'
 }
 
 // Training method configuration
@@ -300,13 +305,82 @@ interface GPUInfo {
   utilization: number | null
 }
 
+// Training capabilities from backend (dynamic based on installed packages + GPU)
+interface TrainingCapabilities {
+  gpu_architecture: string
+  gpu_name: string | null
+  compute_capability: string | null
+  is_hopper: boolean
+  is_ampere_or_newer: boolean
+  attention_implementations: Array<{ value: string | null; label: string; desc: string; available: boolean }>
+  default_attention: string
+  deepspeed_available: boolean
+  deepspeed_options: Array<{ value: string | null; label: string; desc: string }>
+  fsdp_available: boolean
+  fsdp_options: Array<{ value: string | null; label: string; desc: string }>
+  liger_kernel_available: boolean
+  bitsandbytes_available: boolean
+  xformers_available: boolean
+  incompatible_combinations: Array<{ id: string; condition: string; message: string; severity: string }>
+}
+
+// Default capabilities (fallback if API fails)
+const DEFAULT_CAPABILITIES: TrainingCapabilities = {
+  gpu_architecture: 'unknown',
+  gpu_name: null,
+  compute_capability: null,
+  is_hopper: false,
+  is_ampere_or_newer: false,
+  attention_implementations: [
+    { value: null, label: 'Auto (Recommended)', desc: 'Automatically selects best available', available: true },
+    { value: 'flash_attention_2', label: 'Flash Attention 2', desc: 'Fast, memory efficient (Ampere+ GPU)', available: true },
+    { value: 'sdpa', label: 'SDPA (PyTorch)', desc: 'PyTorch native, good compatibility', available: true },
+    { value: 'eager', label: 'Eager', desc: 'Standard attention, most compatible', available: true },
+  ],
+  default_attention: 'sdpa',
+  deepspeed_available: true,
+  deepspeed_options: OPTIMIZATION_CONFIG.deepspeed.options,
+  fsdp_available: true,
+  fsdp_options: OPTIMIZATION_CONFIG.fsdp.options,
+  liger_kernel_available: false,
+  bitsandbytes_available: false,
+  xformers_available: false,
+  incompatible_combinations: []
+}
+
 interface Props {
   config: TrainingConfig
   setConfig: (fn: (prev: TrainingConfig) => TrainingConfig) => void
   availableGpus?: GPUInfo[]
+  modelContextLength?: number  // Dynamic context length from selected model
 }
 
-export default function TrainingSettingsStep({ config, setConfig, availableGpus = [] }: Props) {
+// Generate dynamic max_length options based on model context length
+function generateMaxLengthOptions(contextLength: number): number[] {
+  const options: number[] = []
+  const standardOptions = [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]
+  
+  for (const opt of standardOptions) {
+    if (opt <= contextLength) {
+      options.push(opt)
+    }
+  }
+  
+  // Always include at least some options
+  if (options.length === 0) {
+    options.push(512)
+  }
+  
+  // Add the context length itself if it's not already included and is a reasonable value
+  if (!options.includes(contextLength) && contextLength > 0) {
+    options.push(contextLength)
+    options.sort((a, b) => a - b)
+  }
+  
+  return options
+}
+
+export default function TrainingSettingsStep({ config, setConfig, availableGpus = [], modelContextLength = 4096 }: Props) {
   const typeConfig = PARAM_CONFIG[config.train_type] || {}
   const commonConfig = PARAM_CONFIG.common
   
@@ -314,10 +388,40 @@ export default function TrainingSettingsStep({ config, setConfig, availableGpus 
   const [isCustomModules, setIsCustomModules] = useState(false)
   const [customModulesInput, setCustomModulesInput] = useState('')
   
+  // Training capabilities from backend (dynamic based on GPU + installed packages)
+  const [capabilities, setCapabilities] = useState<TrainingCapabilities>(DEFAULT_CAPABILITIES)
+  const [capabilitiesLoaded, setCapabilitiesLoaded] = useState(false)
+  
   // GPU selection mode: 'auto' | 'select'
   const [gpuMode, setGpuMode] = useState<'auto' | 'select'>(
     config.gpu_ids !== null ? 'select' : 'auto'
   )
+  
+  // Fetch training capabilities from backend on mount
+  useEffect(() => {
+    const fetchCapabilities = async () => {
+      try {
+        const res = await fetch('/api/system/training-capabilities')
+        if (res.ok) {
+          const data = await res.json()
+          setCapabilities(data)
+        }
+      } catch (e) {
+        console.error('Failed to fetch training capabilities:', e)
+      } finally {
+        setCapabilitiesLoaded(true)
+      }
+    }
+    fetchCapabilities()
+  }, [])
+  
+  // Set default attention based on capabilities when loaded (only once)
+  useEffect(() => {
+    if (capabilitiesLoaded && !config.attn_impl && capabilities.default_attention) {
+      const defaultAttn = capabilities.default_attention === 'sdpa' ? null : capabilities.default_attention
+      setConfig(p => ({ ...p, attn_impl: defaultAttn }))
+    }
+  }, [capabilitiesLoaded, capabilities.default_attention])
   
   // Handle GPU checkbox toggle
   const handleGpuToggle = (gpuId: number) => {
@@ -438,7 +542,8 @@ export default function TrainingSettingsStep({ config, setConfig, availableGpus 
               <NumberInput value={config.beta ?? 0.1} onChange={(v) => setConfig(p => ({ ...p, beta: v }))}
                 min={0} max={10} step={0.01} label="Beta" tooltip="Controls deviation from reference model. Higher = less deviation." />
               <NumberInput value={config.max_completion_length} onChange={(v) => setConfig(p => ({ ...p, max_completion_length: v }))}
-                min={64} max={4096} step={64} label="Max Completion Length" tooltip="Maximum tokens to generate for GRPO/PPO/GKD." />
+                min={64} max={modelContextLength} step={64} label="Max Completion Length" 
+                tooltip={`Maximum tokens to generate for GRPO/PPO/GKD. Model supports up to ${modelContextLength.toLocaleString()} tokens.`} />
               
               {/* DPO specific */}
               {config.rlhf_type === 'dpo' && (
@@ -547,8 +652,8 @@ export default function TrainingSettingsStep({ config, setConfig, availableGpus 
             options={commonConfig.grad_accum.options} label={commonConfig.grad_accum.label}
             tooltip={commonConfig.grad_accum.tooltip} effect={commonConfig.grad_accum.effect} />
           <SelectInput value={config.max_length} onChange={(v) => setConfig(p => ({ ...p, max_length: v }))}
-            options={commonConfig.max_length.options} label={commonConfig.max_length.label}
-            tooltip={commonConfig.max_length.tooltip} effect={commonConfig.max_length.effect} />
+            options={generateMaxLengthOptions(modelContextLength)} label={commonConfig.max_length.label}
+            tooltip={`${commonConfig.max_length.tooltip} Model context: ${modelContextLength.toLocaleString()} tokens.`} effect={commonConfig.max_length.effect} />
           <NumberInput value={config.warmup_ratio} onChange={(v) => setConfig(p => ({ ...p, warmup_ratio: v }))}
             min={commonConfig.warmup_ratio.min} max={commonConfig.warmup_ratio.max} step={commonConfig.warmup_ratio.step}
             label={commonConfig.warmup_ratio.label} tooltip={commonConfig.warmup_ratio.tooltip} effect={commonConfig.warmup_ratio.effect} />
@@ -655,15 +760,36 @@ export default function TrainingSettingsStep({ config, setConfig, availableGpus 
           Performance Optimization
         </h4>
         
+        {/* GPU Architecture Info Banner */}
+        {capabilitiesLoaded && capabilities.gpu_name && (
+          <div className="col-span-full mb-2 p-3 bg-slate-100 rounded-lg border border-slate-200">
+            <div className="flex items-center gap-2 text-sm">
+              <span className="font-medium text-slate-700">Detected GPU:</span>
+              <span className="text-slate-900">{capabilities.gpu_name}</span>
+              <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                capabilities.is_hopper ? 'bg-purple-100 text-purple-700' : 
+                capabilities.is_ampere_or_newer ? 'bg-blue-100 text-blue-700' : 'bg-slate-200 text-slate-600'
+              }`}>
+                {capabilities.gpu_architecture.toUpperCase()}
+              </span>
+              {capabilities.is_hopper && (
+                <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded text-xs font-medium">
+                  FA3 Supported
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {/* Attention Implementation */}
+          {/* Attention Implementation - DYNAMIC based on capabilities */}
           <div>
             <div className="flex items-center gap-1 mb-2">
               <label className="text-sm font-medium text-slate-700">{OPTIMIZATION_CONFIG.attn_impl.label}</label>
               <Tooltip text={OPTIMIZATION_CONFIG.attn_impl.tooltip} />
             </div>
             <div className="space-y-2">
-              {OPTIMIZATION_CONFIG.attn_impl.options.map((opt) => (
+              {capabilities.attention_implementations.map((opt) => (
                 <label key={opt.value ?? 'auto'} 
                   className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
                     config.attn_impl === opt.value 
@@ -683,14 +809,14 @@ export default function TrainingSettingsStep({ config, setConfig, availableGpus 
             </div>
           </div>
 
-          {/* DeepSpeed / FSDP */}
+          {/* DeepSpeed - DYNAMIC based on capabilities */}
           <div>
             <div className="flex items-center gap-1 mb-2">
               <label className="text-sm font-medium text-slate-700">{OPTIMIZATION_CONFIG.deepspeed.label}</label>
               <Tooltip text={OPTIMIZATION_CONFIG.deepspeed.tooltip} />
             </div>
             <div className="space-y-2">
-              {OPTIMIZATION_CONFIG.deepspeed.options.map((opt) => (
+              {capabilities.deepspeed_options.map((opt) => (
                 <label key={opt.value ?? 'disabled'} 
                   className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
                     config.deepspeed === opt.value 
@@ -714,14 +840,14 @@ export default function TrainingSettingsStep({ config, setConfig, availableGpus 
             )}
           </div>
 
-          {/* FSDP Selection */}
+          {/* FSDP Selection - DYNAMIC based on capabilities */}
           <div>
             <div className="flex items-center gap-1 mb-2">
               <label className="text-sm font-medium text-slate-700">{OPTIMIZATION_CONFIG.fsdp.label}</label>
               <Tooltip text={OPTIMIZATION_CONFIG.fsdp.tooltip} />
             </div>
             <div className="space-y-2">
-              {OPTIMIZATION_CONFIG.fsdp.options.map((opt) => (
+              {capabilities.fsdp_options.map((opt) => (
                 <label key={opt.value ?? 'disabled'} 
                   className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
                     config.fsdp === opt.value 
@@ -768,42 +894,56 @@ export default function TrainingSettingsStep({ config, setConfig, availableGpus 
             <Tooltip text="Additional optimizations for faster training and better memory efficiency." />
           </div>
           <div className="space-y-3">
-            <label className={`flex items-center gap-3 cursor-pointer ${config.packing ? 'opacity-50' : ''}`}>
-              <input type="checkbox" 
-                checked={config.use_liger_kernel}
-                disabled={config.packing}
-                onChange={(e) => setConfig(p => ({ ...p, use_liger_kernel: e.target.checked }))}
-                className="w-5 h-5 text-emerald-600 rounded focus:ring-emerald-500" />
-              <div>
-                <span className="font-medium text-sm text-slate-700">Liger Kernel</span>
-                <p className="text-xs text-slate-500">Triton-based optimizations for faster forward/backward pass (up to 20% speedup).</p>
-                {config.packing && <p className="text-xs text-amber-600">⚠️ Disabled: Incompatible with Packing</p>}
-              </div>
-            </label>
-            <label className="flex items-center gap-3 cursor-pointer">
-              <input type="checkbox" 
-                checked={config.packing}
-                onChange={(e) => {
-                  const newPacking = e.target.checked
-                  setConfig(p => ({ 
-                    ...p, 
-                    packing: newPacking,
-                    // Auto-set Flash Attention if packing is enabled and no flash attn selected
-                    attn_impl: newPacking && !['flash_attn', 'flash_attention_2', 'flash_attention_3'].includes(p.attn_impl || '') 
-                      ? 'flash_attention_2' : p.attn_impl,
-                    // Disable Liger kernel if packing is enabled (incompatible)
-                    use_liger_kernel: newPacking ? false : p.use_liger_kernel
-                  }))
-                }}
-                className="w-5 h-5 text-emerald-600 rounded focus:ring-emerald-500" />
-              <div>
-                <span className="font-medium text-sm text-slate-700">Sequence Packing</span>
-                <p className="text-xs text-slate-500">Combine multiple short sequences to reduce padding waste. Requires Flash Attention.</p>
-                {config.packing && !['flash_attn', 'flash_attention_2', 'flash_attention_3'].includes(config.attn_impl || '') && (
-                  <p className="text-xs text-amber-600">⚠️ Flash Attention will be auto-selected</p>
-                )}
-              </div>
-            </label>
+            {/* Liger Kernel - only show if available */}
+            {capabilities.liger_kernel_available && (
+              <label className={`flex items-center gap-3 cursor-pointer ${config.packing ? 'opacity-50' : ''}`}>
+                <input type="checkbox" 
+                  checked={config.use_liger_kernel}
+                  disabled={config.packing}
+                  onChange={(e) => setConfig(p => ({ ...p, use_liger_kernel: e.target.checked }))}
+                  className="w-5 h-5 text-emerald-600 rounded focus:ring-emerald-500" />
+                <div>
+                  <span className="font-medium text-sm text-slate-700">Liger Kernel</span>
+                  <p className="text-xs text-slate-500">Triton-based optimizations for faster forward/backward pass (up to 20% speedup).</p>
+                  {config.packing && <p className="text-xs text-amber-600">⚠️ Disabled: Incompatible with Packing</p>}
+                </div>
+              </label>
+            )}
+            {/* Sequence Packing - only show if Flash Attention is available */}
+            {(capabilities.attention_implementations.some(a => a.value === 'flash_attention_2' || a.value === 'flash_attention_3')) && (
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input type="checkbox" 
+                  checked={config.packing}
+                  onChange={(e) => {
+                    const newPacking = e.target.checked
+                    // Find best available flash attention
+                    const bestFA = capabilities.attention_implementations.find(a => a.value === 'flash_attention_3')?.value 
+                      || capabilities.attention_implementations.find(a => a.value === 'flash_attention_2')?.value
+                      || 'flash_attention_2'
+                    setConfig(p => ({ 
+                      ...p, 
+                      packing: newPacking,
+                      // Auto-set Flash Attention if packing is enabled and no flash attn selected
+                      attn_impl: newPacking && !['flash_attn', 'flash_attention_2', 'flash_attention_3'].includes(p.attn_impl || '') 
+                        ? bestFA : p.attn_impl,
+                      // Disable Liger kernel if packing is enabled (incompatible)
+                      use_liger_kernel: newPacking ? false : p.use_liger_kernel
+                    }))
+                  }}
+                  className="w-5 h-5 text-emerald-600 rounded focus:ring-emerald-500" />
+                <div>
+                  <span className="font-medium text-sm text-slate-700">Sequence Packing</span>
+                  <p className="text-xs text-slate-500">Combine multiple short sequences to reduce padding waste. Requires Flash Attention.</p>
+                  {config.packing && !['flash_attn', 'flash_attention_2', 'flash_attention_3'].includes(config.attn_impl || '') && (
+                    <p className="text-xs text-amber-600">⚠️ Flash Attention will be auto-selected</p>
+                  )}
+                </div>
+              </label>
+            )}
+            {/* Show message if no advanced optimizations available */}
+            {!capabilities.liger_kernel_available && !capabilities.attention_implementations.some(a => a.value === 'flash_attention_2' || a.value === 'flash_attention_3') && (
+              <p className="text-sm text-slate-500 italic">No advanced optimizations available. Install Flash Attention or Liger Kernel for additional options.</p>
+            )}
           </div>
         </div>
 
@@ -915,6 +1055,7 @@ export default function TrainingSettingsStep({ config, setConfig, availableGpus 
           
           <p className="text-xs text-slate-500 mt-2">💡 Multi-GPU training is enabled automatically when more than 1 GPU is selected.</p>
         </div>
+
       </div>
     </div>
   )

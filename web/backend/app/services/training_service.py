@@ -182,6 +182,16 @@ class TrainingService:
         if config.early_stop_interval:
             cmd.extend(["--early_stop_interval", str(config.early_stop_interval)])
         
+        # HuggingFace source flag - required when model/dataset is from HuggingFace
+        model_source = getattr(config, 'model_source', None)
+        if model_source:
+            source_value = model_source.value if hasattr(model_source, 'value') else str(model_source)
+            if source_value == 'huggingface':
+                cmd.extend(["--use_hf", "true"])
+        
+        # Note: API tokens (hf_token, ms_token) are passed via environment variables
+        # (HF_TOKEN, MODELSCOPE_API_TOKEN) for security - see _run_job method
+        
         # Evaluation
         if config.eval_strategy:
             cmd.extend(["--eval_strategy", config.eval_strategy])
@@ -410,6 +420,54 @@ class TrainingService:
                     if not os.path.exists(ds_path):
                         validation_errors.append(f"Dataset path does not exist: {ds_path}")
             
+            # ============================================================
+            # OPTIMIZATION COMPATIBILITY VALIDATION
+            # Check for incompatible combinations before training starts
+            # ============================================================
+            config = job.config
+            
+            # DeepSpeed + FSDP conflict
+            if getattr(config, 'deepspeed', None) and getattr(config, 'fsdp', None):
+                validation_errors.append(
+                    "DeepSpeed and FSDP cannot be used together. "
+                    "They are both distributed training frameworks. Please disable one."
+                )
+            
+            # Packing requires Flash Attention
+            if getattr(config, 'packing', False):
+                attn_impl = getattr(config, 'attn_impl', None)
+                flash_attn_values = ['flash_attn', 'flash_attention_2', 'flash_attention_3']
+                if attn_impl and attn_impl not in flash_attn_values:
+                    validation_errors.append(
+                        f"Sequence Packing requires Flash Attention but '{attn_impl}' is selected. "
+                        "Please enable Flash Attention 2 or 3, or disable Packing."
+                    )
+            
+            # Flash Attention 3 requires Hopper GPU
+            attn_impl = getattr(config, 'attn_impl', None)
+            if attn_impl == 'flash_attention_3':
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        props = torch.cuda.get_device_properties(0)
+                        if props.major < 9:  # Hopper is sm_90 (major=9)
+                            validation_errors.append(
+                                f"Flash Attention 3 requires Hopper GPU (H100/H200) but detected "
+                                f"{props.name} (compute capability {props.major}.{props.minor}). "
+                                "Please use Flash Attention 2 or SDPA instead."
+                            )
+                except Exception as e:
+                    _debug_log(job_id, f"GPU detection error: {e}", "WARN")
+            
+            # Liger Kernel + Packing warning (not error, just log)
+            if getattr(config, 'use_liger_kernel', False) and getattr(config, 'packing', False):
+                sanitized_log_service.create_terminal_log(
+                    job_id, 
+                    "Warning: Liger Kernel may have issues with Sequence Packing. Proceeding anyway.", 
+                    "WARN"
+                )
+                await ws_manager.send_log(job_id, "Warning: Liger Kernel + Packing combination may be unstable")
+            
             # Report validation errors
             if validation_errors:
                 error_msg = "Pre-training validation failed:\n" + "\n".join(f"  - {e}" for e in validation_errors)
@@ -500,6 +558,12 @@ class TrainingService:
                 "DS_BUILD_CUTLASS_OPS": "0",
                 "DS_BUILD_RAGGED_DEVICE_OPS": "0",
             }
+            
+            # API Tokens - pass via environment variable for security (not visible in process list)
+            if hasattr(job.config, 'hf_token') and job.config.hf_token:
+                training_env["HF_TOKEN"] = job.config.hf_token
+            if hasattr(job.config, 'ms_token') and job.config.ms_token:
+                training_env["MODELSCOPE_API_TOKEN"] = job.config.ms_token
             
             # ============================================================
             # GPU SELECTION: Configure which GPUs to use

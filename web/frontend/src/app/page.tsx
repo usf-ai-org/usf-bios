@@ -105,6 +105,9 @@ interface TrainingConfig {
   gpu_ids: number[] | null
   num_gpus: number | null
   early_stop_interval: number | null
+  // API Tokens for private models/datasets (optional)
+  hf_token: string | null  // HuggingFace token for private models/datasets
+  ms_token: string | null  // ModelScope token for private models/datasets
 }
 
 interface JobStatus {
@@ -307,6 +310,9 @@ export default function Home() {
     gpu_ids: null,
     num_gpus: null,
     early_stop_interval: null,
+    // API Tokens for private models/datasets (optional)
+    hf_token: null,
+    ms_token: null,
   })
 
   // Dataset state
@@ -419,6 +425,25 @@ export default function Home() {
     user_can_customize: false,
     user_can_add_path: false
   })
+  
+  // Model context length - fetched dynamically based on selected model
+  // This is used for dynamic max_length and max_completion_length ranges
+  const [modelContextLength, setModelContextLength] = useState<number>(4096)
+  const [modelInfo, setModelInfo] = useState<{
+    model_type: string | null
+    architecture: string | null
+    isLoading: boolean
+    error: string | null
+  }>({ model_type: null, architecture: null, isLoading: false, error: null })
+  
+  // System API tokens status - check if HF_TOKEN/MS_TOKEN are configured on server
+  const [systemTokens, setSystemTokens] = useState<{
+    hf_token_available: boolean
+    ms_token_available: boolean
+    hf_token_masked: string | null
+    ms_token_masked: string | null
+  }>({ hf_token_available: false, ms_token_available: false, hf_token_masked: null, ms_token_masked: null })
+  const [useSystemToken, setUseSystemToken] = useState(false)
   
   // Derived values from locked models (computed, not hardcoded)
   const IS_MODEL_LOCKED = lockedModels.length > 0
@@ -568,6 +593,38 @@ export default function Home() {
       console.error('Failed to fetch available GPUs:', e)
     }
   }, [])
+  
+  // Fetch model info to get context length for dynamic UI ranges
+  const fetchModelInfo = useCallback(async (modelPath: string, source: string) => {
+    if (!modelPath) return
+    
+    setModelInfo(prev => ({ ...prev, isLoading: true, error: null }))
+    
+    try {
+      const res = await fetch(`/api/models/info?model_path=${encodeURIComponent(modelPath)}&source=${source}`)
+      if (res.ok) {
+        const data = await res.json()
+        if (data.context_length && data.context_length > 0) {
+          setModelContextLength(data.context_length)
+        } else {
+          setModelContextLength(4096) // Default fallback
+        }
+        setModelInfo({
+          model_type: data.model_type || null,
+          architecture: data.architecture || null,
+          isLoading: false,
+          error: null
+        })
+      } else {
+        setModelInfo(prev => ({ ...prev, isLoading: false, error: 'Failed to fetch model info' }))
+        setModelContextLength(4096)
+      }
+    } catch (e) {
+      console.error('Failed to fetch model info:', e)
+      setModelContextLength(4096) // Default fallback
+      setModelInfo(prev => ({ ...prev, isLoading: false, error: 'Failed to fetch model info' }))
+    }
+  }, [])
 
   // Fetch output path configuration from backend API
   const fetchOutputPathConfig = useCallback(async () => {
@@ -579,6 +636,19 @@ export default function Home() {
       }
     } catch (e) {
       console.error('Failed to fetch output path config:', e)
+    }
+  }, [])
+  
+  // Fetch system API token status (check if HF_TOKEN/MS_TOKEN are configured)
+  const fetchSystemTokens = useCallback(async () => {
+    try {
+      const res = await fetch('/api/system/api-tokens')
+      if (res.ok) {
+        const data = await res.json()
+        setSystemTokens(data)
+      }
+    } catch (e) {
+      console.error('Failed to fetch system token status:', e)
     }
   }, [])
 
@@ -725,9 +795,17 @@ export default function Home() {
     fetchLockedModels()  // CRITICAL: Fetch locked models from backend API
     fetchAvailableGpus()  // Fetch available GPUs for dynamic selection
     fetchOutputPathConfig()  // Fetch output path configuration
+    fetchSystemTokens()  // Check if system has HF_TOKEN/MS_TOKEN configured
     const interval = setInterval(fetchSystemStatus, 10000) // Check every 10 seconds
     return () => clearInterval(interval)
-  }, [fetchSystemStatus, fetchSystemCapabilities, fetchLockedModels, fetchAvailableGpus, fetchOutputPathConfig, systemExpired])
+  }, [fetchSystemStatus, fetchSystemCapabilities, fetchLockedModels, fetchAvailableGpus, fetchOutputPathConfig, fetchSystemTokens, systemExpired])
+  
+  // Fetch model info when model_path changes to get dynamic context length
+  useEffect(() => {
+    if (config.model_path) {
+      fetchModelInfo(config.model_path, config.model_source)
+    }
+  }, [config.model_path, config.model_source, fetchModelInfo])
 
   // Poll system metrics during training or inference
   useEffect(() => {
@@ -3083,7 +3161,109 @@ export default function Home() {
                                 placeholder={getPlaceholder()}
                                 className="w-full px-4 py-3 border border-slate-300 rounded-lg text-slate-900 placeholder-slate-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                               />
+                              
+                              {/* Model Info Display - shows after model path is entered */}
+                              {config.model_path && (
+                                <div className="mt-2">
+                                  {modelInfo.isLoading ? (
+                                    <div className="flex items-center gap-2 text-sm text-slate-500">
+                                      <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                                      <span>Loading model info...</span>
+                                    </div>
+                                  ) : modelInfo.error ? (
+                                    <p className="text-sm text-amber-600">⚠️ Could not fetch model info. Using defaults.</p>
+                                  ) : (modelInfo.model_type || modelContextLength !== 4096) ? (
+                                    <div className="flex flex-wrap gap-2">
+                                      {modelInfo.model_type && (
+                                        <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full">
+                                          {modelInfo.model_type}
+                                        </span>
+                                      )}
+                                      <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full">
+                                        Context: {modelContextLength.toLocaleString()} tokens
+                                      </span>
+                                      {modelInfo.architecture && (
+                                        <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded-full">
+                                          {modelInfo.architecture.replace('ForCausalLM', '')}
+                                        </span>
+                                      )}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              )}
                             </div>
+                            
+                            {/* API Token for private models - shown only for HuggingFace/ModelScope */}
+                            {(config.model_source === 'huggingface' || config.model_source === 'modelscope') && (
+                              <div className="mt-4 p-4 bg-slate-50 rounded-lg border border-slate-200">
+                                <div className="flex items-center gap-2 mb-2">
+                                  <span className="text-sm font-medium text-slate-700">
+                                    {config.model_source === 'huggingface' ? 'HuggingFace' : 'ModelScope'} Token
+                                  </span>
+                                  <span className="text-xs bg-slate-200 text-slate-600 px-2 py-0.5 rounded">Optional</span>
+                                </div>
+                                
+                                {/* Show "Use system token" option if available */}
+                                {((config.model_source === 'huggingface' && systemTokens.hf_token_available) ||
+                                  (config.model_source === 'modelscope' && systemTokens.ms_token_available)) && (
+                                  <label className="flex items-center gap-2 mb-3 p-2 bg-green-50 rounded-lg border border-green-200 cursor-pointer">
+                                    <input 
+                                      type="checkbox"
+                                      checked={useSystemToken}
+                                      onChange={(e) => {
+                                        setUseSystemToken(e.target.checked);
+                                        if (e.target.checked) {
+                                          // Clear manual token when using system token
+                                          if (config.model_source === 'huggingface') {
+                                            setConfig({ ...config, hf_token: null });
+                                          } else {
+                                            setConfig({ ...config, ms_token: null });
+                                          }
+                                        }
+                                      }}
+                                      className="rounded text-green-600 focus:ring-green-500"
+                                    />
+                                    <span className="text-sm text-green-700">
+                                      Use system token ({config.model_source === 'huggingface' ? systemTokens.hf_token_masked : systemTokens.ms_token_masked})
+                                    </span>
+                                  </label>
+                                )}
+                                
+                                {!useSystemToken && (
+                                  <>
+                                    <input 
+                                      type="password"
+                                      value={config.model_source === 'huggingface' ? (config.hf_token || '') : (config.ms_token || '')}
+                                      onChange={(e) => {
+                                        if (config.model_source === 'huggingface') {
+                                          setConfig({ ...config, hf_token: e.target.value || null });
+                                        } else {
+                                          setConfig({ ...config, ms_token: e.target.value || null });
+                                        }
+                                      }}
+                                      placeholder={config.model_source === 'huggingface' ? 'hf_xxxxxxxxxxxxxxxxxxxx' : 'Your ModelScope token'}
+                                      className={`w-full px-3 py-2 border rounded-lg text-sm font-mono focus:ring-2 focus:ring-blue-500 ${
+                                        config.model_source === 'huggingface' && config.hf_token && !config.hf_token.startsWith('hf_')
+                                          ? 'border-amber-400 bg-amber-50'
+                                          : 'border-slate-300'
+                                      }`}
+                                    />
+                                    {/* Token format validation */}
+                                    {config.model_source === 'huggingface' && config.hf_token && !config.hf_token.startsWith('hf_') && (
+                                      <p className="text-xs text-amber-600 mt-1">⚠️ HuggingFace tokens typically start with "hf_"</p>
+                                    )}
+                                    <p className="text-xs text-slate-500 mt-2">
+                                      🔒 Only needed for private models. Get your token from{' '}
+                                      {config.model_source === 'huggingface' ? (
+                                        <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">huggingface.co/settings/tokens</a>
+                                      ) : (
+                                        <a href="https://modelscope.cn/my/myaccesstoken" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">modelscope.cn/my/myaccesstoken</a>
+                                      )}
+                                    </p>
+                                  </>
+                                )}
+                              </div>
+                            )}
                           </>
                         );
                       })()}
@@ -3141,6 +3321,7 @@ export default function Home() {
                     config={config} 
                     setConfig={(fn) => setConfig(prev => ({ ...prev, ...fn(prev) }))}
                     availableGpus={availableGpus}
+                    modelContextLength={modelContextLength}
                   />
                 </div>
               )}
@@ -3387,9 +3568,9 @@ export default function Home() {
                 <div className="space-y-3">
                   <div>
                     <div className="flex justify-between text-xs text-slate-500 mb-1">
-                      <span>Max Tokens</span><span>{inferenceSettings.max_new_tokens}</span>
+                      <span>Max Tokens</span><span>{inferenceSettings.max_new_tokens} / {modelContextLength.toLocaleString()}</span>
                     </div>
-                    <input type="range" min="64" max="2048" value={inferenceSettings.max_new_tokens}
+                    <input type="range" min="64" max={modelContextLength} value={inferenceSettings.max_new_tokens}
                       onChange={(e) => setInferenceSettings({ ...inferenceSettings, max_new_tokens: parseInt(e.target.value) })}
                       className="w-full accent-blue-500" />
                   </div>
