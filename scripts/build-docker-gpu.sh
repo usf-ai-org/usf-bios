@@ -5,10 +5,18 @@
 # ============================================================================
 #
 # USAGE:
-#   ./scripts/build-docker-gpu.sh [VERSION]
+#   ./scripts/build-docker-gpu.sh [OPTIONS] [VERSION]
 #
-# EXAMPLE:
-#   ./scripts/build-docker-gpu.sh 2.0.0
+# OPTIONS:
+#   --no-cache    Disable Docker layer caching (fresh build)
+#   --no-push     Build only, do not push to Docker Hub
+#   --help        Show this help message
+#
+# EXAMPLES:
+#   ./scripts/build-docker-gpu.sh                    # Build with cache, push
+#   ./scripts/build-docker-gpu.sh --no-cache         # Fresh build, push
+#   ./scripts/build-docker-gpu.sh --no-push          # Build with cache, no push
+#   ./scripts/build-docker-gpu.sh --no-cache --no-push 2.0.11  # Fresh build, specific version, no push
 #
 # REQUIREMENTS:
 #   - NVIDIA GPU (H200, H100, A100, etc.)
@@ -22,8 +30,8 @@
 #   - GitHub Actions (no GPU): 6+ hours (timeout)
 #
 # CACHING:
-#   Uses BuildKit cache for fast rebuilds. Cache is stored locally.
-#   Only changed layers are rebuilt.
+#   Default: ON (uses BuildKit cache for fast rebuilds)
+#   Use --no-cache to force a fresh build when needed
 # ============================================================================
 
 set -e
@@ -34,24 +42,81 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# Default options
+NO_CACHE=false
+NO_PUSH=false
+VERSION=""
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --no-cache)
+            NO_CACHE=true
+            shift
+            ;;
+        --no-push)
+            NO_PUSH=true
+            shift
+            ;;
+        --help|-h)
+            echo "Usage: $0 [OPTIONS] [VERSION]"
+            echo ""
+            echo "OPTIONS:"
+            echo "  --no-cache    Disable Docker layer caching (fresh build)"
+            echo "  --no-push     Build only, do not push to Docker Hub"
+            echo "  --help        Show this help message"
+            echo ""
+            echo "EXAMPLES:"
+            echo "  $0                           # Build with cache, push"
+            echo "  $0 --no-cache                # Fresh build, push"
+            echo "  $0 --no-push                 # Build with cache, no push"
+            echo "  $0 --no-cache --no-push      # Fresh build, no push"
+            echo "  $0 2.0.11                    # Specific version"
+            exit 0
+            ;;
+        -*)
+            echo "Unknown option: $1"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+        *)
+            VERSION="$1"
+            shift
+            ;;
+    esac
+done
+
 # Navigate to project root first (needed for version extraction)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_ROOT"
 
-# Extract version dynamically from usf_bios/version.py
-DYNAMIC_VERSION=$(python3 -c "exec(open('usf_bios/version.py').read()); print(__version__)" 2>/dev/null || echo "2.0.11")
-VERSION="${1:-$DYNAMIC_VERSION}"
+# Extract version dynamically from usf_bios/version.py if not provided
+if [ -z "$VERSION" ]; then
+    DYNAMIC_VERSION=$(python3 -c "exec(open('usf_bios/version.py').read()); print(__version__)" 2>/dev/null || echo "2.0.11")
+    VERSION="$DYNAMIC_VERSION"
+fi
 
 # Docker Hub image name
 IMAGE_NAME="arpitsh018/usf-bios"
 DOCKERFILE="web/Dockerfile.gpu"
+
+# Build cache flag
+if [ "$NO_CACHE" = true ]; then
+    CACHE_FLAG="--no-cache"
+    CACHE_STATUS="DISABLED (fresh build)"
+else
+    CACHE_FLAG=""
+    CACHE_STATUS="ENABLED (fast rebuild)"
+fi
 
 echo -e "${GREEN}"
 echo "============================================================================"
 echo "  USF BIOS - GPU Docker Build"
 echo "  Version: ${VERSION}"
 echo "  Image: ${IMAGE_NAME}:${VERSION}"
+echo "  Cache: ${CACHE_STATUS}"
+echo "  Push: $([ "$NO_PUSH" = true ] && echo 'DISABLED' || echo 'ENABLED')"
 echo "============================================================================"
 echo -e "${NC}"
 
@@ -105,6 +170,7 @@ echo -e "${GREEN}✓ GitHub token provided${NC}"
 # Use regular docker build (has access to host GPU for compilation)
 # Note: buildx with docker-container driver does NOT have GPU access
 docker build \
+    ${CACHE_FLAG} \
     --file "${DOCKERFILE}" \
     --tag "${IMAGE_NAME}:${VERSION}" \
     --tag "${IMAGE_NAME}:latest" \
@@ -197,20 +263,36 @@ ls -la "${VERSION_DIR}"/*v${VERSION}* 2>/dev/null | awk '{print "    " $NF}'
 echo -e "${GREEN}============================================================================${NC}"
 echo ""
 
-echo ""
-echo -e "${YELLOW}[8/8] Pushing to Docker Hub...${NC}"
-echo ""
+# Push to Docker Hub (unless --no-push specified)
+if [ "$NO_PUSH" = true ]; then
+    echo ""
+    echo -e "${YELLOW}[8/8] Skipping push (--no-push specified)${NC}"
+    echo ""
+    echo -e "${GREEN}============================================================================${NC}"
+    echo -e "${GREEN}  ✓ BUILD COMPLETE (not pushed)${NC}"
+    echo -e "${GREEN}  Image: ${IMAGE_NAME}:${VERSION}${NC}"
+    echo -e "${GREEN}  Image: ${IMAGE_NAME}:latest${NC}"
+    echo -e "${GREEN}============================================================================${NC}"
+    echo ""
+    echo -e "${YELLOW}To push manually:${NC}"
+    echo "  docker push ${IMAGE_NAME}:${VERSION}"
+    echo "  docker push ${IMAGE_NAME}:latest"
+else
+    echo ""
+    echo -e "${YELLOW}[8/8] Pushing to Docker Hub...${NC}"
+    echo ""
 
-# Push to Docker Hub
-docker push ${IMAGE_NAME}:${VERSION}
-docker push ${IMAGE_NAME}:latest
+    # Push to Docker Hub
+    docker push ${IMAGE_NAME}:${VERSION}
+    docker push ${IMAGE_NAME}:latest
 
-echo ""
-echo -e "${GREEN}============================================================================${NC}"
-echo -e "${GREEN}  ✓ PUSH COMPLETE${NC}"
-echo -e "${GREEN}  Image: ${IMAGE_NAME}:${VERSION}${NC}"
-echo -e "${GREEN}  Image: ${IMAGE_NAME}:latest${NC}"
-echo -e "${GREEN}============================================================================${NC}"
+    echo ""
+    echo -e "${GREEN}============================================================================${NC}"
+    echo -e "${GREEN}  ✓ PUSH COMPLETE${NC}"
+    echo -e "${GREEN}  Image: ${IMAGE_NAME}:${VERSION}${NC}"
+    echo -e "${GREEN}  Image: ${IMAGE_NAME}:latest${NC}"
+    echo -e "${GREEN}============================================================================${NC}"
+fi
 echo ""
 echo -e "${GREEN}  Version reports saved to:${NC}"
 echo "    ${VERSION_DIR}/version_report_v${VERSION}.json"

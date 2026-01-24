@@ -178,18 +178,32 @@ The `./scripts/build-docker-gpu.sh` script:
 ### Script Options
 
 ```bash
-# Build only (no push)
+# Default: Build with cache, push to Docker Hub
 ./scripts/build-docker-gpu.sh
 
-# Build and push
-./scripts/build-docker-gpu.sh --push
+# Build without cache (fresh build) - use when you need to force rebuild all layers
+./scripts/build-docker-gpu.sh --no-cache
+
+# Build only, do not push to Docker Hub
+./scripts/build-docker-gpu.sh --no-push
 
 # Build specific version
 ./scripts/build-docker-gpu.sh 2.0.11
 
-# Build and push specific version
-./scripts/build-docker-gpu.sh 2.0.11 --push
+# Fresh build, no push, specific version
+./scripts/build-docker-gpu.sh --no-cache --no-push 2.0.11
+
+# Show help
+./scripts/build-docker-gpu.sh --help
 ```
+
+### When to Use `--no-cache`
+
+Use `--no-cache` when:
+- Package versions need updating (e.g., new transformers release)
+- Build is failing due to corrupted cache
+- You've modified Dockerfile and cache isn't invalidating
+- Testing a completely fresh build
 
 ---
 
