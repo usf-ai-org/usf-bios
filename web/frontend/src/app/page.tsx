@@ -13,7 +13,7 @@ import {
 } from 'lucide-react'
 import TrainingSettingsStep from '@/components/TrainingSettings'
 import DatasetConfig from '@/components/DatasetConfig'
-import AlertModal, { AlertType } from '@/components/AlertModal'
+import AlertModal, { AlertType, ConfirmModal } from '@/components/AlertModal'
 
 // ============================================================
 // LOCKED MODEL CONFIGURATION
@@ -338,6 +338,17 @@ export default function Home() {
     type: AlertType
   }>({ isOpen: false, message: '', type: 'info' })
   
+  // Confirm modal state (replaces browser confirm)
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean
+    title: string
+    message: string
+    type: 'danger' | 'warning' | 'info'
+    onConfirm: () => void
+    confirmText?: string
+    isLoading?: boolean
+  }>({ isOpen: false, title: '', message: '', type: 'warning', onConfirm: () => {} })
+  
   // Helper function to show custom alert (replaces browser alert)
   const showAlert = (message: string, type: AlertType = 'error', title?: string) => {
     setAlertModal({ isOpen: true, message, type, title })
@@ -345,6 +356,35 @@ export default function Home() {
   
   const closeAlert = () => {
     setAlertModal(prev => ({ ...prev, isOpen: false }))
+  }
+  
+  // Helper function to show custom confirm dialog (replaces browser confirm)
+  const showConfirm = (options: {
+    title: string
+    message: string
+    type?: 'danger' | 'warning' | 'info'
+    onConfirm: () => void
+    confirmText?: string
+  }) => {
+    setConfirmModal({
+      isOpen: true,
+      title: options.title,
+      message: options.message,
+      type: options.type || 'warning',
+      onConfirm: options.onConfirm,
+      confirmText: options.confirmText,
+      isLoading: false
+    })
+  }
+  
+  const closeConfirm = () => {
+    setConfirmModal(prev => ({ ...prev, isOpen: false, isLoading: false }))
+  }
+  
+  // Helper to extract clean error message
+  const getErrorMessage = (error: unknown): string => {
+    if (error instanceof Error) return error.message
+    return String(error)
   }
   
   // Training name state (optional - auto-generated if empty)
@@ -1569,7 +1609,7 @@ export default function Home() {
         showAlert(data.detail || 'Delete failed', 'error', 'Delete Failed')
       }
     } catch (e) {
-      showAlert(`Delete failed: ${e}`, 'error', 'Delete Failed')
+      showAlert(`Delete failed: ${getErrorMessage(e)}`, 'error', 'Delete Failed')
     } finally {
       setIsDeleting(false)
     }
@@ -1635,15 +1675,27 @@ export default function Home() {
       setTrainingName('') // Clear the input after successful creation
       setLoadingMessage('') // Clear loading message
     } catch (e) {
-      showAlert(`Failed to start training: ${e}`, 'error', 'Training Failed')
+      showAlert(`Failed to start training: ${getErrorMessage(e)}`, 'error', 'Training Failed')
     } finally {
       setIsStartingTraining(false)
       setLoadingMessage('')
     }
   }
 
-  const stopTraining = async () => {
+  // Show confirmation before stopping training
+  const confirmStopTraining = () => {
+    showConfirm({
+      title: 'Stop Training',
+      message: 'Are you sure you want to stop the current training? This action cannot be undone and all progress will be lost.',
+      type: 'danger',
+      confirmText: 'Stop Training',
+      onConfirm: executeStopTraining
+    })
+  }
+  
+  const executeStopTraining = async () => {
     if (!jobStatus?.job_id) return
+    setConfirmModal(prev => ({ ...prev, isLoading: true }))
     try {
       await fetch(`/api/jobs/${jobStatus.job_id}/stop`, { method: 'POST' })
       setIsTraining(false)
@@ -1652,8 +1704,10 @@ export default function Home() {
       setJobStatus(null)
       setTrainingLogs([])
       setTrainingMetrics([])
+      closeConfirm()
     } catch (e) {
-      showAlert(`Failed to stop: ${e}`, 'error', 'Stop Failed')
+      closeConfirm()
+      showAlert(`Failed to stop training: ${getErrorMessage(e)}`, 'error', 'Stop Failed')
     }
   }
 
@@ -1738,7 +1792,7 @@ export default function Home() {
         showAlert(`Failed to load model: ${data.error || 'Unknown error'}`, 'error', 'Model Load Failed')
       }
     } catch (e) {
-      showAlert(`Failed to load model: ${e}`, 'error', 'Model Load Failed')
+      showAlert(`Failed to load model: ${getErrorMessage(e)}`, 'error', 'Model Load Failed')
     } finally {
       setIsModelLoading(false)
       setLoadingMessage('')
@@ -1818,7 +1872,7 @@ export default function Home() {
       
     } catch (e) {
       console.error('Error loading model:', e)
-      showAlert(`Failed to load model: ${e}`, 'error', 'Model Load Failed')
+      showAlert(`Failed to load model: ${getErrorMessage(e)}`, 'error', 'Model Load Failed')
       return false
     } finally {
       setIsModelLoading(false)
@@ -1849,7 +1903,7 @@ export default function Home() {
         showAlert(`Failed to load adapter: ${data.error || 'Unknown error'}`, 'error', 'Adapter Load Failed')
       }
     } catch (e) {
-      showAlert(`Failed to load adapter: ${e}`, 'error', 'Adapter Load Failed')
+      showAlert(`Failed to load adapter: ${getErrorMessage(e)}`, 'error', 'Adapter Load Failed')
     }
   }
 
@@ -2795,7 +2849,7 @@ export default function Home() {
               
               {/* Stop Training Button - only show when running */}
               {isTraining && (
-                <button onClick={stopTraining}
+                <button onClick={confirmStopTraining}
                   className="w-full py-3 bg-red-500 text-white rounded-lg font-medium hover:bg-red-600 flex items-center justify-center gap-2">
                   <StopCircle className="w-5 h-5" /> Stop Training
                 </button>
@@ -3729,6 +3783,18 @@ export default function Home() {
         title={alertModal.title}
         message={alertModal.message}
         type={alertModal.type}
+      />
+      
+      {/* Custom Confirm Modal - replaces browser confirm() */}
+      <ConfirmModal
+        isOpen={confirmModal.isOpen}
+        onClose={closeConfirm}
+        onConfirm={confirmModal.onConfirm}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        type={confirmModal.type}
+        confirmText={confirmModal.confirmText}
+        isLoading={confirmModal.isLoading}
       />
     </div>
   )

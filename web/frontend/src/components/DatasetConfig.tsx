@@ -372,6 +372,9 @@ export default function DatasetConfig({ selectedPaths, onSelectionChange, onShow
       }
     } catch (e) {
       console.error('Delete failed:', e)
+      if (onShowAlert) {
+        onShowAlert(`Delete failed: ${e instanceof Error ? e.message : String(e)}`, 'error', 'Delete Failed')
+      }
     } finally {
       setIsDeleting(false)
     }
