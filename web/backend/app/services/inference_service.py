@@ -28,6 +28,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 from pydantic import BaseModel, Field
 
 from .sanitized_log_service import sanitized_log_service
+from .gpu_cleanup_service import gpu_cleanup_service
 
 # Add the project root to path for usf_bios imports
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.parent.parent
@@ -180,21 +181,43 @@ class InferenceService:
         self._loaded_adapters: List[str] = []
     
     def _get_gpu_memory_used(self) -> float:
-        """Get GPU memory usage in GB"""
+        """Get GPU memory usage in GB using pynvml for accurate readings.
+        
+        NOTE: torch.cuda.memory_allocated() only shows PyTorch's allocation,
+        not actual GPU memory usage. We use pynvml for driver-level accuracy.
+        """
         try:
-            if TORCH_AVAILABLE and torch.cuda.is_available():
-                return torch.cuda.memory_allocated() / (1024 ** 3)
+            import pynvml
+            pynvml.nvmlInit()
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            pynvml.nvmlShutdown()
+            return mem_info.used / (1024 ** 3)
         except Exception:
-            pass
+            # Fallback to torch if pynvml fails
+            try:
+                if TORCH_AVAILABLE and torch.cuda.is_available():
+                    return torch.cuda.memory_allocated() / (1024 ** 3)
+            except Exception:
+                pass
         return 0.0
     
     def _get_total_gpu_memory(self) -> float:
-        """Get total GPU memory in GB"""
+        """Get total GPU memory in GB using pynvml for accuracy."""
         try:
-            if TORCH_AVAILABLE and torch.cuda.is_available():
-                return torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+            import pynvml
+            pynvml.nvmlInit()
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            pynvml.nvmlShutdown()
+            return mem_info.total / (1024 ** 3)
         except Exception:
-            pass
+            # Fallback to torch if pynvml fails
+            try:
+                if TORCH_AVAILABLE and torch.cuda.is_available():
+                    return torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+            except Exception:
+                pass
         return 0.0
     
     def _detect_model_capabilities(self, model_path: str) -> ModelCapabilities:
@@ -274,73 +297,96 @@ class InferenceService:
     async def deep_clear_memory(self) -> Dict[str, Any]:
         """
         Aggressive memory cleanup - use before training or loading new model.
-        Clears ALL GPU memory and Python garbage.
+        Clears ALL GPU memory, Python garbage, and resets CUDA state.
+        
+        This performs:
+        1. Delete all model/engine instances
+        2. Clear Python references and garbage collect
+        3. Empty CUDA cache on all GPUs
+        4. Reset memory statistics
+        5. Force synchronization
+        6. Kill orphaned CUDA processes (via gpu_cleanup_service)
         """
         async with self._lock:
             try:
                 memory_before = self._get_gpu_memory_used()
+                total_memory = self._get_total_gpu_memory()
                 
-                # Clear all engines
+                # Step 1: Clear all inference engines
+                engines_cleared = []
+                
                 if self._engine is not None:
+                    # Clear model components first
                     if hasattr(self._engine, 'model'):
+                        if hasattr(self._engine.model, 'cpu'):
+                            try:
+                                self._engine.model.cpu()  # Move to CPU first
+                            except:
+                                pass
                         del self._engine.model
                     if hasattr(self._engine, 'tokenizer'):
                         del self._engine.tokenizer
+                    if hasattr(self._engine, 'processor'):
+                        del self._engine.processor
                     del self._engine
                     self._engine = None
+                    engines_cleared.append("transformers")
                 
                 if self._vllm_engine is not None:
+                    if hasattr(self._vllm_engine, 'shutdown'):
+                        try:
+                            self._vllm_engine.shutdown()
+                        except:
+                            pass
                     del self._vllm_engine
                     self._vllm_engine = None
+                    engines_cleared.append("vllm")
                 
                 if self._sglang_engine is not None:
                     if hasattr(self._sglang_engine, 'shutdown'):
-                        self._sglang_engine.shutdown()
+                        try:
+                            self._sglang_engine.shutdown()
+                        except:
+                            pass
                     del self._sglang_engine
                     self._sglang_engine = None
+                    engines_cleared.append("sglang")
                 
+                # Step 2: Clear state
                 self._current_model_path = None
                 self._current_adapter_path = None
                 self._loaded_at = None
                 self._model_capabilities = None
                 self._loaded_adapters = []
                 
-                # Aggressive garbage collection (multiple passes)
-                for _ in range(3):
-                    gc.collect()
+                # Step 3: Use centralized GPU cleanup service for comprehensive cleanup
+                # This handles GC, CUDA cache, orphaned processes, and multi-GPU
+                cleanup_result = await gpu_cleanup_service.async_deep_cleanup(
+                    kill_orphans=True,
+                    exclude_pids=[os.getpid()]
+                )
                 
-                # Clear CUDA cache thoroughly
-                if TORCH_AVAILABLE and torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                    torch.cuda.synchronize()
-                    
-                    # Reset peak memory stats
-                    torch.cuda.reset_peak_memory_stats()
-                    torch.cuda.reset_accumulated_memory_stats()
-                    
-                    # Additional cleanup for multi-GPU
-                    for i in range(torch.cuda.device_count()):
-                        with torch.cuda.device(i):
-                            torch.cuda.empty_cache()
-                            torch.cuda.synchronize()
-                
-                # Final GC pass
-                gc.collect()
-                
+                # Measure final memory
                 memory_after = self._get_gpu_memory_used()
+                memory_freed = memory_before - memory_after
                 
                 return {
                     "success": True,
-                    "memory_freed_gb": round(memory_before - memory_after, 2),
+                    "memory_freed_gb": round(max(0, memory_freed), 2),
                     "memory_used_gb": round(memory_after, 2),
-                    "total_memory_gb": round(self._get_total_gpu_memory(), 2),
-                    "cleanup_type": "deep"
+                    "total_memory_gb": round(total_memory, 2),
+                    "cleanup_type": "deep",
+                    "engines_cleared": engines_cleared,
+                    "cuda_cleanup": cleanup_result.get("success", False),
+                    "cleanup_details": cleanup_result.get("steps", [])
                 }
             
             except Exception as e:
                 sanitized = sanitized_log_service.sanitize_error(str(e))
                 return {
                     "success": False,
+                    "memory_used_gb": round(self._get_gpu_memory_used(), 2),
+                    "total_memory_gb": round(self._get_total_gpu_memory(), 2),
                     "error": sanitized['user_message']
                 }
     
@@ -493,6 +539,45 @@ class InferenceService:
                     "success": False,
                     "error": sanitized['user_message']
                 }
+    
+    async def load_adapter(self, adapter_path: str) -> Dict[str, Any]:
+        """
+        Load a LoRA adapter onto the currently loaded model.
+        Model must already be loaded.
+        """
+        if self._engine is None or self._current_model_path is None:
+            return {
+                "success": False,
+                "error": "No model loaded. Please load a base model first."
+            }
+        
+        if self._current_backend != InferenceBackend.TRANSFORMERS:
+            return {
+                "success": False,
+                "error": "Adapter loading only supported with Transformers backend"
+            }
+        
+        try:
+            # Reload model with the new adapter
+            result = await self.load_model(
+                self._current_model_path,
+                adapter_path,
+                self._current_backend
+            )
+            return result
+        except Exception as e:
+            sanitized = sanitized_log_service.sanitize_error(str(e))
+            return {
+                "success": False,
+                "error": sanitized['user_message']
+            }
+    
+    async def switch_adapter(self, adapter_path: str) -> Dict[str, Any]:
+        """
+        Switch to a different LoRA adapter.
+        This reloads the model with the new adapter.
+        """
+        return await self.load_adapter(adapter_path)
     
     async def _clear_all_engines(self):
         """Internal helper to clear all engine instances"""

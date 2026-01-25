@@ -37,8 +37,26 @@ def is_megatron_available():
 
 
 def is_flash_attn_3_available():
-    return (importlib.util.find_spec('flash_attn_3') is not None
-            and importlib.util.find_spec('flash_attn_interface') is not None)
+    """
+    Check if Flash Attention 3 is available.
+    
+    FA3 is installed via:
+    - pip install flash-attn-3 (pre-built wheel)
+    - Building from flash-attention/hopper source
+    
+    After installation, the module is 'flash_attn_interface' (not 'flash_attn_3').
+    We also check for 'flashattn_hopper' which is used in some builds.
+    """
+    # Check for flash_attn_interface module (standard FA3 installation)
+    if importlib.util.find_spec('flash_attn_interface') is not None:
+        return True
+    # Check for flashattn_hopper module (alternative build)
+    if importlib.util.find_spec('flashattn_hopper') is not None:
+        return True
+    # Legacy check for flash_attn_3 module name
+    if importlib.util.find_spec('flash_attn_3') is not None:
+        return True
+    return False
 
 
 def is_flash_attn_2_available():

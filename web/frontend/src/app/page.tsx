@@ -14,6 +14,7 @@ import {
 import TrainingSettingsStep from '@/components/TrainingSettings'
 import DatasetConfig from '@/components/DatasetConfig'
 import AlertModal, { AlertType, ConfirmModal } from '@/components/AlertModal'
+import TrainingHistory from '@/components/TrainingHistory'
 
 // ============================================================
 // LOCKED MODEL CONFIGURATION
@@ -188,36 +189,6 @@ interface LoadedAdapter {
   name: string
   path: string
   active: boolean
-}
-
-interface TrainingHistoryItem {
-  job_id: string
-  job_name: string
-  status: string
-  created_at: string | null
-  started_at: string | null
-  completed_at: string | null
-  current_step: number
-  total_steps: number
-  error: string | null
-  config?: {
-    train_type: string
-    training_method: string
-    num_epochs: number
-    learning_rate: number
-    batch_size: number
-  }
-  output_path: string
-  output_exists: boolean
-  has_adapter: boolean
-  adapter_path?: string
-  checkpoint_count: number
-  final_metrics?: {
-    loss: number | null
-    learning_rate: number | null
-    epoch: number | null
-    step: number | null
-  } | null
 }
 
 interface ChatMessage {
@@ -456,6 +427,29 @@ export default function Home() {
   const [systemExpired, setSystemExpired] = useState(false)
   const [expirationChecked, setExpirationChecked] = useState(false)
   
+  // Hardware requirements - validates NVIDIA GPU is available
+  const [hardwareStatus, setHardwareStatus] = useState<{
+    checked: boolean
+    hardware_supported: boolean
+    can_train: boolean
+    gpu_vendor: string | null
+    gpu_name: string | null
+    gpu_memory_gb: number | null
+    cuda_available: boolean
+    errors: Array<{ code: string; title: string; message: string; suggestions: string[] }>
+    warnings: Array<{ code: string; title: string; message: string; suggestions: string[] }>
+  }>({
+    checked: false,
+    hardware_supported: true, // Assume true until checked
+    can_train: true,
+    gpu_vendor: null,
+    gpu_name: null,
+    gpu_memory_gb: null,
+    cuda_available: false,
+    errors: [],
+    warnings: []
+  })
+  
   // Locked models - fetched from backend API (NOT hardcoded for security)
   const [lockedModels, setLockedModels] = useState<LockedModel[]>([])
   const [isModelLockLoaded, setIsModelLockLoaded] = useState(false)
@@ -521,10 +515,8 @@ export default function Home() {
   // Training metrics for graphs
   const [trainingMetrics, setTrainingMetrics] = useState<TrainingMetric[]>([])
   
-  // Training history
-  const [trainingHistory, setTrainingHistory] = useState<TrainingHistoryItem[]>([])
+  // Training history modal
   const [showHistory, setShowHistory] = useState(false)
-  const [isLoadingHistory, setIsLoadingHistory] = useState(false)
   
   // Mobile menu
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
@@ -593,21 +585,6 @@ export default function Home() {
     }
   }, [])
 
-  // Fetch training history
-  const fetchTrainingHistory = useCallback(async () => {
-    setIsLoadingHistory(true)
-    try {
-      const res = await fetch('/api/jobs/history/all?limit=50&include_metrics=true')
-      if (res.ok) {
-        const data = await res.json()
-        setTrainingHistory(data.history || [])
-      }
-    } catch (e) {
-      console.error('Failed to fetch training history:', e)
-    } finally {
-      setIsLoadingHistory(false)
-    }
-  }, [])
 
   // Fetch locked models from backend API - CRITICAL for security
   // Models MUST come from backend, NOT hardcoded in frontend
@@ -649,6 +626,55 @@ export default function Home() {
       }
     } catch (e) {
       console.error('Failed to fetch available GPUs:', e)
+    }
+  }, [])
+
+  // Fetch hardware requirements - validates NVIDIA GPU availability
+  const fetchHardwareRequirements = useCallback(async () => {
+    try {
+      const res = await fetch('/api/system/hardware-requirements')
+      if (res.ok) {
+        const data = await res.json()
+        setHardwareStatus({
+          checked: true,
+          hardware_supported: data.hardware_supported ?? false,
+          can_train: data.can_train ?? false,
+          gpu_vendor: data.gpu_vendor,
+          gpu_name: data.gpu_name,
+          gpu_memory_gb: data.gpu_memory_gb,
+          cuda_available: data.cuda_available ?? false,
+          errors: data.errors || [],
+          warnings: data.warnings || []
+        })
+      } else {
+        // Backend not responding - assume hardware issue
+        setHardwareStatus(prev => ({
+          ...prev,
+          checked: true,
+          hardware_supported: false,
+          can_train: false,
+          errors: [{
+            code: 'BACKEND_ERROR',
+            title: 'Backend Not Responding',
+            message: 'Unable to verify hardware status. Backend may not be running.',
+            suggestions: ['Check if backend is running', 'Restart the container']
+          }]
+        }))
+      }
+    } catch (e) {
+      console.error('Failed to fetch hardware requirements:', e)
+      setHardwareStatus(prev => ({
+        ...prev,
+        checked: true,
+        hardware_supported: false,
+        can_train: false,
+        errors: [{
+          code: 'CONNECTION_ERROR',
+          title: 'Connection Error',
+          message: 'Unable to connect to backend to verify hardware.',
+          suggestions: ['Check network connection', 'Restart the container']
+        }]
+      }))
     }
   }, [])
   
@@ -859,9 +885,10 @@ export default function Home() {
     fetchAvailableGpus()  // Fetch available GPUs for dynamic selection
     fetchOutputPathConfig()  // Fetch output path configuration
     fetchSystemTokens()  // Check if system has HF_TOKEN/MS_TOKEN configured
+    fetchHardwareRequirements()  // CRITICAL: Validate NVIDIA GPU availability
     const interval = setInterval(fetchSystemStatus, 10000) // Check every 10 seconds
     return () => clearInterval(interval)
-  }, [fetchSystemStatus, fetchSystemCapabilities, fetchLockedModels, fetchAvailableGpus, fetchOutputPathConfig, fetchSystemTokens, systemExpired])
+  }, [fetchSystemStatus, fetchSystemCapabilities, fetchLockedModels, fetchAvailableGpus, fetchOutputPathConfig, fetchSystemTokens, fetchHardwareRequirements, systemExpired])
   
   // Fetch model info when model_path changes to get dynamic context length
   useEffect(() => {
@@ -2059,6 +2086,119 @@ export default function Home() {
     )
   }
 
+  // SYSTEM LOCKDOWN - Complete block when NO NVIDIA GPU detected
+  if (hardwareStatus.checked && !hardwareStatus.hardware_supported) {
+    const error = hardwareStatus.errors[0]
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+        <div className="text-center max-w-lg">
+          {/* GPU Icon */}
+          <div className="w-24 h-24 bg-red-500/20 rounded-2xl flex items-center justify-center mx-auto mb-6">
+            <Monitor className="w-12 h-12 text-red-500" />
+          </div>
+          
+          {/* Title */}
+          <h1 className="text-2xl font-bold text-white mb-3">
+            {error?.title || 'NVIDIA GPU Required'}
+          </h1>
+          
+          {/* Message */}
+          <p className="text-slate-400 mb-6">
+            {error?.message || 'This system requires an NVIDIA GPU with CUDA support. AMD GPUs and CPU-only are not supported.'}
+          </p>
+          
+          {/* Supported Hardware Box */}
+          <div className="bg-slate-800/50 rounded-xl p-6 text-left mb-6">
+            <h3 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
+              <Cpu className="w-4 h-4" />
+              Supported Hardware
+            </h3>
+            <ul className="text-sm text-slate-400 space-y-2">
+              <li className="flex items-center gap-2">
+                <Check className="w-4 h-4 text-green-500" />
+                NVIDIA RTX 20xx/30xx/40xx Series
+              </li>
+              <li className="flex items-center gap-2">
+                <Check className="w-4 h-4 text-green-500" />
+                NVIDIA Tesla V100, A100
+              </li>
+              <li className="flex items-center gap-2">
+                <Check className="w-4 h-4 text-green-500" />
+                NVIDIA H100, H200 (Hopper)
+              </li>
+            </ul>
+            
+            <div className="border-t border-slate-700 mt-4 pt-4">
+              <h4 className="text-sm font-semibold text-red-400 mb-2">Not Supported</h4>
+              <ul className="text-sm text-slate-500 space-y-1">
+                <li className="flex items-center gap-2">
+                  <XCircle className="w-3 h-3 text-red-500" />
+                  AMD GPUs (ROCm not included)
+                </li>
+                <li className="flex items-center gap-2">
+                  <XCircle className="w-3 h-3 text-red-500" />
+                  Intel GPUs
+                </li>
+                <li className="flex items-center gap-2">
+                  <XCircle className="w-3 h-3 text-red-500" />
+                  CPU-only (training requires GPU)
+                </li>
+              </ul>
+            </div>
+          </div>
+          
+          {/* Suggestions */}
+          {error?.suggestions && error.suggestions.length > 0 && (
+            <div className="bg-blue-500/10 rounded-xl p-4 text-left mb-6">
+              <h4 className="text-sm font-semibold text-blue-400 mb-2">How to Fix</h4>
+              <ul className="text-sm text-slate-400 space-y-1">
+                {error.suggestions.map((s: string, i: number) => (
+                  <li key={i} className="flex items-start gap-2">
+                    <span className="text-blue-400 mt-1">•</span>
+                    {s}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          
+          {/* Footer */}
+          <p className="text-slate-600 text-sm">
+            USF BIOS - Powered by US Inc
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  // Hardware error banner component (kept for warnings, not full lockdown)
+  const HardwareErrorBanner = () => {
+    // Don't show banner if hardware is not supported (full lockdown shown instead)
+    if (!hardwareStatus.checked || !hardwareStatus.hardware_supported) return null
+    
+    // Show warnings only
+    if (hardwareStatus.warnings.length === 0) return null
+    
+    const warning = hardwareStatus.warnings[0]
+    
+    return (
+      <div className="bg-yellow-50 border-b border-yellow-200">
+        <div className="max-w-7xl mx-auto px-4 py-3">
+          <div className="flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 text-yellow-600 flex-shrink-0" />
+            <div>
+              <span className="font-medium text-yellow-800">{warning.title}: </span>
+              <span className="text-yellow-700">{warning.message}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Check if training should be locked due to hardware issues
+  const isTrainingLocked = hardwareStatus.checked && !hardwareStatus.can_train
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-white">
       {/* Shimmer Animation Styles */}
@@ -2160,6 +2300,9 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      {/* Hardware Error Banner - Shows when no NVIDIA GPU detected */}
+      <HardwareErrorBanner />
 
       {/* Header - Light Theme with Blue Accents */}
       <header className="bg-white border-b border-slate-200 shadow-sm sticky top-0 z-40">
@@ -2283,7 +2426,8 @@ export default function Home() {
         
         {/* ===================== TRAINING VIEW - PROGRESS OR RESULT ===================== */}
         {/* Show when training is active OR when we have a job result (completed/failed) */}
-        {(isTraining || (jobStatus && (jobStatus.status === 'completed' || jobStatus.status === 'failed' || jobStatus.status === 'stopped'))) && jobStatus && (
+        {/* Hide when user switches to Inference tab (except during active training) */}
+        {(isTraining || (mainTab === 'train' && jobStatus && (jobStatus.status === 'completed' || jobStatus.status === 'failed' || jobStatus.status === 'stopped'))) && jobStatus && (
           <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-4 sm:p-6">
             <div className="space-y-4">
               {/* Model Info Banner - Shows which model is being trained */}
@@ -2363,7 +2507,7 @@ export default function Home() {
                 <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-3 text-center border border-green-200">
                   <Activity className="w-5 h-5 mx-auto text-green-600 mb-1" />
                   <span className="text-[10px] text-green-600 font-medium uppercase">LR</span>
-                  <p className="text-xl font-bold text-green-900">{finalLR ? finalLR.toExponential(1) : '--'}</p>
+                  <p className="text-xl font-bold text-green-900">{finalLR !== null && finalLR !== undefined ? finalLR.toExponential(1) : '--'}</p>
                 </div>
                 <div className={`bg-gradient-to-br ${systemMetrics.available && systemMetrics.gpu_utilization !== null ? 'from-cyan-50 to-cyan-100 border-cyan-200' : 'from-slate-50 to-slate-100 border-slate-200'} rounded-lg p-3 text-center border`}>
                   <Cpu className="w-5 h-5 mx-auto text-cyan-600 mb-1" />
@@ -2476,8 +2620,41 @@ export default function Home() {
                                 ))}
                               </div>
                               
-                              {/* Graph Area */}
-                              <div className="flex-1 h-32 relative">
+                              {/* Graph Area - Interactive */}
+                              <div className="flex-1 h-32 relative group"
+                                onMouseMove={(e) => {
+                                  const rect = e.currentTarget.getBoundingClientRect()
+                                  const x = (e.clientX - rect.left) / rect.width
+                                  const idx = Math.round(x * (data.length - 1))
+                                  const point = data[Math.max(0, Math.min(idx, data.length - 1))]
+                                  if (point) {
+                                    const tooltip = e.currentTarget.querySelector('.graph-tooltip') as HTMLElement
+                                    const dot = e.currentTarget.querySelector('.hover-dot') as HTMLElement
+                                    const line = e.currentTarget.querySelector('.hover-line') as HTMLElement
+                                    if (tooltip && dot && line) {
+                                      const val = point[metricKey] as number
+                                      const yPos = 100 - ((val - minVal) / range) * 95 - 2.5
+                                      tooltip.style.display = 'block'
+                                      tooltip.style.left = `${x * 100}%`
+                                      tooltip.style.top = `${yPos}%`
+                                      tooltip.innerHTML = `<div class="text-[10px] font-mono"><strong>Step ${point.step}</strong><br/>${graphConfig.label}: ${formatValue(val)}</div>`
+                                      dot.style.display = 'block'
+                                      dot.style.left = `${x * 100}%`
+                                      dot.style.top = `${yPos}%`
+                                      line.style.display = 'block'
+                                      line.style.left = `${x * 100}%`
+                                    }
+                                  }
+                                }}
+                                onMouseLeave={(e) => {
+                                  const tooltip = e.currentTarget.querySelector('.graph-tooltip') as HTMLElement
+                                  const dot = e.currentTarget.querySelector('.hover-dot') as HTMLElement
+                                  const line = e.currentTarget.querySelector('.hover-line') as HTMLElement
+                                  if (tooltip) tooltip.style.display = 'none'
+                                  if (dot) dot.style.display = 'none'
+                                  if (line) line.style.display = 'none'
+                                }}
+                              >
                                 {/* Grid Lines */}
                                 <svg className="absolute inset-0 w-full h-full" preserveAspectRatio="none">
                                   {[0, 25, 50, 75, 100].map(y => (
@@ -2513,15 +2690,41 @@ export default function Home() {
                                       return `${x},${y}`
                                     }).join(' ')}
                                   />
+                                  {/* Data points */}
+                                  {data.map((m, i) => {
+                                    const x = (i / (data.length - 1)) * 100
+                                    const y = 100 - ((m[metricKey] as number - minVal) / range) * 95 - 2.5
+                                    return (
+                                      <circle key={i} cx={x} cy={y} r="3" fill={graphConfig.color} stroke="white" strokeWidth="1.5" className="opacity-80" />
+                                    )
+                                  })}
                                 </svg>
+                                
+                                {/* Hover Line */}
+                                <div className="hover-line absolute top-0 bottom-0 w-px bg-slate-400 pointer-events-none z-10" style={{display: 'none', transform: 'translateX(-50%)'}} />
+                                
+                                {/* Hover Dot */}
+                                <div className="hover-dot absolute w-3 h-3 rounded-full pointer-events-none z-20" style={{display: 'none', backgroundColor: graphConfig.color, border: '2px solid white', boxShadow: '0 1px 3px rgba(0,0,0,0.3)', transform: 'translate(-50%, -50%)'}} />
+                                
+                                {/* Tooltip */}
+                                <div className="graph-tooltip absolute bg-slate-800 text-white px-2 py-1 rounded shadow-lg pointer-events-none z-30 whitespace-nowrap" style={{display: 'none', transform: 'translate(-50%, -120%)'}} />
                               </div>
                             </div>
                             
                             {/* X-Axis Labels */}
                             <div className="flex justify-between text-[9px] text-slate-400 mt-1 ml-12 font-mono">
-                              <span>Step {data[0]?.step || 0}</span>
-                              <span>Step {data[Math.floor(data.length / 2)]?.step || 0}</span>
-                              <span>Step {data[data.length - 1]?.step || 0}</span>
+                              {(() => {
+                                const firstStep = data[0]?.step || 1
+                                const lastStep = data[data.length - 1]?.step || data.length
+                                const midStep = Math.round((firstStep + lastStep) / 2)
+                                return (
+                                  <>
+                                    <span>Step {firstStep}</span>
+                                    <span>Step {midStep}</span>
+                                    <span>Step {lastStep}</span>
+                                  </>
+                                )
+                              })()}
                             </div>
                           </div>
                           
@@ -2884,7 +3087,7 @@ export default function Home() {
                       className="flex-1 py-3 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600 disabled:opacity-50 flex items-center justify-center gap-2">
                       <Play className="w-5 h-5" /> Start New Training
                     </button>
-                    <button onClick={() => { setShowHistory(true); fetchTrainingHistory(); }}
+                    <button onClick={() => setShowHistory(true)}
                       disabled={isModelLoading}
                       className="px-4 py-3 bg-slate-100 text-slate-700 rounded-lg font-medium hover:bg-slate-200 disabled:opacity-50 flex items-center justify-center gap-2 border border-slate-200">
                       <History className="w-5 h-5" />
@@ -2896,196 +3099,16 @@ export default function Home() {
           </div>
         )}
 
-        {/* ===================== TRAINING HISTORY MODAL ===================== */}
-        {showHistory && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-2 sm:p-4">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] sm:max-h-[85vh] overflow-hidden flex flex-col">
-              {/* Header */}
-              <div className="flex items-center justify-between p-3 sm:p-4 border-b border-slate-200 bg-gradient-to-r from-blue-50 to-slate-50">
-                <div>
-                  <h2 className="text-lg sm:text-xl font-bold text-slate-900 flex items-center gap-2">
-                    <History className="w-5 h-5 text-blue-500" /> Training History
-                  </h2>
-                  <p className="text-xs text-slate-500 mt-0.5">{trainingHistory.length} training runs</p>
-                </div>
-                <button onClick={() => setShowHistory(false)} className="p-2 hover:bg-white rounded-lg transition-colors">
-                  <X className="w-5 h-5 text-slate-500" />
-                </button>
-              </div>
-              
-              {/* Content */}
-              <div className="flex-1 overflow-y-auto p-3 sm:p-4">
-                {isLoadingHistory ? (
-                  <div className="flex items-center justify-center py-12">
-                    <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-                  </div>
-                ) : trainingHistory.length === 0 ? (
-                  <div className="text-center py-12 text-slate-500">
-                    <History className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                    <p className="font-medium">No training history found</p>
-                    <p className="text-sm mt-1">Complete a training run to see it here</p>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {trainingHistory.map((item) => (
-                      <div key={item.job_id} className={`border rounded-xl overflow-hidden transition-all hover:shadow-md ${
-                        item.status === 'completed' ? 'border-green-200 bg-gradient-to-r from-green-50/80 to-white' :
-                        item.status === 'failed' ? 'border-red-200 bg-gradient-to-r from-red-50/80 to-white' :
-                        item.status === 'running' ? 'border-blue-200 bg-gradient-to-r from-blue-50/80 to-white' :
-                        'border-slate-200 bg-gradient-to-r from-slate-50/80 to-white'
-                      }`}>
-                        {/* Training Info Header */}
-                        <div className="p-3 sm:p-4">
-                          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 sm:gap-4">
-                            <div className="flex-1 min-w-0">
-                              {/* Name and Status */}
-                              <div className="flex flex-wrap items-center gap-2 mb-2">
-                                <span className="font-semibold text-slate-900 truncate">{item.job_name}</span>
-                                <span className={`text-[10px] sm:text-xs px-2 py-0.5 rounded-full font-medium whitespace-nowrap ${
-                                  item.status === 'completed' ? 'bg-green-100 text-green-700' :
-                                  item.status === 'failed' ? 'bg-red-100 text-red-700' :
-                                  item.status === 'running' ? 'bg-blue-100 text-blue-700 animate-pulse' :
-                                  'bg-slate-100 text-slate-600'
-                                }`}>
-                                  {item.status === 'running' && <span className="inline-block w-1.5 h-1.5 bg-blue-500 rounded-full mr-1 animate-pulse" />}
-                                  {item.status.toUpperCase()}
-                                </span>
-                                {item.config && (
-                                  <span className="text-[10px] sm:text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-medium whitespace-nowrap">
-                                    {item.config.training_method.toUpperCase()} • {item.config.train_type.toUpperCase()}
-                                  </span>
-                                )}
-                              </div>
-                              
-                              {/* Date and Config Details */}
-                              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
-                                {item.created_at && (
-                                  <span className="flex items-center gap-1">
-                                    <Clock className="w-3 h-3" />
-                                    {new Date(item.created_at).toLocaleDateString()} {new Date(item.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                                  </span>
-                                )}
-                                {item.config && (
-                                  <>
-                                    <span>LR: {item.config.learning_rate}</span>
-                                    <span>Batch: {item.config.batch_size}</span>
-                                    <span>Epochs: {item.config.num_epochs}</span>
-                                  </>
-                                )}
-                              </div>
-                            </div>
-                            
-                            {/* Status Icons - Right Side */}
-                            <div className="flex sm:flex-col items-center sm:items-end gap-2 sm:gap-1 text-xs">
-                              {item.has_adapter && (
-                                <div className="flex items-center gap-1 text-green-600 bg-green-50 px-2 py-1 rounded-full">
-                                  <CheckCircle className="w-3 h-3" /> 
-                                  <span className="hidden sm:inline">Adapter</span>
-                                </div>
-                              )}
-                              {item.checkpoint_count > 0 && (
-                                <div className="flex items-center gap-1 text-blue-600 bg-blue-50 px-2 py-1 rounded-full">
-                                  <Layers className="w-3 h-3" />
-                                  <span>{item.checkpoint_count} ckpt</span>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                        
-                        {/* Metrics and Output - Footer */}
-                        {(item.final_metrics || item.output_exists) && (
-                          <div className="px-3 sm:px-4 py-2 bg-slate-50/50 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                            {/* Final Metrics */}
-                            {item.final_metrics && item.final_metrics.loss !== null && (
-                              <div className="flex flex-wrap items-center gap-3 text-xs">
-                                <div className="flex items-center gap-1">
-                                  <span className="text-slate-400">Final Loss:</span>
-                                  <span className="font-mono font-semibold text-slate-700">{item.final_metrics.loss.toFixed(4)}</span>
-                                </div>
-                                {item.final_metrics.epoch !== null && (
-                                  <div className="flex items-center gap-1">
-                                    <span className="text-slate-400">Epochs:</span>
-                                    <span className="font-mono font-semibold text-slate-700">{item.final_metrics.epoch}</span>
-                                  </div>
-                                )}
-                                {item.final_metrics.step !== null && (
-                                  <div className="flex items-center gap-1">
-                                    <span className="text-slate-400">Steps:</span>
-                                    <span className="font-mono font-semibold text-slate-700">{item.final_metrics.step}</span>
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                            
-                            {/* Output Path */}
-                            {item.output_exists && (
-                              <div className="flex items-center gap-1 text-xs">
-                                <FolderOpen className="w-3 h-3 text-slate-400 flex-shrink-0" />
-                                <code className="text-[10px] text-slate-500 truncate max-w-[250px] sm:max-w-[300px] bg-white px-2 py-0.5 rounded border border-slate-200" title={item.output_path}>
-                                  {item.output_path}
-                                </code>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        
-                        {/* Adapter Path - if available */}
-                        {item.adapter_path && (
-                          <div className="px-3 sm:px-4 py-2 bg-green-50/50 border-t border-green-100 flex items-center gap-2 text-xs">
-                            <Sparkles className="w-3 h-3 text-green-500 flex-shrink-0" />
-                            <span className="text-green-600 font-medium">Adapter:</span>
-                            <code className="text-[10px] text-green-700 truncate flex-1 bg-white px-2 py-0.5 rounded border border-green-200" title={item.adapter_path}>
-                              {item.adapter_path}
-                            </code>
-                          </div>
-                        )}
-                        
-                        {/* Action Buttons for completed jobs */}
-                        {item.status === 'completed' && item.has_adapter && (
-                          <div className="px-3 sm:px-4 py-3 bg-slate-50 border-t border-slate-200">
-                            <button
-                              onClick={() => {
-                                setShowHistory(false)
-                                loadModelForInference(config.model_path, item.adapter_path)
-                              }}
-                              disabled={isModelLoading || isCleaningMemory}
-                              className="w-full py-2.5 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-lg text-sm font-medium hover:from-blue-600 hover:to-indigo-700 disabled:opacity-50 flex items-center justify-center gap-2 shadow-md transition-all"
-                            >
-                              {isModelLoading ? (
-                                <>
-                                  <Loader2 className="w-4 h-4 animate-spin" />
-                                  {loadingMessage || 'Loading...'}
-                                </>
-                              ) : (
-                                <>
-                                  <MessageSquare className="w-4 h-4" />
-                                  Load for Inference
-                                </>
-                              )}
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-              
-              {/* Footer */}
-              <div className="p-3 sm:p-4 border-t border-slate-200 bg-slate-50 flex gap-2">
-                <button onClick={() => fetchTrainingHistory()}
-                  className="px-4 py-2 bg-white text-slate-600 rounded-lg font-medium hover:bg-slate-100 border border-slate-200 flex items-center gap-2">
-                  <RefreshCw className="w-4 h-4" /> Refresh
-                </button>
-                <button onClick={() => setShowHistory(false)}
-                  className="flex-1 py-2 bg-slate-700 text-white rounded-lg font-medium hover:bg-slate-800">
-                  Close
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        {/* ===================== TRAINING HISTORY COMPONENT ===================== */}
+        <TrainingHistory
+          isOpen={showHistory}
+          onClose={() => setShowHistory(false)}
+          onLoadForInference={loadModelForInference}
+          modelPath={config.model_path}
+          isModelLoading={isModelLoading}
+          isCleaningMemory={isCleaningMemory}
+          loadingMessage={loadingMessage}
+        />
 
         {/* ===================== TRAINING TAB ===================== */}
         {/* Only show when NOT training and no job result to display */}
@@ -3097,7 +3120,7 @@ export default function Home() {
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-lg font-semibold text-slate-800">New Training</h2>
                   <button 
-                    onClick={() => { setShowHistory(true); fetchTrainingHistory(); }}
+                    onClick={() => setShowHistory(true)}
                     className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors border border-slate-200"
                   >
                     <History className="w-4 h-4" />
@@ -3773,7 +3796,7 @@ export default function Home() {
       </main>
 
       <footer className="mt-6 py-4 text-center text-xs text-slate-500 border-t border-slate-200">
-        USF BIOS v2.0.12 - Copyright 2024-2026 US Inc. All rights reserved.
+        USF BIOS v2.0.14 - Copyright 2024-2026 US Inc. All rights reserved.
       </footer>
       
       {/* Custom Alert Modal - replaces browser alert() */}

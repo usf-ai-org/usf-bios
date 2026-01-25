@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { HelpCircle, Plus, Minus, ChevronDown, AlertCircle, Edit3 } from 'lucide-react'
+import { HelpCircle, Plus, Minus, ChevronDown, AlertCircle, Edit3, Sparkles, Loader2, Check, Info } from 'lucide-react'
 
 // Type definitions
 interface SelectConfig<T> {
@@ -239,17 +239,18 @@ const TRAINING_METHOD_CONFIG = {
   rlhf: { label: 'RLHF (Reinforcement Learning)', desc: 'Align model with human preferences', tooltip: 'Use preference data to align model behavior. Includes DPO, PPO, GRPO, etc.' },
 }
 
-// RLHF algorithm configuration  
-const RLHF_ALGORITHM_CONFIG = {
-  dpo: { label: 'DPO', desc: 'Direct Preference Optimization', tooltip: 'Simple and stable. No reward model needed. Good default choice.' },
-  orpo: { label: 'ORPO', desc: 'Odds Ratio Preference Optimization', tooltip: 'Combines SFT and preference optimization. No reference model needed.' },
-  simpo: { label: 'SimPO', desc: 'Simple Preference Optimization', tooltip: 'Simplified DPO without reference model. Uses length-normalized rewards.' },
-  kto: { label: 'KTO', desc: 'Kahneman-Tversky Optimization', tooltip: 'Works with binary feedback (good/bad). Good when you only have thumbs up/down.' },
-  cpo: { label: 'CPO', desc: 'Contrastive Preference Optimization', tooltip: 'Contrastive learning approach. No reference model needed.' },
-  rm: { label: 'RM', desc: 'Reward Model Training', tooltip: 'Train a reward model for scoring responses. Used with PPO.' },
-  ppo: { label: 'PPO', desc: 'Proximal Policy Optimization', tooltip: 'Classic RLHF. Requires reward model. More complex but flexible.' },
-  grpo: { label: 'GRPO', desc: 'Group Relative Policy Optimization', tooltip: 'Generates multiple responses and learns from relative rankings. No reward model needed.' },
-  gkd: { label: 'GKD', desc: 'Generalized Knowledge Distillation', tooltip: 'Distill knowledge from teacher model. Good for model compression.' },
+// RLHF algorithm configuration
+// ALL algorithms support LoRA/QLoRA/AdaLoRA/Full fine-tuning
+const RLHF_ALGORITHM_CONFIG: Record<string, { label: string; desc: string; tooltip: string; loraSupport: boolean }> = {
+  dpo: { label: 'DPO', desc: 'Direct Preference Optimization', tooltip: 'Simple and stable. No reward model needed. Good default choice.', loraSupport: true },
+  orpo: { label: 'ORPO', desc: 'Odds Ratio Preference Optimization', tooltip: 'Combines SFT and preference optimization. No reference model needed.', loraSupport: true },
+  simpo: { label: 'SimPO', desc: 'Simple Preference Optimization', tooltip: 'Simplified DPO without reference model. Uses length-normalized rewards.', loraSupport: true },
+  kto: { label: 'KTO', desc: 'Kahneman-Tversky Optimization', tooltip: 'Works with binary feedback (good/bad). Good when you only have thumbs up/down.', loraSupport: true },
+  cpo: { label: 'CPO', desc: 'Contrastive Preference Optimization', tooltip: 'Contrastive learning approach. No reference model needed.', loraSupport: true },
+  rm: { label: 'RM', desc: 'Reward Model Training', tooltip: 'Train a reward model for scoring responses. Used with PPO.', loraSupport: true },
+  ppo: { label: 'PPO', desc: 'Proximal Policy Optimization', tooltip: 'Classic RLHF. Requires reward model. More complex but flexible.', loraSupport: true },
+  grpo: { label: 'GRPO', desc: 'Group Relative Policy Optimization', tooltip: 'Generates multiple responses and learns from relative rankings. No reward model needed.', loraSupport: true },
+  gkd: { label: 'GKD', desc: 'Generalized Knowledge Distillation', tooltip: 'Distill knowledge from teacher model. Good for model compression.', loraSupport: true },
 }
 
 // Optimization configuration
@@ -397,6 +398,83 @@ export default function TrainingSettingsStep({ config, setConfig, availableGpus 
     config.gpu_ids !== null ? 'select' : 'auto'
   )
   
+  // Smart optimizer state
+  const [isOptimizing, setIsOptimizing] = useState(false)
+  const [optimizerResult, setOptimizerResult] = useState<{
+    recommended: Record<string, any>
+    reasoning: string[]
+    warnings: string[]
+    gpu_utilization_estimate: number
+    training_time_estimate: string | null
+  } | null>(null)
+  const [showOptimizer, setShowOptimizer] = useState(false)
+  
+  // Fetch optimized settings from backend
+  const fetchOptimizedConfig = async (datasetSamples: number = 1000) => {
+    setIsOptimizing(true)
+    try {
+      // Get GPU memory from available GPUs
+      const gpuMemory = availableGpus.length > 0 && availableGpus[0].memory_total_gb 
+        ? availableGpus[0].memory_total_gb 
+        : 24
+      
+      const params = new URLSearchParams({
+        model_params_b: '7', // Will be updated when model info is available
+        gpu_memory_gb: gpuMemory.toString(),
+        training_method: config.training_method,
+        train_type: config.train_type,
+        dataset_samples: datasetSamples.toString(),
+        max_seq_length: (config.max_length || 2048).toString(),
+      })
+      
+      if (config.training_method === 'rlhf' && config.rlhf_type) {
+        params.append('rlhf_type', config.rlhf_type)
+      }
+      
+      const res = await fetch(`/api/system/optimize-config?${params}`, { method: 'POST' })
+      if (res.ok) {
+        const data = await res.json()
+        setOptimizerResult(data)
+        return data
+      }
+    } catch (e) {
+      console.error('Failed to fetch optimized config:', e)
+    } finally {
+      setIsOptimizing(false)
+    }
+    return null
+  }
+  
+  // Apply optimized settings to config
+  const applyOptimizedSettings = () => {
+    if (!optimizerResult?.recommended) return
+    
+    const rec = optimizerResult.recommended
+    setConfig(prev => ({
+      ...prev,
+      train_type: rec.train_type || prev.train_type,
+      per_device_train_batch_size: rec.batch_size || prev.per_device_train_batch_size,
+      gradient_accumulation_steps: rec.gradient_accumulation || prev.gradient_accumulation_steps,
+      learning_rate: rec.learning_rate || prev.learning_rate,
+      num_train_epochs: rec.epochs || prev.num_train_epochs,
+      lora_rank: rec.lora_rank || prev.lora_rank,
+      lora_alpha: rec.lora_alpha || prev.lora_alpha,
+      lora_dropout: rec.lora_dropout ?? prev.lora_dropout,
+      max_length: rec.max_length || prev.max_length,
+      warmup_ratio: rec.warmup_ratio || prev.warmup_ratio,
+      deepspeed: rec.deepspeed ?? prev.deepspeed,
+      quant_bits: rec.quant_bits ?? prev.quant_bits,
+      // RLHF specific
+      beta: rec.beta ?? prev.beta,
+      num_ppo_epochs: rec.num_ppo_epochs ?? prev.num_ppo_epochs,
+      kl_coef: rec.kl_coef ?? prev.kl_coef,
+      cliprange: rec.cliprange ?? prev.cliprange,
+      num_generations: rec.num_generations ?? prev.num_generations,
+    }))
+    
+    setShowOptimizer(false)
+  }
+  
   // Fetch training capabilities from backend on mount
   useEffect(() => {
     const fetchCapabilities = async () => {
@@ -487,10 +565,158 @@ export default function TrainingSettingsStep({ config, setConfig, availableGpus 
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-xl font-bold text-slate-900 mb-1">Training Settings</h2>
-        <p className="text-slate-600 text-sm">Configure hyperparameters for optimal training</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-bold text-slate-900 mb-1">Training Settings</h2>
+          <p className="text-slate-600 text-sm">Configure hyperparameters for optimal training</p>
+        </div>
+        {/* Smart Optimizer Button */}
+        <button
+          onClick={() => { setShowOptimizer(!showOptimizer); if (!optimizerResult) fetchOptimizedConfig(); }}
+          disabled={isOptimizing}
+          className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-500 to-indigo-500 text-white rounded-lg font-medium text-sm hover:from-purple-600 hover:to-indigo-600 transition-all shadow-md hover:shadow-lg disabled:opacity-50"
+        >
+          {isOptimizing ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Sparkles className="w-4 h-4" />
+          )}
+          {isOptimizing ? 'Analyzing...' : 'Auto-Optimize'}
+        </button>
       </div>
+
+      {/* Smart Optimizer Panel */}
+      {showOptimizer && (
+        <div className="bg-gradient-to-r from-purple-50 to-indigo-50 rounded-xl p-4 border border-purple-200">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-purple-600" />
+              <h3 className="font-semibold text-slate-900">Smart Configuration Optimizer</h3>
+            </div>
+            <button onClick={() => setShowOptimizer(false)} className="text-slate-400 hover:text-slate-600">
+              <Plus className="w-5 h-5 rotate-45" />
+            </button>
+          </div>
+          
+          {isOptimizing ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="w-6 h-6 text-purple-500 animate-spin mr-2" />
+              <span className="text-slate-600">Analyzing your setup...</span>
+            </div>
+          ) : optimizerResult ? (
+            <div className="space-y-4">
+              {/* Warnings */}
+              {optimizerResult.warnings.length > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  <div className="flex items-center gap-2 text-amber-700 font-medium text-sm mb-1">
+                    <AlertCircle className="w-4 h-4" />
+                    Recommendations
+                  </div>
+                  {optimizerResult.warnings.map((w, i) => (
+                    <p key={i} className="text-sm text-amber-600">{w}</p>
+                  ))}
+                </div>
+              )}
+              
+              {/* Recommended Settings */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                {optimizerResult.recommended.train_type && (
+                  <div className="bg-white rounded-lg p-3 border border-purple-100">
+                    <span className="text-xs text-slate-500 block">Training Type</span>
+                    <span className="font-semibold text-slate-900">{optimizerResult.recommended.train_type.toUpperCase()}</span>
+                  </div>
+                )}
+                {optimizerResult.recommended.batch_size && (
+                  <div className="bg-white rounded-lg p-3 border border-purple-100">
+                    <span className="text-xs text-slate-500 block">Batch Size</span>
+                    <span className="font-semibold text-slate-900">{optimizerResult.recommended.batch_size}</span>
+                  </div>
+                )}
+                {optimizerResult.recommended.gradient_accumulation && (
+                  <div className="bg-white rounded-lg p-3 border border-purple-100">
+                    <span className="text-xs text-slate-500 block">Grad Accum</span>
+                    <span className="font-semibold text-slate-900">{optimizerResult.recommended.gradient_accumulation}</span>
+                  </div>
+                )}
+                {optimizerResult.recommended.learning_rate && (
+                  <div className="bg-white rounded-lg p-3 border border-purple-100">
+                    <span className="text-xs text-slate-500 block">Learning Rate</span>
+                    <span className="font-semibold text-slate-900">{optimizerResult.recommended.learning_rate.toExponential(0)}</span>
+                  </div>
+                )}
+                {optimizerResult.recommended.epochs && (
+                  <div className="bg-white rounded-lg p-3 border border-purple-100">
+                    <span className="text-xs text-slate-500 block">Epochs</span>
+                    <span className="font-semibold text-slate-900">{optimizerResult.recommended.epochs}</span>
+                  </div>
+                )}
+                {optimizerResult.recommended.lora_rank && (
+                  <div className="bg-white rounded-lg p-3 border border-purple-100">
+                    <span className="text-xs text-slate-500 block">LoRA Rank</span>
+                    <span className="font-semibold text-slate-900">{optimizerResult.recommended.lora_rank}</span>
+                  </div>
+                )}
+                {optimizerResult.recommended.lora_alpha && (
+                  <div className="bg-white rounded-lg p-3 border border-purple-100">
+                    <span className="text-xs text-slate-500 block">LoRA Alpha</span>
+                    <span className="font-semibold text-slate-900">{optimizerResult.recommended.lora_alpha}</span>
+                  </div>
+                )}
+                {optimizerResult.recommended.deepspeed && (
+                  <div className="bg-white rounded-lg p-3 border border-purple-100">
+                    <span className="text-xs text-slate-500 block">DeepSpeed</span>
+                    <span className="font-semibold text-slate-900">{optimizerResult.recommended.deepspeed}</span>
+                  </div>
+                )}
+              </div>
+              
+              {/* Estimates */}
+              <div className="flex items-center gap-4 text-sm">
+                {optimizerResult.gpu_utilization_estimate > 0 && (
+                  <div className="flex items-center gap-1 text-slate-600">
+                    <Info className="w-4 h-4" />
+                    <span>Est. GPU Usage: <strong>{optimizerResult.gpu_utilization_estimate}%</strong></span>
+                  </div>
+                )}
+                {optimizerResult.training_time_estimate && (
+                  <div className="flex items-center gap-1 text-slate-600">
+                    <Info className="w-4 h-4" />
+                    <span>Est. Time: <strong>{optimizerResult.training_time_estimate}</strong></span>
+                  </div>
+                )}
+              </div>
+              
+              {/* Reasoning */}
+              {optimizerResult.reasoning.length > 0 && (
+                <div className="bg-white/50 rounded-lg p-3 border border-purple-100">
+                  <span className="text-xs font-medium text-slate-500 block mb-2">Why these settings?</span>
+                  <ul className="text-xs text-slate-600 space-y-1">
+                    {optimizerResult.reasoning.slice(0, 5).map((r, i) => (
+                      <li key={i} className="flex items-start gap-1">
+                        <Check className="w-3 h-3 text-green-500 mt-0.5 flex-shrink-0" />
+                        {r}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              
+              {/* Apply Button */}
+              <button
+                onClick={applyOptimizedSettings}
+                className="w-full py-2 bg-purple-600 text-white rounded-lg font-medium text-sm hover:bg-purple-700 transition-colors flex items-center justify-center gap-2"
+              >
+                <Check className="w-4 h-4" />
+                Apply Optimized Settings
+              </button>
+            </div>
+          ) : (
+            <div className="text-center py-4 text-slate-500 text-sm">
+              Click "Auto-Optimize" to get recommended settings
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Training Method */}
       <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-4 border border-blue-200">
@@ -519,9 +745,16 @@ export default function TrainingSettingsStep({ config, setConfig, availableGpus 
       {/* RLHF Algorithm Selection - Only show when RLHF is selected */}
       {config.training_method === 'rlhf' && (
         <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-lg p-4 border border-amber-200">
-          <div className="flex items-center gap-1 mb-3">
-            <label className="text-sm font-medium text-slate-700">RLHF Algorithm</label>
-            <Tooltip text="Choose the alignment algorithm. DPO is simple and stable. GRPO generates multiple responses. PPO is classic but complex." />
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-1">
+              <label className="text-sm font-medium text-slate-700">RLHF Algorithm</label>
+              <Tooltip text="Choose the alignment algorithm. DPO is simple and stable. GRPO generates multiple responses. PPO is classic but complex." />
+            </div>
+            {/* LoRA/QLoRA support badge */}
+            <div className="flex items-center gap-1 text-xs text-green-700 bg-green-100 px-2 py-1 rounded-full border border-green-200">
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+              <span>All support LoRA/QLoRA</span>
+            </div>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
             {Object.entries(RLHF_ALGORITHM_CONFIG).map(([id, cfg]) => (
@@ -772,9 +1005,16 @@ export default function TrainingSettingsStep({ config, setConfig, availableGpus 
               }`}>
                 {capabilities.gpu_architecture.toUpperCase()}
               </span>
-              {capabilities.is_hopper && (
+              {/* Show FA3 badge only if FA3 is actually installed (present in attention_implementations) */}
+              {capabilities.attention_implementations.some(opt => opt.value === 'flash_attention_3') && (
                 <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded text-xs font-medium">
-                  FA3 Supported
+                  FA3 Available
+                </span>
+              )}
+              {/* Show "FA3 Compatible" for Hopper GPUs where FA3 could be installed but isn't */}
+              {capabilities.is_hopper && !capabilities.attention_implementations.some(opt => opt.value === 'flash_attention_3') && (
+                <span className="px-2 py-0.5 bg-slate-200 text-slate-600 rounded text-xs font-medium" title="FA3 compatible but not installed. Rebuild Docker on Hopper GPU to enable.">
+                  FA3 Compatible
                 </span>
               )}
             </div>

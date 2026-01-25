@@ -71,34 +71,74 @@ class GPUService:
     
     @staticmethod
     def cleanup_gpu_memory() -> Dict[str, Any]:
+        """Aggressive GPU memory cleanup using both PyTorch and pynvml."""
         result = {
             "success": True,
             "before": GPUService.get_current_memory_usage(),
+            "before_nvml": GPUService.get_nvml_memory_usage(),
             "actions": [],
         }
         
         try:
+            # Multiple garbage collection passes first
+            for _ in range(3):
+                gc.collect()
+            result["actions"].append("gc.collect() x3")
+            
             if TORCH_AVAILABLE and torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                result["actions"].append("torch.cuda.empty_cache()")
-                
-                torch.cuda.reset_peak_memory_stats()
-                result["actions"].append("torch.cuda.reset_peak_memory_stats()")
-                
+                # Synchronize before cleanup
                 torch.cuda.synchronize()
                 result["actions"].append("torch.cuda.synchronize()")
+                
+                # Empty cache on all devices
+                device_count = torch.cuda.device_count()
+                for i in range(device_count):
+                    with torch.cuda.device(i):
+                        torch.cuda.empty_cache()
+                        torch.cuda.synchronize()
+                        torch.cuda.reset_peak_memory_stats()
+                        torch.cuda.reset_accumulated_memory_stats()
+                result["actions"].append(f"torch.cuda.empty_cache() on {device_count} GPUs")
+                
+                # IPC collect for multi-process scenarios
+                if hasattr(torch.cuda, 'ipc_collect'):
+                    torch.cuda.ipc_collect()
+                    result["actions"].append("torch.cuda.ipc_collect()")
             
-            gc.collect()
-            result["actions"].append("gc.collect()")
+            # Final garbage collection
+            for _ in range(2):
+                gc.collect()
+            result["actions"].append("gc.collect() x2 (final)")
             
             result["after"] = GPUService.get_current_memory_usage()
+            result["after_nvml"] = GPUService.get_nvml_memory_usage()
             result["memory_freed_mb"] = result["before"]["allocated_mb"] - result["after"]["allocated_mb"]
+            
+            # Also report actual GPU memory freed (from driver level)
+            if result["before_nvml"]["used_mb"] > 0 and result["after_nvml"]["used_mb"] >= 0:
+                result["actual_memory_freed_mb"] = result["before_nvml"]["used_mb"] - result["after_nvml"]["used_mb"]
             
         except Exception as e:
             result["success"] = False
             result["error"] = "GPU cleanup failed"
         
         return result
+    
+    @staticmethod
+    def get_nvml_memory_usage() -> Dict[str, float]:
+        """Get actual GPU memory usage from driver (not PyTorch allocation)."""
+        try:
+            if NVML_AVAILABLE:
+                handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                return {
+                    "used_mb": mem_info.used / (1024 * 1024),
+                    "total_mb": mem_info.total / (1024 * 1024),
+                    "free_mb": mem_info.free / (1024 * 1024),
+                }
+        except Exception:
+            pass
+        return {"used_mb": 0, "total_mb": 0, "free_mb": 0}
     
     @staticmethod
     def cleanup_cache_directories(cache_dirs: Optional[list] = None) -> Dict[str, Any]:

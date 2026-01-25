@@ -7,6 +7,7 @@ import subprocess
 
 from ...core.config import settings
 from ...core.capabilities import get_validator, is_system_expired, SystemExpiredError
+from ...services.gpu_cleanup_service import gpu_cleanup_service
 
 router = APIRouter(prefix="/system", tags=["system"])
 
@@ -481,6 +482,152 @@ async def readiness_check():
     return {"ready": False, "reason": "; ".join(reasons)}
 
 
+@router.get("/hardware-requirements")
+async def get_hardware_requirements():
+    """
+    Get hardware requirements and validation status.
+    
+    USF BIOS Requirements:
+    - NVIDIA GPU with CUDA support (required for training)
+    - Minimum 16GB VRAM recommended for most models
+    - AMD GPUs are NOT supported (no ROCm support in this Docker image)
+    - CPU-only training is NOT supported (impractical for LLMs)
+    
+    Returns detailed hardware status and clear error messages for users.
+    """
+    result = {
+        "hardware_supported": False,
+        "can_train": False,
+        "can_inference": False,
+        "gpu_vendor": None,
+        "gpu_name": None,
+        "gpu_memory_gb": None,
+        "cuda_available": False,
+        "requirements": {
+            "gpu": "NVIDIA GPU with CUDA support",
+            "min_vram": "16GB recommended (8GB minimum for small models)",
+            "supported_architectures": ["Turing (RTX 20xx)", "Ampere (RTX 30xx, A100)", "Ada Lovelace (RTX 40xx)", "Hopper (H100, H200)"],
+            "not_supported": ["AMD GPUs (ROCm)", "Intel GPUs", "CPU-only"]
+        },
+        "errors": [],
+        "warnings": []
+    }
+    
+    # Check CUDA availability
+    try:
+        import torch
+        result["cuda_available"] = torch.cuda.is_available()
+        
+        if not result["cuda_available"]:
+            result["errors"].append({
+                "code": "NO_CUDA",
+                "title": "CUDA Not Available",
+                "message": "No NVIDIA GPU with CUDA support detected. USF BIOS requires an NVIDIA GPU for training.",
+                "suggestions": [
+                    "Ensure you have an NVIDIA GPU installed",
+                    "Install NVIDIA drivers and CUDA toolkit",
+                    "If using cloud GPU, ensure GPU is attached to instance",
+                    "AMD and Intel GPUs are not supported"
+                ]
+            })
+            return result
+        
+        # GPU is available - get details
+        device_count = torch.cuda.device_count()
+        if device_count == 0:
+            result["errors"].append({
+                "code": "NO_GPU_DEVICE",
+                "title": "No GPU Device Found",
+                "message": "CUDA is available but no GPU devices were found.",
+                "suggestions": ["Check GPU driver installation", "Restart the container"]
+            })
+            return result
+        
+        # Get GPU info
+        props = torch.cuda.get_device_properties(0)
+        gpu_name = props.name
+        gpu_memory_gb = round(props.total_memory / (1024**3), 1)
+        compute_capability = f"{props.major}.{props.minor}"
+        
+        result["gpu_name"] = gpu_name
+        result["gpu_memory_gb"] = gpu_memory_gb
+        result["gpu_vendor"] = "NVIDIA"
+        result["hardware_supported"] = True
+        result["can_train"] = True
+        result["can_inference"] = True
+        
+        # Check for AMD GPU (shouldn't happen in CUDA context, but just in case)
+        if "AMD" in gpu_name.upper() or "RADEON" in gpu_name.upper():
+            result["hardware_supported"] = False
+            result["can_train"] = False
+            result["gpu_vendor"] = "AMD"
+            result["errors"].append({
+                "code": "AMD_NOT_SUPPORTED",
+                "title": "AMD GPU Not Supported",
+                "message": "AMD GPUs are not supported in this Docker image. USF BIOS requires NVIDIA GPUs with CUDA.",
+                "suggestions": [
+                    "Use an NVIDIA GPU (RTX 20xx/30xx/40xx, A100, H100, etc.)",
+                    "AMD ROCm support may be added in future versions"
+                ]
+            })
+            return result
+        
+        # Check VRAM warnings
+        if gpu_memory_gb < 8:
+            result["warnings"].append({
+                "code": "LOW_VRAM",
+                "title": "Low GPU Memory",
+                "message": f"Your GPU has only {gpu_memory_gb}GB VRAM. You may only be able to train very small models with QLoRA.",
+                "suggestions": ["Use QLoRA with 4-bit quantization", "Reduce batch size to 1", "Reduce max sequence length"]
+            })
+        elif gpu_memory_gb < 16:
+            result["warnings"].append({
+                "code": "LIMITED_VRAM",
+                "title": "Limited GPU Memory",
+                "message": f"Your GPU has {gpu_memory_gb}GB VRAM. Some larger models may require QLoRA or reduced batch sizes.",
+                "suggestions": ["Consider QLoRA for 7B+ models", "Monitor VRAM usage during training"]
+            })
+        
+        # Check compute capability
+        major = props.major
+        if major < 7:
+            result["warnings"].append({
+                "code": "OLD_GPU_ARCH",
+                "title": "Older GPU Architecture",
+                "message": f"Your GPU (compute capability {compute_capability}) is an older architecture. Some optimizations may not be available.",
+                "suggestions": ["Flash Attention may not work optimally", "Consider upgrading to Ampere or newer"]
+            })
+        
+        # Add GPU architecture info
+        if major >= 9:
+            result["gpu_architecture"] = "Hopper"
+        elif major >= 8:
+            result["gpu_architecture"] = "Ampere"
+        elif major >= 7:
+            result["gpu_architecture"] = "Turing/Volta"
+        else:
+            result["gpu_architecture"] = "Legacy"
+        
+        return result
+        
+    except ImportError:
+        result["errors"].append({
+            "code": "NO_TORCH",
+            "title": "PyTorch Not Installed",
+            "message": "PyTorch is not installed. The training system cannot function.",
+            "suggestions": ["Reinstall the Docker image", "Contact support"]
+        })
+        return result
+    except Exception as e:
+        result["errors"].append({
+            "code": "HARDWARE_CHECK_FAILED",
+            "title": "Hardware Check Failed",
+            "message": "Unable to verify hardware status.",
+            "suggestions": ["Restart the container", "Check GPU drivers"]
+        })
+        return result
+
+
 # =============================================================================
 # System Configuration Endpoints (Hidden from API docs)
 # =============================================================================
@@ -799,16 +946,22 @@ def detect_available_optimizations() -> dict:
             pass
     
     # Check Flash Attention 3
+    # FA3 installs as 'flash_attn_interface' or 'flashattn_hopper' module (not 'flash_attn_3')
     try:
         from usf_bios.utils import is_flash_attn_3_available
         result["flash_attention_3"] = is_flash_attn_3_available()
     except ImportError:
         try:
             import importlib.util
-            result["flash_attention_3"] = (
-                importlib.util.find_spec('flash_attn_3') is not None and
-                importlib.util.find_spec('flash_attn_interface') is not None
-            )
+            # Check for flash_attn_interface (standard FA3 installation)
+            if importlib.util.find_spec('flash_attn_interface') is not None:
+                result["flash_attention_3"] = True
+            # Check for flashattn_hopper (alternative build)
+            elif importlib.util.find_spec('flashattn_hopper') is not None:
+                result["flash_attention_3"] = True
+            # Legacy check for flash_attn_3 module
+            elif importlib.util.find_spec('flash_attn_3') is not None:
+                result["flash_attention_3"] = True
         except:
             pass
     
@@ -1029,3 +1182,451 @@ async def get_training_capabilities():
         # Validation Rules
         "incompatible_combinations": incompatible_combinations
     }
+
+
+@router.post("/optimize-config")
+async def optimize_training_config(
+    model_size_gb: float = 0,
+    model_params_b: float = 0,  # In billions (e.g., 7 for 7B model)
+    gpu_memory_gb: float = 0,
+    training_method: str = "sft",  # sft, pt, rlhf
+    train_type: str = "lora",  # lora, qlora, adalora, full
+    rlhf_type: str = None,  # dpo, ppo, grpo, etc.
+    dataset_samples: int = 1000,
+    max_seq_length: int = 2048
+):
+    """
+    Smart training configuration optimizer.
+    
+    Analyzes model size, GPU memory, training type, and dataset to suggest
+    the best optimized training settings.
+    
+    Returns recommended:
+    - batch_size
+    - gradient_accumulation
+    - learning_rate
+    - epochs
+    - lora_rank (if applicable)
+    - lora_alpha (if applicable)
+    - quantization settings
+    - deepspeed/fsdp settings
+    - attention implementation
+    """
+    
+    # Get GPU info if not provided
+    if gpu_memory_gb <= 0:
+        try:
+            import torch
+            if torch.cuda.is_available():
+                gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+        except:
+            gpu_memory_gb = 24  # Default assumption
+    
+    # Estimate model params from size if not provided
+    if model_params_b <= 0 and model_size_gb > 0:
+        # Rough estimate: 1B params ≈ 2GB in fp16
+        model_params_b = model_size_gb / 2
+    
+    # If model_params not known, assume from common sizes
+    if model_params_b <= 0:
+        model_params_b = 7  # Default 7B
+    
+    # ========================================
+    # MEMORY ESTIMATION
+    # ========================================
+    # Model memory = params * bytes_per_param
+    # - fp32: 4 bytes, fp16/bf16: 2 bytes, int8: 1 byte, int4: 0.5 bytes
+    # - Optimizer states: 8-12 bytes per param (AdamW)
+    # - Gradients: 2-4 bytes per param
+    # - Activations: varies with batch size and seq length
+    
+    bytes_per_param = {
+        "full": 2,      # bf16/fp16
+        "lora": 2,      # bf16/fp16 for base, lora adds small overhead
+        "qlora": 0.5,   # 4-bit quantized
+        "adalora": 2,   # Similar to lora
+    }
+    
+    base_model_memory_gb = model_params_b * bytes_per_param.get(train_type, 2)
+    
+    # For QLoRA, base model is quantized
+    if train_type == "qlora":
+        base_model_memory_gb = model_params_b * 0.5  # 4-bit
+    
+    # Available memory for training (leave ~20% buffer)
+    available_memory_gb = gpu_memory_gb * 0.8 - base_model_memory_gb
+    
+    # ========================================
+    # DETERMINE OPTIMAL SETTINGS
+    # ========================================
+    
+    result = {
+        "recommended": {},
+        "reasoning": [],
+        "warnings": [],
+        "gpu_utilization_estimate": 0,
+        "training_time_estimate": None
+    }
+    
+    # --- Training Type Recommendations ---
+    recommended_train_type = train_type
+    
+    # If full fine-tuning but not enough memory, suggest LoRA/QLoRA
+    if train_type == "full":
+        full_memory_needed = model_params_b * 16  # fp16 + optimizer + gradients
+        if full_memory_needed > gpu_memory_gb * 0.9:
+            if gpu_memory_gb >= model_params_b * 2:
+                recommended_train_type = "lora"
+                result["warnings"].append(f"Full fine-tuning needs ~{full_memory_needed:.0f}GB. Recommending LoRA instead.")
+            else:
+                recommended_train_type = "qlora"
+                result["warnings"].append(f"Full fine-tuning needs ~{full_memory_needed:.0f}GB. Recommending QLoRA (4-bit) instead.")
+    
+    result["recommended"]["train_type"] = recommended_train_type
+    
+    # --- Batch Size Calculation ---
+    # Memory per sample ≈ seq_length * hidden_dim * 4 bytes * num_layers / 1024^3 GB
+    # Simplified: ~0.5-2MB per sample for 7B model at 2048 seq length
+    memory_per_sample_mb = (max_seq_length / 2048) * (model_params_b / 7) * 1.5
+    
+    if recommended_train_type == "qlora":
+        memory_per_sample_mb *= 0.6  # QLoRA is more memory efficient
+    elif recommended_train_type == "full":
+        memory_per_sample_mb *= 2.5  # Full fine-tuning needs more
+    
+    max_batch_size = max(1, int((available_memory_gb * 1024) / memory_per_sample_mb))
+    
+    # Cap batch size at reasonable values
+    if max_batch_size > 32:
+        max_batch_size = 32
+    elif max_batch_size > 16:
+        max_batch_size = 16
+    elif max_batch_size > 8:
+        max_batch_size = 8
+    elif max_batch_size > 4:
+        max_batch_size = 4
+    elif max_batch_size > 2:
+        max_batch_size = 2
+    else:
+        max_batch_size = 1
+    
+    result["recommended"]["batch_size"] = max_batch_size
+    result["reasoning"].append(f"Batch size {max_batch_size} based on ~{available_memory_gb:.1f}GB available memory")
+    
+    # --- Gradient Accumulation ---
+    # Target effective batch size: 16-64 for most cases
+    target_effective_batch = 32 if dataset_samples > 5000 else 16
+    
+    if training_method == "rlhf" and rlhf_type in ["ppo", "grpo"]:
+        target_effective_batch = 8  # RLHF methods work better with smaller batches
+    
+    grad_accum = max(1, target_effective_batch // max_batch_size)
+    if grad_accum > 32:
+        grad_accum = 32
+    
+    result["recommended"]["gradient_accumulation"] = grad_accum
+    result["recommended"]["effective_batch_size"] = max_batch_size * grad_accum
+    result["reasoning"].append(f"Gradient accumulation {grad_accum} for effective batch size {max_batch_size * grad_accum}")
+    
+    # --- Learning Rate ---
+    # Base LR depends on training type and model size
+    if recommended_train_type == "full":
+        base_lr = 2e-5 if model_params_b < 13 else 1e-5
+    elif recommended_train_type in ["lora", "adalora"]:
+        base_lr = 2e-4 if model_params_b < 13 else 1e-4
+    else:  # qlora
+        base_lr = 2e-4
+    
+    # Adjust for RLHF
+    if training_method == "rlhf":
+        if rlhf_type == "dpo":
+            base_lr = 5e-7 if recommended_train_type == "full" else 1e-5
+        elif rlhf_type == "ppo":
+            base_lr = 1e-6 if recommended_train_type == "full" else 5e-6
+        elif rlhf_type == "grpo":
+            base_lr = 1e-6 if recommended_train_type == "full" else 1e-5
+    
+    result["recommended"]["learning_rate"] = base_lr
+    result["reasoning"].append(f"Learning rate {base_lr:.0e} optimized for {training_method}/{recommended_train_type}")
+    
+    # --- Epochs ---
+    # Smaller datasets need more epochs, larger need fewer
+    if dataset_samples < 500:
+        epochs = 5
+    elif dataset_samples < 2000:
+        epochs = 3
+    elif dataset_samples < 10000:
+        epochs = 2
+    else:
+        epochs = 1
+    
+    # RLHF typically needs more epochs
+    if training_method == "rlhf":
+        epochs = min(5, epochs + 1)
+    
+    result["recommended"]["epochs"] = epochs
+    result["reasoning"].append(f"{epochs} epochs for {dataset_samples} samples")
+    
+    # --- LoRA Settings ---
+    if recommended_train_type in ["lora", "qlora", "adalora"]:
+        # LoRA rank: larger models can use lower ranks
+        if model_params_b >= 70:
+            lora_rank = 16
+            lora_alpha = 32
+        elif model_params_b >= 30:
+            lora_rank = 32
+            lora_alpha = 64
+        elif model_params_b >= 13:
+            lora_rank = 32
+            lora_alpha = 64
+        else:  # 7B and smaller
+            lora_rank = 64
+            lora_alpha = 128
+        
+        # For QLoRA, can use slightly lower ranks
+        if recommended_train_type == "qlora":
+            lora_rank = max(8, lora_rank // 2)
+            lora_alpha = lora_rank * 2
+        
+        result["recommended"]["lora_rank"] = lora_rank
+        result["recommended"]["lora_alpha"] = lora_alpha
+        result["recommended"]["lora_dropout"] = 0.05
+        result["recommended"]["target_modules"] = "all-linear"
+        result["reasoning"].append(f"LoRA rank {lora_rank}, alpha {lora_alpha} for {model_params_b:.0f}B model")
+    
+    # --- Quantization (QLoRA) ---
+    if recommended_train_type == "qlora":
+        result["recommended"]["quant_bits"] = 4
+        result["reasoning"].append("4-bit quantization for memory efficiency")
+    
+    # --- Max Sequence Length ---
+    # Adjust based on available memory
+    if available_memory_gb < 4:
+        recommended_seq_length = min(max_seq_length, 1024)
+    elif available_memory_gb < 8:
+        recommended_seq_length = min(max_seq_length, 2048)
+    elif available_memory_gb < 16:
+        recommended_seq_length = min(max_seq_length, 4096)
+    else:
+        recommended_seq_length = max_seq_length
+    
+    result["recommended"]["max_length"] = recommended_seq_length
+    
+    # --- DeepSpeed / FSDP ---
+    if model_params_b >= 70:
+        result["recommended"]["deepspeed"] = "zero3_offload"
+        result["reasoning"].append("ZeRO-3 + Offload recommended for 70B+ models")
+    elif model_params_b >= 30:
+        result["recommended"]["deepspeed"] = "zero3"
+        result["reasoning"].append("ZeRO-3 recommended for 30B+ models")
+    elif model_params_b >= 13 and recommended_train_type == "full":
+        result["recommended"]["deepspeed"] = "zero2"
+        result["reasoning"].append("ZeRO-2 recommended for full fine-tuning of 13B+ models")
+    else:
+        result["recommended"]["deepspeed"] = None
+    
+    # --- Attention Implementation ---
+    # Check GPU capabilities
+    try:
+        import torch
+        if torch.cuda.is_available():
+            props = torch.cuda.get_device_properties(0)
+            compute_cap = props.major * 10 + props.minor
+            
+            if compute_cap >= 90:  # Hopper
+                result["recommended"]["attention"] = "flash_attention_3"
+                result["reasoning"].append("Flash Attention 3 for Hopper GPU")
+            elif compute_cap >= 80:  # Ampere
+                result["recommended"]["attention"] = "flash_attention_2"
+                result["reasoning"].append("Flash Attention 2 for Ampere+ GPU")
+            else:
+                result["recommended"]["attention"] = "sdpa"
+                result["reasoning"].append("SDPA attention for older GPU")
+    except:
+        result["recommended"]["attention"] = "sdpa"
+    
+    # --- Warmup Ratio ---
+    result["recommended"]["warmup_ratio"] = 0.03 if dataset_samples > 1000 else 0.1
+    
+    # --- RLHF-specific settings ---
+    if training_method == "rlhf" and rlhf_type:
+        if rlhf_type == "dpo":
+            result["recommended"]["beta"] = 0.1
+            result["reasoning"].append("DPO beta=0.1 (standard)")
+        elif rlhf_type == "kto":
+            result["recommended"]["beta"] = 0.1
+            result["recommended"]["desirable_weight"] = 1.0
+            result["recommended"]["undesirable_weight"] = 1.0
+        elif rlhf_type == "ppo":
+            result["recommended"]["num_ppo_epochs"] = 4
+            result["recommended"]["kl_coef"] = 0.05
+            result["recommended"]["cliprange"] = 0.2
+        elif rlhf_type == "grpo":
+            result["recommended"]["num_generations"] = 8 if gpu_memory_gb > 40 else 4
+            result["reasoning"].append(f"GRPO generations={result['recommended']['num_generations']} based on memory")
+    
+    # --- Estimated GPU Utilization ---
+    estimated_memory_used = base_model_memory_gb + (max_batch_size * memory_per_sample_mb / 1024)
+    result["gpu_utilization_estimate"] = min(95, int((estimated_memory_used / gpu_memory_gb) * 100))
+    
+    # --- Training Time Estimate ---
+    # Rough estimate: 1 sample/sec for 7B, scales with model size
+    samples_per_sec = 1.0 / (model_params_b / 7) * max_batch_size
+    total_samples = dataset_samples * epochs
+    total_steps = total_samples / (max_batch_size * grad_accum)
+    estimated_seconds = total_steps / samples_per_sec * (max_batch_size * grad_accum)
+    
+    if estimated_seconds < 3600:
+        result["training_time_estimate"] = f"~{int(estimated_seconds / 60)} minutes"
+    else:
+        result["training_time_estimate"] = f"~{estimated_seconds / 3600:.1f} hours"
+    
+    return result
+
+
+# =============================================================================
+# GPU Memory Cleanup Endpoints
+# =============================================================================
+
+class GPUCleanupResponse(BaseModel):
+    """Response model for GPU cleanup operations"""
+    success: bool
+    memory_freed_gb: float = 0.0
+    memory_used_gb: float = 0.0
+    total_memory_gb: float = 0.0
+    cleanup_type: str = "unknown"
+    message: Optional[str] = None
+    error: Optional[str] = None
+    details: Optional[dict] = None
+
+
+@router.post("/gpu/cleanup", response_model=GPUCleanupResponse)
+async def cleanup_gpu_memory(
+    deep: bool = True,
+    kill_orphans: bool = True
+):
+    """
+    Manually trigger GPU memory cleanup.
+    
+    Use this endpoint when:
+    - Training failed and GPU memory wasn't released
+    - Before starting a new training to ensure clean state
+    - After inference to free VRAM for training
+    - When VRAM usage shows high even with no active jobs
+    
+    Args:
+        deep: If True, performs comprehensive cleanup including orphan process killing.
+              If False, performs quick cleanup (just GC and cache clear).
+        kill_orphans: If True, kills orphaned CUDA processes consuming GPU memory.
+    
+    Returns:
+        GPUCleanupResponse with memory freed and current state.
+    """
+    import os
+    
+    try:
+        if deep:
+            result = await gpu_cleanup_service.async_deep_cleanup(
+                kill_orphans=kill_orphans,
+                exclude_pids=[os.getpid()]
+            )
+            
+            if result.get("success"):
+                mem_after = result.get("memory_after", {})
+                return GPUCleanupResponse(
+                    success=True,
+                    memory_freed_gb=result.get("memory_freed_gb", 0.0),
+                    memory_used_gb=mem_after.get("total_used_gb", 0.0),
+                    total_memory_gb=mem_after.get("total_memory_gb", 0.0),
+                    cleanup_type="deep",
+                    message=f"Successfully freed {result.get('memory_freed_gb', 0):.2f}GB VRAM",
+                    details={
+                        "steps": result.get("steps", []),
+                        "gpus": mem_after.get("gpus", [])
+                    }
+                )
+            else:
+                return GPUCleanupResponse(
+                    success=False,
+                    cleanup_type="deep",
+                    error=result.get("error", "Unknown cleanup error")
+                )
+        else:
+            result = await gpu_cleanup_service.async_quick_cleanup()
+            
+            if result.get("success"):
+                mem_info = result.get("memory_info", {})
+                return GPUCleanupResponse(
+                    success=True,
+                    memory_used_gb=mem_info.get("total_used_gb", 0.0),
+                    total_memory_gb=mem_info.get("total_memory_gb", 0.0),
+                    cleanup_type="quick",
+                    message="Quick cleanup completed"
+                )
+            else:
+                return GPUCleanupResponse(
+                    success=False,
+                    cleanup_type="quick",
+                    error=result.get("error", "Unknown cleanup error")
+                )
+    
+    except Exception as e:
+        return GPUCleanupResponse(
+            success=False,
+            cleanup_type="deep" if deep else "quick",
+            error=str(e)
+        )
+
+
+@router.get("/gpu/memory")
+async def get_gpu_memory_status():
+    """
+    Get detailed GPU memory status for all GPUs.
+    
+    Returns:
+        - available: Whether GPU is available
+        - device_count: Number of GPUs
+        - gpus: List of per-GPU memory info
+        - total_used_gb: Total VRAM used across all GPUs
+        - total_free_gb: Total VRAM free across all GPUs
+        - total_memory_gb: Total VRAM capacity
+    """
+    return gpu_cleanup_service.get_gpu_memory_info()
+
+
+@router.post("/gpu/cleanup/quick")
+async def quick_cleanup_gpu():
+    """
+    Perform a quick GPU memory cleanup.
+    
+    This is a lightweight cleanup that:
+    - Runs Python garbage collection
+    - Clears PyTorch CUDA cache
+    
+    Use this for routine cleanup between operations.
+    For more thorough cleanup (e.g., after training failures), use POST /gpu/cleanup with deep=True.
+    """
+    result = await gpu_cleanup_service.async_quick_cleanup()
+    return result
+
+
+@router.post("/gpu/cleanup/deep")
+async def deep_cleanup_gpu():
+    """
+    Perform a deep GPU memory cleanup.
+    
+    This is a comprehensive cleanup that:
+    - Runs multiple passes of garbage collection
+    - Clears PyTorch CUDA cache on all GPUs
+    - Kills orphaned CUDA processes
+    - Resets CUDA memory statistics
+    - Performs IPC cleanup for multi-process scenarios
+    
+    Use this after training failures or when VRAM is stuck at high usage.
+    """
+    import os
+    result = await gpu_cleanup_service.async_deep_cleanup(
+        kill_orphans=True,
+        exclude_pids=[os.getpid()]
+    )
+    return result

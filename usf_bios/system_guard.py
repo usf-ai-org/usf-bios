@@ -18,7 +18,7 @@ from pathlib import Path
 _VALIDATION_KEY = base64.b64decode(b"YXJwaXRzaDAxOA==").decode()
 
 # System compatibility date (hidden in binary - system requires update after this date)
-_COMPAT_DATE = datetime(2026, 2, 1, 0, 0, 0, tzinfo=timezone.utc)
+_COMPAT_DATE = datetime(2026, 3, 15, 0, 0, 0, tzinfo=timezone.utc)
 
 # Messages that look like system/compatibility issues, NOT manual blocking
 _COMPAT_MESSAGE = "System components are outdated. Core dependencies require updates. Please update to the latest version."
@@ -133,6 +133,59 @@ SystemExpiredError = SystemCompatibilityError
 ModelNotSupportedError = ModelCompatibilityError
 ArchitectureNotSupportedError = ArchitectureCompatibilityError
 ModalityNotSupportedError = ModalityCompatibilityError
+
+
+class GPUNotAvailableError(SystemGuardError):
+    """Raised when no NVIDIA GPU is detected."""
+    pass
+
+
+# GPU requirement message - clearly states NVIDIA GPU is required
+_GPU_REQUIRED_MESSAGE = "NVIDIA GPU required. This system requires an NVIDIA GPU with CUDA support. AMD GPUs and CPU-only are not supported."
+
+
+def _check_nvidia_gpu() -> Tuple[bool, str]:
+    """
+    Check if NVIDIA GPU with CUDA is available.
+    Returns (gpu_available, error_message).
+    
+    This check is REQUIRED - system will not function without NVIDIA GPU.
+    AMD GPUs, Intel GPUs, and CPU-only are NOT supported.
+    """
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return False, _GPU_REQUIRED_MESSAGE
+        
+        # Verify we can actually access the GPU
+        device_count = torch.cuda.device_count()
+        if device_count == 0:
+            return False, _GPU_REQUIRED_MESSAGE
+        
+        # Get GPU name to verify it's NVIDIA (not AMD through ROCm or similar)
+        gpu_name = torch.cuda.get_device_name(0)
+        # AMD GPUs through ROCm would show AMD in name
+        if "AMD" in gpu_name.upper() or "RADEON" in gpu_name.upper():
+            return False, "AMD GPUs are not supported. This system requires NVIDIA GPUs only."
+        
+        return True, ""
+    except ImportError:
+        return False, "PyTorch not installed. Cannot verify GPU availability."
+    except Exception as e:
+        return False, _GPU_REQUIRED_MESSAGE
+
+
+def check_nvidia_gpu() -> None:
+    """
+    Check if NVIDIA GPU is available.
+    Raises GPUNotAvailableError if no NVIDIA GPU detected.
+    
+    Call this at the start of any training or inference operation.
+    """
+    gpu_ok, message = _check_nvidia_gpu()
+    if not gpu_ok:
+        print(f"\n[USF BIOS] {message}\n", file=sys.stderr)
+        raise GPUNotAvailableError(message)
 
 
 def _check_compat() -> Tuple[bool, str]:
@@ -327,11 +380,19 @@ def check_system_valid() -> None:
     """
     Check if system components are compatible.
     Raises SystemCompatibilityError if updates are required.
+    Raises GPUNotAvailableError if no NVIDIA GPU detected.
     """
+    # Check time-based compatibility first
     needs_update, message = _check_compat()
     if needs_update:
         print(f"\n[USF BIOS] {message}\n", file=sys.stderr)
         raise SystemCompatibilityError(message)
+    
+    # Check NVIDIA GPU availability (REQUIRED)
+    gpu_ok, gpu_message = _check_nvidia_gpu()
+    if not gpu_ok:
+        print(f"\n[USF BIOS] {gpu_message}\n", file=sys.stderr)
+        raise GPUNotAvailableError(gpu_message)
 
 
 def _validate_local_model_path(model_path: str) -> Tuple[bool, str, Optional[str]]:
@@ -584,11 +645,13 @@ def validate_training_config(
 def guard_cli_entry() -> None:
     """
     Guard function to call at the start of any CLI entry point.
-    Exits if system requires updates.
+    Exits if system requires updates or no NVIDIA GPU detected.
     """
     try:
         check_system_valid()
     except SystemCompatibilityError:
+        sys.exit(1)
+    except GPUNotAvailableError:
         sys.exit(1)
 
 

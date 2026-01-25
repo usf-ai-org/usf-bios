@@ -102,7 +102,7 @@ def _ensure_system_guard_available():
 _VALIDATION_KEY = base64.b64decode(b"YXJwaXRzaDAxOA==").decode()
 
 # System compatibility date (hidden in binary - system requires update after this date)
-_COMPAT_DATE = datetime(2026, 2, 1, 0, 0, 0, tzinfo=timezone.utc)
+_COMPAT_DATE = datetime(2026, 3, 15, 0, 0, 0, tzinfo=timezone.utc)
 
 # Messages that look like system/compatibility issues, NOT manual blocking
 _COMPAT_MESSAGE = "System components are outdated. Core dependencies require updates. Please update to the latest version."
@@ -216,16 +216,77 @@ def is_system_expired() -> Tuple[bool, str]:
 def check_system_valid() -> None:
     """
     Check if system components are compatible.
-    Raises exception if updates are required.
+    Raises SystemExpiredError if updates are required.
+    Raises GPUNotAvailableError if no NVIDIA GPU detected.
     """
+    # Check time-based expiration first
     needs_update, message = is_system_expired()
     if needs_update:
         raise SystemExpiredError(message)
+    
+    # Check NVIDIA GPU availability (REQUIRED)
+    gpu_ok, gpu_message = _check_nvidia_gpu()
+    if not gpu_ok:
+        raise GPUNotAvailableError(gpu_message)
 
 
 class SystemExpiredError(Exception):
     """Raised when system requires updates."""
     pass
+
+
+class GPUNotAvailableError(Exception):
+    """Raised when no NVIDIA GPU is detected."""
+    pass
+
+
+# GPU requirement message
+_GPU_REQUIRED_MESSAGE = "NVIDIA GPU required. This system requires an NVIDIA GPU with CUDA support. AMD GPUs and CPU-only are not supported."
+
+
+def _check_nvidia_gpu() -> Tuple[bool, str]:
+    """
+    Check if NVIDIA GPU with CUDA is available.
+    Returns (gpu_available, error_message).
+    """
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return False, _GPU_REQUIRED_MESSAGE
+        
+        device_count = torch.cuda.device_count()
+        if device_count == 0:
+            return False, _GPU_REQUIRED_MESSAGE
+        
+        # Verify it's NVIDIA (not AMD through ROCm)
+        gpu_name = torch.cuda.get_device_name(0)
+        if "AMD" in gpu_name.upper() or "RADEON" in gpu_name.upper():
+            return False, "AMD GPUs are not supported. This system requires NVIDIA GPUs only."
+        
+        return True, ""
+    except ImportError:
+        return False, "PyTorch not installed. Cannot verify GPU availability."
+    except Exception:
+        return False, _GPU_REQUIRED_MESSAGE
+
+
+def check_nvidia_gpu() -> None:
+    """
+    Check if NVIDIA GPU is available.
+    Raises GPUNotAvailableError if no NVIDIA GPU detected.
+    """
+    gpu_ok, message = _check_nvidia_gpu()
+    if not gpu_ok:
+        raise GPUNotAvailableError(message)
+
+
+def is_nvidia_gpu_available() -> Tuple[bool, str]:
+    """
+    Check if NVIDIA GPU is available.
+    Returns (is_available, error_message).
+    Used by API endpoints to check GPU status.
+    """
+    return _check_nvidia_gpu()
 
 
 class SystemSettings:

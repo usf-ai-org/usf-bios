@@ -18,6 +18,7 @@ from .websocket_manager import ws_manager
 from .sanitized_log_service import sanitized_log_service
 from .encrypted_log_service import encrypted_log_service
 from .job_service import JobService
+from .gpu_cleanup_service import gpu_cleanup_service
 
 
 def _debug_log(job_id: str, message: str, level: str = "DEBUG"):
@@ -240,14 +241,22 @@ class TrainingService:
             if lr_alt:
                 metrics["learning_rate"] = float(lr_alt.group(1))
         
-        # Parse step
-        step_match = re.search(r"'(global_)?step':\s*(\d+)", line)
-        if step_match:
-            metrics["step"] = int(step_match.group(2))
+        # Parse step - supports multiple formats
+        # Format 1: 'global_step/max_steps': '2/3' (USF BIOS format)
+        step_max_match = re.search(r"'global_step/max_steps':\s*'(\d+)/(\d+)'", line)
+        if step_max_match:
+            metrics["step"] = int(step_max_match.group(1))
+            metrics["total_steps"] = int(step_max_match.group(2))
         else:
-            step_alt = re.search(r"(?:Step|step)[=:\s]+(\d+)", line)
-            if step_alt:
-                metrics["step"] = int(step_alt.group(1))
+            # Format 2: 'step': 2 or 'global_step': 2
+            step_match = re.search(r"'(global_)?step':\s*(\d+)", line)
+            if step_match:
+                metrics["step"] = int(step_match.group(2))
+            else:
+                # Format 3: Step 2 or step=2
+                step_alt = re.search(r"(?:Step|step)[=:\s]+(\d+)", line)
+                if step_alt:
+                    metrics["step"] = int(step_alt.group(1))
         
         # Parse epoch
         epoch_match = re.search(r"'epoch':\s*([\d.]+)", line)
@@ -377,6 +386,30 @@ class TrainingService:
             return
         
         _debug_log(job_id, f"Job found, config: {job.config}")
+        
+        # ============================================================
+        # PRE-TRAINING GPU CLEANUP: Ensure GPU memory is clean
+        # This prevents OOM errors from previous training runs
+        # ============================================================
+        try:
+            _debug_log(job_id, "Performing pre-training GPU cleanup...")
+            cleanup_result = await gpu_cleanup_service.async_deep_cleanup(
+                kill_orphans=True,
+                exclude_pids=[os.getpid()]
+            )
+            if cleanup_result.get("success"):
+                freed_gb = cleanup_result.get("memory_freed_gb", 0)
+                if freed_gb > 0:
+                    _debug_log(job_id, f"Pre-training cleanup freed {freed_gb}GB VRAM")
+                    sanitized_log_service.create_terminal_log(
+                        job_id, 
+                        f"GPU cleanup freed {freed_gb}GB VRAM", 
+                        "INFO"
+                    )
+            else:
+                _debug_log(job_id, f"Pre-training cleanup warning: {cleanup_result.get('error', 'unknown')}", "WARN")
+        except Exception as cleanup_err:
+            _debug_log(job_id, f"Pre-training cleanup error (non-fatal): {cleanup_err}", "WARN")
         
         try:
             # Update status
@@ -843,6 +876,9 @@ class TrainingService:
                 sanitized_log_service.create_terminal_log(job_id, "Training completed successfully!", "INFO")
                 await ws_manager.send_log(job_id, "Training completed successfully!", "success")
                 sanitized_log_service.log_session_end(job_id, "COMPLETED")
+                
+                # POST-TRAINING CLEANUP: Release GPU memory after successful completion
+                await self._cleanup_after_training(job_id, "completed")
             else:
                 # Log failure with exit code
                 error_msg = f"Training failed with exit code {return_code}"
@@ -868,6 +904,9 @@ class TrainingService:
                 sanitized_log_service.create_terminal_log(job_id, error_msg, "ERROR")
                 await ws_manager.send_log(job_id, error_msg, "error")
                 sanitized_log_service.log_session_end(job_id, "FAILED", error_message=error_msg)
+                
+                # POST-TRAINING CLEANUP: Release GPU memory after failure
+                await self._cleanup_after_training(job_id, "failed")
         
         except asyncio.CancelledError:
             await job_manager.update_job(job_id, status=JobStatus.STOPPED)
@@ -875,6 +914,9 @@ class TrainingService:
             sanitized_log_service.create_terminal_log(job_id, "Training stopped by user", "WARN")
             await ws_manager.send_log(job_id, "Training stopped by user", "warning")
             sanitized_log_service.log_session_end(job_id, "CANCELLED")
+            
+            # POST-TRAINING CLEANUP: Release GPU memory after cancellation
+            await self._cleanup_after_training(job_id, "cancelled")
         
         except Exception as e:
             # ============================================================
@@ -903,6 +945,48 @@ class TrainingService:
             sanitized_log_service.create_terminal_log(job_id, f"Error: {minimal_error}", "ERROR")
             await ws_manager.send_log(job_id, f"Error: {minimal_error}", "error")
             sanitized_log_service.log_session_end(job_id, "FAILED", error_message=full_error)
+            
+            # POST-TRAINING CLEANUP: Release GPU memory after exception
+            await self._cleanup_after_training(job_id, "exception")
+    
+    async def _cleanup_after_training(self, job_id: str, reason: str) -> None:
+        """
+        Perform GPU memory cleanup after training ends.
+        
+        This is critical for preventing VRAM leaks between training sessions.
+        Called after training completes, fails, is cancelled, or throws an exception.
+        """
+        try:
+            _debug_log(job_id, f"Performing post-training GPU cleanup (reason: {reason})...")
+            
+            # Small delay to allow subprocess to fully terminate
+            await asyncio.sleep(0.5)
+            
+            # Deep cleanup with orphan killing enabled
+            cleanup_result = await gpu_cleanup_service.async_deep_cleanup(
+                kill_orphans=True,
+                exclude_pids=[os.getpid()]
+            )
+            
+            if cleanup_result.get("success"):
+                freed_gb = cleanup_result.get("memory_freed_gb", 0)
+                mem_after = cleanup_result.get("memory_after", {})
+                used_gb = mem_after.get("total_used_gb", 0)
+                total_gb = mem_after.get("total_memory_gb", 0)
+                
+                _debug_log(job_id, f"Post-training cleanup: freed {freed_gb}GB, now using {used_gb}/{total_gb}GB")
+                
+                if freed_gb > 1.0:  # Only log if significant memory was freed
+                    sanitized_log_service.create_terminal_log(
+                        job_id,
+                        f"GPU cleanup: freed {freed_gb}GB VRAM",
+                        "INFO"
+                    )
+            else:
+                _debug_log(job_id, f"Post-training cleanup warning: {cleanup_result.get('error', 'unknown')}", "WARN")
+                
+        except Exception as e:
+            _debug_log(job_id, f"Post-training cleanup error (non-fatal): {e}", "WARN")
     
     async def start_training(self, job_id: str) -> bool:
         """Start training in background"""

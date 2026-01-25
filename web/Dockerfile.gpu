@@ -107,6 +107,24 @@ COPY web/backend/ /compile/web/backend/
 # Run the Cython compilation (converts .py to native .so files)
 RUN python /compile/compile_to_so.py
 
+# CRITICAL VERIFICATION: Ensure sensitive .py files are DELETED
+# These files contain validation keys, time checks, and restrictions
+# Build MUST FAIL if any of these still exist as .py
+RUN echo "=== CRITICAL SECURITY VERIFICATION ===" && \
+    echo "Checking that sensitive .py files are deleted..." && \
+    if [ -f /compile/usf_bios/system_guard.py ]; then \
+        echo "CRITICAL ERROR: system_guard.py still exists!"; \
+        exit 1; \
+    fi && \
+    if [ -f /compile/web/backend/app/core/capabilities.py ]; then \
+        echo "CRITICAL ERROR: capabilities.py still exists!"; \
+        exit 1; \
+    fi && \
+    echo "Checking that .so files exist..." && \
+    ls -la /compile/usf_bios/system_guard*.so && \
+    ls -la /compile/web/backend/app/core/capabilities*.so && \
+    echo "✓ CRITICAL FILES VERIFIED - .py deleted, .so exists"
+
 # Clean up build artifacts
 RUN find /compile -name "*.pyc" -delete && \
     find /compile -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true && \
@@ -122,7 +140,7 @@ FROM nvidia/cuda:12.4.0-devel-ubuntu22.04
 
 LABEL maintainer="US Inc <support@us.inc>"
 LABEL description="USF BIOS - Enterprise AI Fine-tuning Platform (GPU Build)"
-LABEL version="2.0.12"
+LABEL version="2.0.14"
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
@@ -427,16 +445,33 @@ RUN echo "" && \
 
 # ============================================================================
 # STEP 6b: Install Flash Attention 3 (Hopper GPUs ONLY: H100, H200)
-# FA3 is a SEPARATE package optimized for Hopper architecture (sm_90)
-# It uses Hopper-specific features like TMA, WGMMA instructions
-# FA3 can coexist with FA2 - they are different Python packages
-# If installation fails (non-Hopper build environment), continue anyway
+# FA3 is optimized for Hopper architecture (sm_90) using TMA, WGMMA instructions
+# 
+# IMPORTANT: FA3 has NO pre-built PyPI package - it MUST be built from source
+# This requires a Hopper GPU to be present during the Docker build.
+# If building on non-Hopper hardware, FA3 will NOT be available.
+#
+# After successful build, the module is 'flash_attn_interface'
+# The UI will only show FA3 option if both:
+#   1. GPU is Hopper (detected at runtime)
+#   2. flash_attn_interface module is importable (installed during build)
 # ============================================================================
 RUN echo "" && \
     echo "=== STEP 6b/11: Installing Flash Attention 3 (Hopper) ===" && \
-    pip install --no-cache-dir flash-attn-hopper 2>/dev/null && \
-    python -c "import flash_attn_3; print('✓ Flash Attention 3 installed')" 2>/dev/null || \
-    echo "⚠ Flash Attention 3 not available (requires Hopper GPU for compilation)"
+    # Check if we're building on a Hopper GPU (sm_90)
+    GPU_ARCH=$(python -c "import torch; props = torch.cuda.get_device_properties(0) if torch.cuda.is_available() else None; print(f'{props.major}.{props.minor}' if props else 'none')" 2>/dev/null || echo "none") && \
+    echo "Detected GPU compute capability: $GPU_ARCH" && \
+    if [ "$GPU_ARCH" = "9.0" ] || [ "$GPU_ARCH" = "9.0a" ]; then \
+        echo "Hopper GPU detected, building Flash Attention 3 from source..." && \
+        pip install --no-cache-dir ninja packaging && \
+        git clone --depth 1 https://github.com/Dao-AILab/flash-attention.git /tmp/flash-attention && \
+        cd /tmp/flash-attention/hopper && \
+        MAX_JOBS=8 python setup.py install && \
+        rm -rf /tmp/flash-attention && \
+        python -c "from flash_attn_interface import flash_attn_func; print('✓ Flash Attention 3 installed successfully')" ; \
+    else \
+        echo "⚠ Flash Attention 3 skipped (requires Hopper GPU for build, detected: $GPU_ARCH)" ; \
+    fi
 
 # ============================================================================
 # STEP 7: Install bitsandbytes
@@ -727,6 +762,35 @@ RUN echo "=== VERIFICATION: Checking compiled files ===" && \
     echo "Checking db_models.py exists (kept as .py - SQLAlchemy ORM):" && \
     test -f /app/web/backend/app/models/db_models.py && echo "  ✓ db_models.py found" && \
     echo "=== BACKEND VERIFICATION PASSED ==="
+
+# ============================================================================
+# CRITICAL SECURITY CHECK: Verify sensitive .py files DO NOT exist in final image
+# ============================================================================
+RUN echo "=== FINAL SECURITY CHECK: Sensitive files ===" && \
+    echo "Checking usf_bios directory:" && \
+    ls -la /app/usf_bios/ && \
+    echo "" && \
+    echo "Verifying system_guard.py is NOT present (should only have .so):" && \
+    if [ -f /app/usf_bios/system_guard.py ]; then \
+        echo "!!!! CRITICAL SECURITY FAILURE !!!!"; \
+        echo "system_guard.py exists in final image - BUILD MUST FAIL"; \
+        exit 1; \
+    fi && \
+    echo "  ✓ system_guard.py NOT found (correct)" && \
+    ls -la /app/usf_bios/system_guard*.so && \
+    echo "  ✓ system_guard.so EXISTS (correct)" && \
+    echo "" && \
+    echo "Verifying capabilities.py is NOT present (should only have .so):" && \
+    if [ -f /app/web/backend/app/core/capabilities.py ]; then \
+        echo "!!!! CRITICAL SECURITY FAILURE !!!!"; \
+        echo "capabilities.py exists in final image - BUILD MUST FAIL"; \
+        exit 1; \
+    fi && \
+    echo "  ✓ capabilities.py NOT found (correct)" && \
+    ls -la /app/web/backend/app/core/capabilities*.so && \
+    echo "  ✓ capabilities.so EXISTS (correct)" && \
+    echo "" && \
+    echo "=== SECURITY CHECK PASSED - All sensitive files protected ==="
 
 # Copy frontend build
 COPY --from=frontend-builder /build/frontend/.next/standalone /app/web/frontend/

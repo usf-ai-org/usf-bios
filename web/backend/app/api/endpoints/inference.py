@@ -303,6 +303,49 @@ async def get_available_backends():
     }
 
 
+class LoadAdapterRequest(BaseModel):
+    """Request to load a LoRA adapter"""
+    adapter_path: str
+
+
+@router.post("/load-adapter", response_model=dict)
+async def load_adapter(request: LoadAdapterRequest):
+    """
+    Load a LoRA adapter onto the currently loaded model.
+    
+    The base model must already be loaded. This endpoint allows
+    dynamically adding adapters after training (e.g., for LoRA fine-tuning).
+    """
+    try:
+        result = await inference_service.load_adapter(request.adapter_path)
+        return result
+    except Exception as e:
+        sanitized = sanitized_log_service.sanitize_error(str(e))
+        return {
+            "success": False,
+            "error": sanitized['user_message']
+        }
+
+
+@router.post("/switch-adapter", response_model=dict)
+async def switch_adapter(request: LoadAdapterRequest):
+    """
+    Switch to a different LoRA adapter.
+    
+    This reloads the model with the specified adapter.
+    Useful when you have multiple fine-tuned adapters and want to switch between them.
+    """
+    try:
+        result = await inference_service.switch_adapter(request.adapter_path)
+        return result
+    except Exception as e:
+        sanitized = sanitized_log_service.sanitize_error(str(e))
+        return {
+            "success": False,
+            "error": sanitized['user_message']
+        }
+
+
 @router.post("/deep-clear-memory", response_model=MemoryStatus)
 async def deep_clear_memory():
     """
