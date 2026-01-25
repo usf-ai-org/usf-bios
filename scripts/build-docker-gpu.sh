@@ -16,7 +16,7 @@
 #   ./scripts/build-docker-gpu.sh                    # Build with cache, push
 #   ./scripts/build-docker-gpu.sh --no-cache         # Fresh build, push
 #   ./scripts/build-docker-gpu.sh --no-push          # Build with cache, no push
-#   ./scripts/build-docker-gpu.sh --no-cache --no-push 2.0.11  # Fresh build, specific version, no push
+#   ./scripts/build-docker-gpu.sh --no-cache --no-push 2.0.12  # Fresh build, specific version, no push
 #
 # REQUIREMENTS:
 #   - NVIDIA GPU (H200, H100, A100, etc.)
@@ -71,7 +71,7 @@ while [[ $# -gt 0 ]]; do
             echo "  $0 --no-cache                # Fresh build, push"
             echo "  $0 --no-push                 # Build with cache, no push"
             echo "  $0 --no-cache --no-push      # Fresh build, no push"
-            echo "  $0 2.0.11                    # Specific version"
+            echo "  $0 2.0.12                    # Specific version"
             exit 0
             ;;
         -*)
@@ -93,7 +93,7 @@ cd "$PROJECT_ROOT"
 
 # Extract version dynamically from usf_bios/version.py if not provided
 if [ -z "$VERSION" ]; then
-    DYNAMIC_VERSION=$(python3 -c "exec(open('usf_bios/version.py').read()); print(__version__)" 2>/dev/null || echo "2.0.11")
+    DYNAMIC_VERSION=$(python3 -c "exec(open('usf_bios/version.py').read()); print(__version__)" 2>/dev/null || echo "2.0.12")
     VERSION="$DYNAMIC_VERSION"
 fi
 

@@ -1,6 +1,6 @@
 # USF BIOS - Docker GPU Build Guide
 
-**Version: 2.0.11**
+**Version: 2.0.12**
 
 Complete guide for building and deploying USF BIOS Docker image on GPU servers.
 
@@ -49,7 +49,7 @@ export GITHUB_TOKEN=ghp_YOUR_TOKEN_HERE
 ./scripts/build-docker-gpu.sh
 
 # Or specify version manually
-./scripts/build-docker-gpu.sh 2.0.11
+./scripts/build-docker-gpu.sh 2.0.12
 ```
 
 **Build Time Estimates:**
@@ -66,14 +66,14 @@ export GITHUB_TOKEN=ghp_YOUR_TOKEN_HERE
 docker login
 
 # Push the image
-docker push arpitsh018/usf-bios:2.0.11
+docker push arpitsh018/usf-bios:2.0.12
 ```
 
 ### Step 5: Deploy on RunPod
 
 1. Go to [RunPod Dashboard](https://runpod.io/console/pods)
 2. Create a new Pod with GPU (H100/A100 recommended)
-3. Set container image: `arpitsh018/usf-bios:2.0.11`
+3. Set container image: `arpitsh018/usf-bios:2.0.12`
 4. Expose port: **3000**
 5. Deploy
 
@@ -188,10 +188,10 @@ The `./scripts/build-docker-gpu.sh` script:
 ./scripts/build-docker-gpu.sh --no-push
 
 # Build specific version
-./scripts/build-docker-gpu.sh 2.0.11
+./scripts/build-docker-gpu.sh 2.0.12
 
 # Fresh build, no push, specific version
-./scripts/build-docker-gpu.sh --no-cache --no-push 2.0.11
+./scripts/build-docker-gpu.sh --no-cache --no-push 2.0.12
 
 # Show help
 ./scripts/build-docker-gpu.sh --help
@@ -276,7 +276,7 @@ usf-bios/
 │   ├── compile_to_so.py        # Cython compilation
 │   └── capture_versions.py     # Version documentation
 ├── usf_bios/
-│   ├── version.py              # Version: 2.0.11
+│   ├── version.py              # Version: 2.0.12
 │   └── system_guard.py         # Model lock configuration
 └── DOCKER-GPU-BUILD.md         # This file
 ```
@@ -287,6 +287,7 @@ usf-bios/
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 2.0.12 | 2026-01-25 | Clean build, cache fixes |
 | 2.0.11 | 2026-01-24 | Dynamic GPU selection, Model lock fix, Token support |
 | 2.0.10 | 2026-01-24 | Version label updates |
 | 2.0.09 | 2026-01-23 | Initial GPU build |
