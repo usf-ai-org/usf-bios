@@ -330,6 +330,7 @@ def verify_compilation(base_dir):
     # NOTE: config.py and protocol.py removed - they contain logic and should be compiled
     allowed_filenames = {
         '__init__.py', '__main__.py', 'db_models.py', 'version.py',
+        'compile_to_so.py',  # The compilation script itself (removed after build)
     }
     
     # Files allowed by FULL PATH (CLI entry points)
