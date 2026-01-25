@@ -39,7 +39,7 @@ git pull origin main
 Required for installing the custom USF Transformers fork:
 
 ```bash
-export GITHUB_TOKEN=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
+export GITHUB_TOKEN=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
 ```
 
 ### Step 3: Build Docker Image
@@ -49,7 +49,7 @@ export GITHUB_TOKEN=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
 ./scripts/build-docker-gpu.sh
 
 # Or specify version manually
-./scripts/build-docker-gpu.sh 2.0.12
+./scripts/build-docker-gpu.sh 2.0.13
 ```
 
 **Build Time Estimates:**
