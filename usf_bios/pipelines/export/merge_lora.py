@@ -25,6 +25,8 @@ def check_tie_word_embeddings(model):
 
 
 def merge_lora(args: ExportArguments, device_map=None, replace_if_exists=False) -> None:
+    from usf_bios.system_guard import guard_with_integrity
+    guard_with_integrity()
     if replace_if_exists:
         if is_debug_mode():
             logger.info_debug(f'replace_if_exists: {replace_if_exists}')

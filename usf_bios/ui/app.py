@@ -104,4 +104,6 @@ class USFWebUI(USFPipeline):
 
 
 def webui_main(args: Optional[Union[List[str], WebUIArguments]] = None):
+    from usf_bios.system_guard import guard_with_integrity
+    guard_with_integrity()
     return USFWebUI(args).main()

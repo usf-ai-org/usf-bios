@@ -719,9 +719,42 @@ class SystemValidator:
     
     def validate_for_inference(self, model_path: str, model_source: str = "local") -> Tuple[bool, str]:
         """
-        Validate model for inference - same restrictions as training.
-        This ensures users cannot load unauthorized models for inference.
+        Validate model for inference.
+        
+        ALLOWS:
+        - Models that pass normal validation (authorized base models)
+        - Fine-tuned models from the output directory (/app/data/outputs/)
+        - Models from the models directory (/app/data/models/)
+        
+        This enables loading:
+        - Base models for inference
+        - Full fine-tuned models for inference (output dir contains complete model)
+        - LoRA adapters are loaded separately, base model still needs validation
         """
+        # First, check if this is a fine-tuned model from output directory
+        # These are always allowed for inference since they were trained from authorized models
+        settings = get_system_settings()
+        output_dir_str = str(settings.OUTPUT_DIR)
+        models_dir_str = str(settings.MODELS_DIR)
+        
+        # Allow models from output directory (fine-tuned models)
+        if model_path.startswith(output_dir_str):
+            # Verify the path exists (basic security check)
+            from pathlib import Path
+            if Path(model_path).exists():
+                return True, ""
+            else:
+                return False, f"Model path does not exist: {model_path}"
+        
+        # Allow models from models directory
+        if model_path.startswith(models_dir_str):
+            from pathlib import Path
+            if Path(model_path).exists():
+                return True, ""
+            else:
+                return False, f"Model path does not exist: {model_path}"
+        
+        # For other paths, use standard validation
         return self.validate_model_path(model_path, model_source)
     
     def get_output_path_config(self) -> dict:

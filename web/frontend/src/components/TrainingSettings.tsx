@@ -185,6 +185,11 @@ export function SelectInput<T extends string | number>({ value, onChange, option
   )
 }
 
+// Online RL algorithms that require vLLM for sample generation
+const ONLINE_RL_ALGORITHMS = ['grpo', 'ppo', 'gkd']
+// Offline RL algorithms that use pre-collected preference data
+const OFFLINE_RL_ALGORITHMS = ['dpo', 'orpo', 'simpo', 'kto', 'cpo', 'rm']
+
 interface TrainingConfig {
   training_method: 'sft' | 'pt' | 'rlhf'
   train_type: 'full' | 'lora' | 'qlora' | 'adalora'
@@ -201,6 +206,20 @@ interface TrainingConfig {
   kl_coef: number
   cliprange: number
   num_generations: number
+  // Online RL vLLM configuration
+  use_vllm: boolean
+  vllm_mode: 'colocate' | 'server' | null
+  vllm_server_host: string | null
+  vllm_server_port: number
+  vllm_tensor_parallel_size: number
+  vllm_gpu_memory_utilization: number
+  offload_model: boolean
+  offload_optimizer: boolean
+  sleep_level: number
+  reward_funcs: string[] | null
+  // vLLM Server verification state (SECURITY)
+  vllm_server_verified: boolean
+  vllm_server_verified_hash: string | null
   // Base parameters
   num_train_epochs: number
   learning_rate: number
@@ -349,11 +368,35 @@ const DEFAULT_CAPABILITIES: TrainingCapabilities = {
   incompatible_combinations: []
 }
 
+interface FeatureFlags {
+  pretraining: boolean
+  sft: boolean
+  rlhf: boolean
+  rlhf_online: boolean
+  rlhf_offline: boolean
+  vllm_colocate: boolean
+  vllm_server: boolean
+  lora: boolean
+  qlora: boolean
+  adalora: boolean
+  full: boolean
+  grpo: boolean
+  ppo: boolean
+  gkd: boolean
+  dpo: boolean
+  orpo: boolean
+  simpo: boolean
+  kto: boolean
+  cpo: boolean
+  rm: boolean
+}
+
 interface Props {
   config: TrainingConfig
   setConfig: (fn: (prev: TrainingConfig) => TrainingConfig) => void
   availableGpus?: GPUInfo[]
   modelContextLength?: number  // Dynamic context length from selected model
+  featureFlags?: FeatureFlags  // Feature flags from system_guard (compiled, cannot bypass)
 }
 
 // Generate dynamic max_length options based on model context length
@@ -381,9 +424,285 @@ function generateMaxLengthOptions(contextLength: number): number[] {
   return options
 }
 
-export default function TrainingSettingsStep({ config, setConfig, availableGpus = [], modelContextLength = 4096 }: Props) {
+// vLLM Server Configuration Component with Test/Verify functionality
+function VLLMServerConfig({ config, setConfig }: { 
+  config: TrainingConfig
+  setConfig: (fn: (prev: TrainingConfig) => TrainingConfig) => void 
+}) {
+  const [isTesting, setIsTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{
+    success: boolean
+    message: string
+    error?: string
+    tests_passed?: string[]
+    tests_failed?: string[]
+    sample_output?: Record<string, any>
+    server_type?: string
+    supports_weight_sync?: boolean
+  } | null>(null)
+
+  // Reset verified state when host or port changes
+  const handleHostChange = (value: string) => {
+    setConfig(p => ({
+      ...p,
+      vllm_server_host: value || null,
+      vllm_server_verified: false,
+      vllm_server_verified_hash: null
+    }))
+    setTestResult(null)
+  }
+
+  const handlePortChange = (value: number) => {
+    setConfig(p => ({
+      ...p,
+      vllm_server_port: value,
+      vllm_server_verified: false,
+      vllm_server_verified_hash: null
+    }))
+    setTestResult(null)
+  }
+
+  // Test vLLM server connection
+  const testConnection = async () => {
+    if (!config.vllm_server_host) {
+      setTestResult({ success: false, message: 'Please enter server host' })
+      return
+    }
+
+    setIsTesting(true)
+    setTestResult(null)
+
+    try {
+      const response = await fetch('/api/system/vllm/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          host: config.vllm_server_host,
+          port: config.vllm_server_port
+        })
+      })
+
+      const data = await response.json()
+      setTestResult(data)
+
+      if (data.success && data.verified) {
+        // Generate hash for security verification (must match backend)
+        const hashInput = `${config.vllm_server_host}:${config.vllm_server_port}`
+        // Simple hash for frontend display - backend does real verification
+        const encoder = new TextEncoder()
+        const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(hashInput))
+        const hashArray = Array.from(new Uint8Array(hashBuffer))
+        const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 16)
+        
+        setConfig(p => ({
+          ...p,
+          vllm_server_verified: true,
+          vllm_server_verified_hash: hashHex
+        }))
+      }
+    } catch (error) {
+      setTestResult({
+        success: false,
+        message: 'Connection test failed',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      })
+    } finally {
+      setIsTesting(false)
+    }
+  }
+
+  return (
+    <div className="bg-slate-50 rounded-lg p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <h6 className="text-xs font-medium text-slate-600 uppercase tracking-wide">Server Connection</h6>
+        {config.vllm_server_verified ? (
+          <span className="flex items-center gap-1 text-xs text-green-700 bg-green-100 px-2 py-1 rounded-full">
+            <Check className="w-3 h-3" />
+            Verified
+          </span>
+        ) : (
+          <span className="flex items-center gap-1 text-xs text-amber-700 bg-amber-100 px-2 py-1 rounded-full">
+            <AlertCircle className="w-3 h-3" />
+            Not Verified
+          </span>
+        )}
+      </div>
+      
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div>
+          <label className="text-sm font-medium text-slate-700 block mb-1">Server Host</label>
+          <input
+            type="text"
+            value={config.vllm_server_host || ''}
+            onChange={(e) => handleHostChange(e.target.value)}
+            placeholder="e.g., 192.168.1.100 or vllm-server.local"
+            className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 ${
+              config.vllm_server_verified ? 'border-green-300 bg-green-50' : 'border-slate-300'
+            }`}
+          />
+          <p className="text-xs text-slate-500 mt-1">IP or hostname of vLLM server</p>
+        </div>
+        <div>
+          <label className="text-sm font-medium text-slate-700 block mb-1">Server Port</label>
+          <input
+            type="number"
+            value={config.vllm_server_port}
+            onChange={(e) => handlePortChange(parseInt(e.target.value) || 8000)}
+            min={1}
+            max={65535}
+            className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 ${
+              config.vllm_server_verified ? 'border-green-300 bg-green-50' : 'border-slate-300'
+            }`}
+          />
+          <p className="text-xs text-slate-500 mt-1">Default: 8000</p>
+        </div>
+      </div>
+
+      {/* Test Connection Button */}
+      <div className="pt-2">
+        <button
+          onClick={testConnection}
+          disabled={isTesting || !config.vllm_server_host}
+          className={`w-full py-2.5 rounded-lg font-medium text-sm flex items-center justify-center gap-2 transition-colors ${
+            config.vllm_server_verified
+              ? 'bg-green-600 text-white hover:bg-green-700'
+              : 'bg-blue-600 text-white hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed'
+          }`}
+        >
+          {isTesting ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Testing Connection...
+            </>
+          ) : config.vllm_server_verified ? (
+            <>
+              <Check className="w-4 h-4" />
+              Re-verify Connection
+            </>
+          ) : (
+            <>
+              <Sparkles className="w-4 h-4" />
+              Test Connection
+            </>
+          )}
+        </button>
+      </div>
+
+      {/* Test Result */}
+      {testResult && (
+        <div className={`p-3 rounded-lg border ${
+          testResult.success 
+            ? 'bg-green-50 border-green-200' 
+            : 'bg-red-50 border-red-200'
+        }`}>
+          <div className="flex items-start gap-2">
+            {testResult.success ? (
+              <Check className="w-4 h-4 text-green-600 mt-0.5" />
+            ) : (
+              <AlertCircle className="w-4 h-4 text-red-600 mt-0.5" />
+            )}
+            <div className="flex-1">
+              <p className={`text-sm font-medium ${testResult.success ? 'text-green-800' : 'text-red-800'}`}>
+                {testResult.message}
+              </p>
+              {testResult.error && (
+                <p className="text-xs text-red-600 mt-1">{testResult.error}</p>
+              )}
+              {/* Tests passed */}
+              {testResult.tests_passed && testResult.tests_passed.length > 0 && (
+                <div className="mt-2 text-xs space-y-1">
+                  {testResult.tests_passed.map((test) => (
+                    <div key={test} className="flex items-center gap-1">
+                      <Check className="w-3 h-3 text-green-600" />
+                      <span className="text-green-700">{test.replace(/_/g, ' ')}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {/* Tests failed */}
+              {testResult.tests_failed && testResult.tests_failed.length > 0 && (
+                <div className="mt-2 text-xs space-y-1">
+                  {testResult.tests_failed.map((test) => (
+                    <div key={test} className="flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3 text-red-500" />
+                      <span className="text-red-700">{test.replace(/_/g, ' ')}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {/* Sample output */}
+              {testResult.sample_output && testResult.success && (
+                <div className="mt-2 pt-2 border-t border-slate-200 text-xs space-y-1">
+                  {testResult.sample_output.model && (
+                    <p className="text-green-700"><strong>Model:</strong> {testResult.sample_output.model}</p>
+                  )}
+                  {testResult.sample_output.content && (
+                    <p className="text-green-700"><strong>Response:</strong> "{testResult.sample_output.content}"</p>
+                  )}
+                  {testResult.sample_output.logprobs_sample && (
+                    <p className="text-green-700">
+                      <strong>Logprobs:</strong> token="{testResult.sample_output.logprobs_sample.token}", 
+                      logprob={testResult.sample_output.logprobs_sample.logprob?.toFixed(4)}
+                    </p>
+                  )}
+                  {testResult.sample_output.usage && (
+                    <p className="text-green-700">
+                      <strong>Tokens:</strong> {testResult.sample_output.usage.prompt_tokens} prompt, {testResult.sample_output.usage.completion_tokens} completion
+                    </p>
+                  )}
+                </div>
+              )}
+              {/* Server type and weight sync status */}
+              {testResult.server_type && (
+                <div className={`mt-2 p-2 rounded text-xs ${testResult.supports_weight_sync ? 'bg-green-100' : 'bg-amber-100'}`}>
+                  <p className={testResult.supports_weight_sync ? 'text-green-800' : 'text-amber-800'}>
+                    <strong>Server Type:</strong> {testResult.server_type === 'rl_rollout' ? 'RL Rollout Server' : 'Standard vLLM'}
+                    {testResult.supports_weight_sync ? ' ✓ Weight sync enabled' : ' ⚠ No weight sync'}
+                  </p>
+                  {!testResult.supports_weight_sync && testResult.sample_output?.warning && (
+                    <p className="text-amber-700 mt-1">{testResult.sample_output.warning}</p>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Warning if not verified */}
+      {!config.vllm_server_verified && config.vllm_server_host && (
+        <div className="p-3 bg-amber-50 rounded-lg border border-amber-200">
+          <p className="text-xs text-amber-700">
+            <AlertCircle className="w-3 h-3 inline mr-1" />
+            <strong>Required:</strong> You must test and verify the server connection before training can start.
+          </p>
+        </div>
+      )}
+
+      <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
+        <p className="text-xs text-blue-700">
+          <strong>Setup:</strong> Start vLLM server on separate GPUs with: <code className="bg-blue-100 px-1 rounded">usf rollout --model {'{model_path}'}</code>
+        </p>
+      </div>
+    </div>
+  )
+}
+
+// Default feature flags (all enabled) - used when not provided
+const DEFAULT_FEATURE_FLAGS: FeatureFlags = {
+  pretraining: true, sft: true, rlhf: true,
+  rlhf_online: true, rlhf_offline: true,
+  vllm_colocate: true, vllm_server: true,
+  lora: true, qlora: true, adalora: true, full: true,
+  grpo: true, ppo: true, gkd: true, dpo: true, orpo: true, simpo: true, kto: true, cpo: true, rm: true
+}
+
+export default function TrainingSettingsStep({ config, setConfig, availableGpus = [], modelContextLength = 4096, featureFlags = DEFAULT_FEATURE_FLAGS }: Props) {
   const typeConfig = PARAM_CONFIG[config.train_type] || {}
   const commonConfig = PARAM_CONFIG.common
+  
+  // Merge provided feature flags with defaults
+  const flags = { ...DEFAULT_FEATURE_FLAGS, ...featureFlags }
   
   // State for custom target modules input
   const [isCustomModules, setIsCustomModules] = useState(false)
@@ -725,12 +1044,20 @@ export default function TrainingSettingsStep({ config, setConfig, availableGpus 
           <Tooltip text="SFT: Standard supervised fine-tuning. PT: Continue pre-training. RLHF: Reinforcement learning for alignment." />
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {Object.entries(TRAINING_METHOD_CONFIG).map(([id, cfg]) => (
+          {Object.entries(TRAINING_METHOD_CONFIG)
+            .filter(([id]) => {
+              // Filter based on feature flags
+              if (id === 'sft') return flags.sft
+              if (id === 'pt') return flags.pretraining
+              if (id === 'rlhf') return flags.rlhf
+              return true
+            })
+            .map(([id, cfg]) => (
             <button key={id} 
               onClick={() => setConfig(p => ({ 
                 ...p, 
                 training_method: id as any, 
-                rlhf_type: id === 'rlhf' ? 'dpo' : null,
+                rlhf_type: id === 'rlhf' ? (flags.dpo ? 'dpo' : (flags.orpo ? 'orpo' : null)) : null,
                 // PT (Pre-Training) requires Full parameter training - auto-set train_type
                 train_type: id === 'pt' ? 'full' : p.train_type
               }))}
@@ -757,7 +1084,17 @@ export default function TrainingSettingsStep({ config, setConfig, availableGpus 
             </div>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-            {Object.entries(RLHF_ALGORITHM_CONFIG).map(([id, cfg]) => (
+            {Object.entries(RLHF_ALGORITHM_CONFIG)
+              .filter(([id]) => {
+                // Filter RLHF algorithms based on feature flags
+                const algoFlags: Record<string, boolean> = {
+                  grpo: flags.grpo, ppo: flags.ppo, gkd: flags.gkd,
+                  dpo: flags.dpo, orpo: flags.orpo, simpo: flags.simpo,
+                  kto: flags.kto, cpo: flags.cpo, rm: flags.rm
+                }
+                return algoFlags[id] ?? true
+              })
+              .map(([id, cfg]) => (
               <button key={id}
                 onClick={() => setConfig(p => ({ ...p, rlhf_type: id as any }))}
                 className={`p-3 rounded-lg border-2 text-center transition-all ${config.rlhf_type === id ? 'border-amber-500 bg-white shadow-sm' : 'border-slate-200 bg-white/50 hover:border-slate-300'}`}>
@@ -821,6 +1158,187 @@ export default function TrainingSettingsStep({ config, setConfig, availableGpus 
               )}
             </div>
           </div>
+          
+          {/* Online RL vLLM Configuration - Only for GRPO/PPO/GKD */}
+          {config.rlhf_type && ONLINE_RL_ALGORITHMS.includes(config.rlhf_type) && (
+            <div className="mt-4 pt-4 border-t border-amber-200">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <h5 className="text-sm font-medium text-slate-700">Inference Engine Configuration</h5>
+                  <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-medium">
+                    Online RL
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-slate-600">Use vLLM</label>
+                  <button
+                    onClick={() => setConfig(p => ({ ...p, use_vllm: !p.use_vllm }))}
+                    className={`relative w-10 h-5 rounded-full transition-colors ${config.use_vllm ? 'bg-blue-500' : 'bg-slate-300'}`}
+                  >
+                    <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${config.use_vllm ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+              </div>
+              
+              {config.use_vllm && (
+                <div className="space-y-4">
+                  {/* vLLM Mode Selection - Filter based on feature flags */}
+                  <div>
+                    <div className="flex items-center gap-1 mb-2">
+                      <label className="text-sm font-medium text-slate-700">vLLM Deployment Mode</label>
+                      <Tooltip text="Colocate: Training and inference share GPUs (simpler setup). Server: External vLLM server on separate GPUs (more scalable, required for 1 GPU)." />
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {/* Colocate Mode - Only show if enabled in feature flags */}
+                      {flags.vllm_colocate && (
+                        <button
+                          onClick={() => {
+                            // Check if colocate is allowed (needs > 1 GPU)
+                            const gpuCount = availableGpus.length || 1
+                            if (gpuCount <= 1) {
+                              return // Disabled for 1 GPU
+                            }
+                            setConfig(p => ({ ...p, vllm_mode: 'colocate', vllm_server_host: null }))
+                          }}
+                          disabled={availableGpus.length <= 1}
+                          className={`p-4 rounded-lg border-2 text-left transition-all ${
+                            config.vllm_mode === 'colocate' 
+                              ? 'border-blue-500 bg-blue-50' 
+                              : availableGpus.length <= 1 
+                                ? 'border-slate-200 bg-slate-100 opacity-50 cursor-not-allowed' 
+                                : 'border-slate-200 bg-white hover:border-slate-300'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="font-semibold text-sm text-slate-900">Colocate</span>
+                            <span className="px-1.5 py-0.5 bg-green-100 text-green-700 rounded text-xs">Default</span>
+                          </div>
+                          <p className="text-xs text-slate-500">
+                            Training and vLLM share the same GPUs. Simpler setup, no external server needed.
+                          </p>
+                          {availableGpus.length <= 1 && (
+                            <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
+                              <AlertCircle className="w-3 h-3" />
+                              Requires 2+ GPUs
+                            </p>
+                          )}
+                        </button>
+                      )}
+                      
+                      {/* Server Mode - Only show if enabled in feature flags */}
+                      {flags.vllm_server && (
+                        <button
+                          onClick={() => setConfig(p => ({ ...p, vllm_mode: 'server' }))}
+                          className={`p-4 rounded-lg border-2 text-left transition-all ${
+                            config.vllm_mode === 'server' 
+                              ? 'border-blue-500 bg-blue-50' 
+                              : 'border-slate-200 bg-white hover:border-slate-300'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="font-semibold text-sm text-slate-900">Server</span>
+                            {availableGpus.length <= 1 && (
+                              <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded text-xs">Required</span>
+                            )}
+                          </div>
+                          <p className="text-xs text-slate-500">
+                            External vLLM server on separate GPUs. More scalable for large clusters.
+                          </p>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* Server Mode Configuration */}
+                  {config.vllm_mode === 'server' && (
+                    <VLLMServerConfig config={config} setConfig={setConfig} />
+                  )}
+                  
+                  {/* Colocate Mode Configuration */}
+                  {config.vllm_mode === 'colocate' && (
+                    <div className="bg-slate-50 rounded-lg p-4 space-y-4">
+                      <h6 className="text-xs font-medium text-slate-600 uppercase tracking-wide">Colocate Settings</h6>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <NumberInput 
+                          value={config.vllm_tensor_parallel_size} 
+                          onChange={(v) => setConfig(p => ({ ...p, vllm_tensor_parallel_size: v }))}
+                          min={1} max={availableGpus.length || 8} step={1} 
+                          label="Tensor Parallel Size" 
+                          tooltip="Number of GPUs for tensor parallelism in vLLM. Use for large models." 
+                        />
+                        <NumberInput 
+                          value={config.vllm_gpu_memory_utilization} 
+                          onChange={(v) => setConfig(p => ({ ...p, vllm_gpu_memory_utilization: v }))}
+                          min={0.1} max={0.95} step={0.05} 
+                          label="GPU Memory Utilization" 
+                          tooltip="Fraction of GPU memory for vLLM KV cache. Lower values leave more memory for training." 
+                        />
+                        <SelectInput 
+                          value={config.sleep_level} 
+                          onChange={(v) => setConfig(p => ({ ...p, sleep_level: v }))}
+                          options={[0, 1, 2]} 
+                          label="Sleep Level" 
+                          tooltip="Release vLLM GPU memory during training. 0=off, 1=partial, 2=full."
+                          formatOption={(v) => v === 0 ? 'Off' : v === 1 ? 'Partial' : 'Full'}
+                        />
+                      </div>
+                      
+                      {/* Memory Optimization */}
+                      <div className="pt-3 border-t border-slate-200">
+                        <h6 className="text-xs font-medium text-slate-600 mb-2">Memory Optimization</h6>
+                        <div className="flex flex-wrap gap-4">
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={config.offload_model}
+                              onChange={(e) => setConfig(p => ({ ...p, offload_model: e.target.checked }))}
+                              className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                            />
+                            <span className="text-sm text-slate-700">Offload Model</span>
+                            <Tooltip text="Move model to CPU during vLLM inference to save GPU memory." />
+                          </label>
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={config.offload_optimizer}
+                              onChange={(e) => setConfig(p => ({ ...p, offload_optimizer: e.target.checked }))}
+                              className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                            />
+                            <span className="text-sm text-slate-700">Offload Optimizer</span>
+                            <Tooltip text="Move optimizer states to CPU during vLLM inference." />
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+              
+              {!config.use_vllm && (
+                <div className="p-3 bg-amber-50 rounded-lg border border-amber-200">
+                  <p className="text-xs text-amber-700">
+                    <AlertCircle className="w-3 h-3 inline mr-1" />
+                    <strong>Warning:</strong> Disabling vLLM will use native Transformers for generation, which is significantly slower.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+          
+          {/* Offline RL Info */}
+          {config.rlhf_type && OFFLINE_RL_ALGORITHMS.includes(config.rlhf_type) && (
+            <div className="mt-4 pt-4 border-t border-amber-200">
+              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                <div className="flex items-center gap-2 mb-1">
+                  <Info className="w-4 h-4 text-slate-500" />
+                  <span className="text-sm font-medium text-slate-700">Offline RL</span>
+                </div>
+                <p className="text-xs text-slate-600">
+                  {config.rlhf_type?.toUpperCase()} uses pre-collected preference data (chosen/rejected pairs). No live model sampling required - training is faster and uses less GPU memory.
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       )}
       
@@ -849,14 +1367,14 @@ export default function TrainingSettingsStep({ config, setConfig, availableGpus 
             </div>
           </div>
         ) : (
-          /* SFT and RLHF - All options available */
+          /* SFT and RLHF - Filter options based on feature flags */
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {[
-              { id: 'lora', name: 'LoRA', desc: 'Balanced' },
-              { id: 'qlora', name: 'QLoRA', desc: 'Low memory' },
-              { id: 'adalora', name: 'AdaLoRA', desc: 'Adaptive' },
-              { id: 'full', name: 'Full', desc: 'Best quality' },
-            ].map((t) => (
+              { id: 'lora', name: 'LoRA', desc: 'Balanced', enabled: flags.lora },
+              { id: 'qlora', name: 'QLoRA', desc: 'Low memory', enabled: flags.qlora },
+              { id: 'adalora', name: 'AdaLoRA', desc: 'Adaptive', enabled: flags.adalora },
+              { id: 'full', name: 'Full', desc: 'Best quality', enabled: flags.full },
+            ].filter(t => t.enabled).map((t) => (
               <button key={t.id} onClick={() => applyDefaults(t.id as any)}
                 className={`p-3 rounded-lg border-2 text-center transition-all ${config.train_type === t.id ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}>
                 <span className="font-medium text-sm block">{t.name}</span>

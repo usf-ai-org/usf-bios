@@ -36,6 +36,8 @@ def prepare_adapter(args, model, adapters=None):
 
 
 def prepare_model_template(args, **kwargs):
+    from usf_bios.system_guard import guard_with_integrity
+    guard_with_integrity()
     adapters = kwargs.get('adapters')
     model, processor = args.get_model_processor(**kwargs)
     template = args.get_template(processor)

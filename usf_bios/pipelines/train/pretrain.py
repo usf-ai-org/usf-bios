@@ -14,4 +14,6 @@ class USFPretrain(USFSft):
 
 
 def pretrain_main(args: Optional[Union[List[str], PretrainArguments]] = None):
+    from usf_bios.system_guard import guard_with_integrity
+    guard_with_integrity()
     return USFPretrain(args).main()

@@ -9,15 +9,15 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11-5be.svg">
   <img src="https://img.shields.io/badge/pytorch-%E2%89%A52.0-orange.svg">
-  <img src="https://img.shields.io/badge/license-Proprietary-red.svg">
-  <img src="https://img.shields.io/badge/owner-UltraSafe%20AI-blue.svg">
+  <img src="https://img.shields.io/badge/license-Proprietary%20(Closed%20Source)-red.svg">
+  <img src="https://img.shields.io/badge/owner-DeltaSafe%20%2F%20UltraSafe%20AI-blue.svg">
 </p>
 
 ---
 
-> **PROPRIETARY SOFTWARE**
+> **⚠️ PROPRIETARY SOFTWARE - CLOSED SOURCE ⚠️**
 > 
-> This software is the exclusive property of **US Inc**. Unauthorized use, reproduction, modification, or distribution is strictly prohibited without explicit written permission from US Inc. All rights reserved.
+> This software is the exclusive property of **DeltaSafe / UltraSafe AI**. This is **NOT** open source software. Unauthorized use, reproduction, modification, or distribution is strictly prohibited without explicit written permission. License can be revoked at any time. All rights reserved.
 
 ---
 
@@ -431,25 +431,33 @@ Features:
 
 ## 🏛 License
 
-### Proprietary License
+### Proprietary License - CLOSED SOURCE
 
-**Copyright (c) 2024-2026 US Inc. All Rights Reserved.**
+**Copyright (c) 2024-2026 DeltaSafe / UltraSafe AI / US Inc. All Rights Reserved.**
 
-This software and associated documentation files (the "Software") are the exclusive proprietary property of **US Inc**.
+**THIS IS CLOSED-SOURCE, PROPRIETARY SOFTWARE. THIS SOFTWARE IS NOT OPEN SOURCE.**
+
+This software and associated documentation files (the "Software") are the exclusive proprietary property of **DeltaSafe / UltraSafe AI**.
 
 **TERMS OF USE:**
 
-1. **No Unauthorized Use**: You may not use, copy, modify, merge, publish, distribute, sublicense, or sell copies of the Software without explicit written permission from US Inc.
+1. **No Unauthorized Use**: You may not use, copy, modify, merge, publish, distribute, sublicense, or sell copies of the Software without explicit written permission from DeltaSafe / UltraSafe AI.
 
 2. **No Ownership Claims**: No individual or organization may claim ownership, authorship, or any intellectual property rights over this Software.
 
-3. **Authorized Use Only**: Use of this Software is permitted only under a valid license agreement with US Inc.
+3. **Authorized Use Only**: Use of this Software is permitted only under a valid, active license agreement with DeltaSafe / UltraSafe AI.
 
 4. **No Reverse Engineering**: You may not reverse engineer, decompile, or disassemble the Software.
 
-5. **Confidentiality**: The Software contains trade secrets and proprietary information of US Inc. You agree to maintain the confidentiality of the Software.
+5. **Confidentiality**: The Software contains trade secrets and proprietary information. You agree to maintain the confidentiality of the Software.
 
-For licensing inquiries, please contact: **licensing@us.inc**
+6. **License Revocation**: DeltaSafe / UltraSafe AI reserves the right to revoke this license at any time, for any reason, with or without notice.
+
+7. **Compliance Required**: You must satisfy all conditions specified in your license agreement to use this Software.
+
+For licensing inquiries, please contact:
+- **DeltaSafe**: licensing@deltasafe.ai
+- **UltraSafe AI**: licensing@ultrasafe.ai
 
 ---
 

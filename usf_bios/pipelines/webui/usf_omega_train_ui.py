@@ -1118,6 +1118,8 @@ def build_usf_omega_train_ui(
 
 def usf_omega_train_ui_main():
     """Main entry point"""
+    from usf_bios.system_guard import guard_with_integrity
+    guard_with_integrity()
     import argparse
     
     parser = argparse.ArgumentParser(description='USF Omega Training WebUI')

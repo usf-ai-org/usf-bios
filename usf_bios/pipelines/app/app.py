@@ -41,4 +41,6 @@ class USFApp(USFPipeline):
 
 
 def app_main(args: Optional[Union[List[str], AppArguments]] = None):
+    from usf_bios.system_guard import guard_with_integrity
+    guard_with_integrity()
     return USFApp(args).main()

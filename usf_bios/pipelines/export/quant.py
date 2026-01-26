@@ -22,6 +22,8 @@ logger = get_logger()
 class QuantEngine(ProcessorMixin):
 
     def __init__(self, args: ExportArguments):
+        from usf_bios.system_guard import guard_with_integrity
+        guard_with_integrity()
         self.args = args
         kwargs = {}
         if args.quant_method == 'awq':
@@ -290,4 +292,6 @@ class QuantEngine(ProcessorMixin):
 
 
 def quantize_model(args: ExportArguments):
+    from usf_bios.system_guard import guard_with_integrity
+    guard_with_integrity()
     QuantEngine(args).quantize()

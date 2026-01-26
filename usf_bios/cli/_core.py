@@ -10,12 +10,12 @@ from typing import Any, Dict, List, Optional
 import json
 
 from usf_bios.utils import get_logger
-from usf_bios.system_guard import guard_cli_entry, check_system_valid
+from usf_bios.system_guard import guard_cli_entry, check_system_valid, guard_with_integrity
 
 logger = get_logger()
 
-# Check system validity on module load
-guard_cli_entry()
+# Check system validity AND module integrity on module load
+guard_with_integrity()
 
 # Route mapping for standard CLI commands
 ROUTE_MAPPING: Dict[str, str] = {
@@ -157,7 +157,8 @@ def try_init_unsloth():
 
 
 def sft_entry():
-    """Entry point for SFT training"""
+    """Entry point for SFT training - guard is inside compiled code"""
+    guard_with_integrity()
     from usf_bios.cli.utils import try_use_single_device_mode
     try_use_single_device_mode()
     try_init_unsloth()
@@ -168,7 +169,8 @@ def sft_entry():
 
 
 def merge_lora_entry():
-    """Entry point for merge-lora command"""
+    """Entry point for merge-lora command - guard is inside compiled code"""
+    guard_with_integrity()
     from usf_bios.arguments import ExportArguments
     from usf_bios.pipelines import USFPipeline, merge_lora
     
@@ -180,3 +182,123 @@ def merge_lora_entry():
             merge_lora(self.args)
     
     _MergeLoRA().main()
+
+
+def pt_entry():
+    """Entry point for pre-training - guard is inside compiled code"""
+    guard_with_integrity()
+    from usf_bios.cli.utils import try_use_single_device_mode
+    try_use_single_device_mode()
+    from usf_bios.pipelines import pretrain_main
+    pretrain_main()
+
+
+def rlhf_entry():
+    """Entry point for RLHF training - guard is inside compiled code"""
+    guard_with_integrity()
+    from usf_bios.cli.utils import try_use_single_device_mode
+    try_use_single_device_mode()
+    from usf_bios.pipelines import rlhf_main
+    rlhf_main()
+
+
+def infer_entry():
+    """Entry point for inference - guard is inside compiled code"""
+    guard_with_integrity()
+    from usf_bios.pipelines import infer_main
+    infer_main()
+
+
+def deploy_entry():
+    """Entry point for deploy - guard is inside compiled code"""
+    guard_with_integrity()
+    from usf_bios.pipelines import deploy_main
+    deploy_main()
+
+
+def eval_entry():
+    """Entry point for eval - guard is inside compiled code"""
+    guard_with_integrity()
+    from usf_bios.pipelines import eval_main
+    eval_main()
+
+
+def export_entry():
+    """Entry point for export - guard is inside compiled code"""
+    guard_with_integrity()
+    from usf_bios.pipelines import export_main
+    export_main()
+
+
+def rollout_entry():
+    """Entry point for rollout - guard is inside compiled code"""
+    guard_with_integrity()
+    from usf_bios.pipelines import rollout_main
+    rollout_main()
+
+
+def sample_entry():
+    """Entry point for sample - guard is inside compiled code"""
+    guard_with_integrity()
+    from usf_bios.ray import try_init_ray
+    try_init_ray()
+    from usf_bios.pipelines import sampling_main
+    sampling_main()
+
+
+def app_entry():
+    """Entry point for app - guard is inside compiled code"""
+    guard_with_integrity()
+    from usf_bios.pipelines import app_main
+    app_main()
+
+
+def web_ui_entry():
+    """Entry point for web-ui - guard is inside compiled code"""
+    guard_with_integrity()
+    from usf_bios.ui import webui_main
+    webui_main()
+
+
+def train_ui_entry():
+    """Entry point for train-ui - guard is inside compiled code"""
+    guard_with_integrity()
+    from usf_bios.pipelines.webui import usf_omega_train_ui_main
+    usf_omega_train_ui_main()
+
+
+# Megatron entry points
+def megatron_sft_entry():
+    """Entry point for Megatron SFT - guard is inside compiled code"""
+    guard_with_integrity()
+    import os
+    os.environ.setdefault('CUDA_DEVICE_MAX_CONNECTIONS', '1')
+    from usf_bios.megatron import megatron_sft_main
+    megatron_sft_main()
+
+
+def megatron_pt_entry():
+    """Entry point for Megatron pre-training - guard is inside compiled code"""
+    guard_with_integrity()
+    import os
+    os.environ.setdefault('CUDA_DEVICE_MAX_CONNECTIONS', '1')
+    from usf_bios.megatron import megatron_pretrain_main
+    megatron_pretrain_main()
+
+
+def megatron_rlhf_entry():
+    """Entry point for Megatron RLHF - guard is inside compiled code"""
+    guard_with_integrity()
+    import os
+    os.environ.setdefault('CUDA_DEVICE_MAX_CONNECTIONS', '1')
+    from usf_bios.megatron import megatron_rlhf_main
+    megatron_rlhf_main()
+
+
+def megatron_export_entry():
+    """Entry point for Megatron export - guard is inside compiled code"""
+    guard_with_integrity()
+    import os
+    os.environ.setdefault('CUDA_DEVICE_MAX_CONNECTIONS', '1')
+    from usf_bios.megatron import megatron_export_main
+    megatron_export_main()

@@ -584,6 +584,100 @@ export default function TrainingDetails({
                           </>
                         )}
                       </div>
+                      
+                      {/* RLHF Configuration - show if training_method is rlhf */}
+                      {jobDetails.config.training_method === 'rlhf' && (
+                        <div className="px-4 pb-4 pt-2 border-t border-slate-100">
+                          <h4 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">RLHF Configuration</h4>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                            {jobDetails.config.rlhf_type && (
+                              <div>
+                                <span className="text-xs text-slate-400 block">Algorithm</span>
+                                <span className="text-sm font-medium text-slate-900">{jobDetails.config.rlhf_type.toUpperCase()}</span>
+                              </div>
+                            )}
+                            {jobDetails.config.beta !== undefined && jobDetails.config.beta !== null && (
+                              <div>
+                                <span className="text-xs text-slate-400 block">Beta</span>
+                                <span className="text-sm font-medium text-slate-900">{jobDetails.config.beta}</span>
+                              </div>
+                            )}
+                            {jobDetails.config.num_generations && (
+                              <div>
+                                <span className="text-xs text-slate-400 block">Num Generations</span>
+                                <span className="text-sm font-medium text-slate-900">{jobDetails.config.num_generations}</span>
+                              </div>
+                            )}
+                            {jobDetails.config.max_completion_length && (
+                              <div>
+                                <span className="text-xs text-slate-400 block">Max Completion</span>
+                                <span className="text-sm font-medium text-slate-900">{jobDetails.config.max_completion_length}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* vLLM Configuration - show if online RL with vLLM */}
+                      {jobDetails.config.training_method === 'rlhf' && 
+                       ['grpo', 'ppo', 'gkd'].includes(jobDetails.config.rlhf_type?.toLowerCase()) && 
+                       jobDetails.config.use_vllm && (
+                        <div className="px-4 pb-4 pt-2 border-t border-slate-100">
+                          <h4 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">vLLM Configuration</h4>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                            <div>
+                              <span className="text-xs text-slate-400 block">Mode</span>
+                              <span className="text-sm font-medium text-slate-900 capitalize">{jobDetails.config.vllm_mode || 'Not Set'}</span>
+                            </div>
+                            {jobDetails.config.vllm_mode === 'server' && (
+                              <>
+                                <div>
+                                  <span className="text-xs text-slate-400 block">Server Host</span>
+                                  <span className="text-sm font-medium text-slate-900">{jobDetails.config.vllm_server_host || '--'}</span>
+                                </div>
+                                <div>
+                                  <span className="text-xs text-slate-400 block">Server Port</span>
+                                  <span className="text-sm font-medium text-slate-900">{jobDetails.config.vllm_server_port || 8000}</span>
+                                </div>
+                                <div>
+                                  <span className="text-xs text-slate-400 block">Verified</span>
+                                  <span className={`text-sm font-medium ${jobDetails.config.vllm_server_verified ? 'text-green-600' : 'text-red-600'}`}>
+                                    {jobDetails.config.vllm_server_verified ? 'Yes' : 'No'}
+                                  </span>
+                                </div>
+                              </>
+                            )}
+                            {jobDetails.config.vllm_mode === 'colocate' && (
+                              <>
+                                <div>
+                                  <span className="text-xs text-slate-400 block">Tensor Parallel</span>
+                                  <span className="text-sm font-medium text-slate-900">{jobDetails.config.vllm_tensor_parallel_size || 1}</span>
+                                </div>
+                                <div>
+                                  <span className="text-xs text-slate-400 block">GPU Memory</span>
+                                  <span className="text-sm font-medium text-slate-900">{((jobDetails.config.vllm_gpu_memory_utilization || 0.9) * 100).toFixed(0)}%</span>
+                                </div>
+                                <div>
+                                  <span className="text-xs text-slate-400 block">Sleep Level</span>
+                                  <span className="text-sm font-medium text-slate-900">{jobDetails.config.sleep_level || 0}</span>
+                                </div>
+                                {jobDetails.config.offload_model && (
+                                  <div>
+                                    <span className="text-xs text-slate-400 block">Offload Model</span>
+                                    <span className="text-sm font-medium text-green-600">Enabled</span>
+                                  </div>
+                                )}
+                                {jobDetails.config.offload_optimizer && (
+                                  <div>
+                                    <span className="text-xs text-slate-400 block">Offload Optimizer</span>
+                                    <span className="text-sm font-medium text-green-600">Enabled</span>
+                                  </div>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 

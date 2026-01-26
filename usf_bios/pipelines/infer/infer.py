@@ -309,4 +309,6 @@ class USFInfer(USFPipeline):
 
 
 def infer_main(args: Optional[Union[List[str], InferArguments]] = None):
+    from usf_bios.system_guard import guard_with_integrity
+    guard_with_integrity()
     return USFInfer(args).main()

@@ -140,4 +140,6 @@ class MegatronExport(USFPipeline):
 
 
 def megatron_export_main(args: Optional[Union[List[str], MegatronExportArguments]] = None):
+    from usf_bios.system_guard import guard_with_integrity
+    guard_with_integrity()
     return MegatronExport(args).main()

@@ -65,6 +65,9 @@ class TransformersEngine(InferEngine):
             revision: Optional[str] = None,
             hub_token: Optional[str] = None,
             **kwargs):
+        # CRITICAL: Guard check on inference engine - cannot be bypassed
+        from usf_bios.system_guard import guard_with_integrity
+        guard_with_integrity()
         if isinstance(adapters, str):
             adapters = [adapters]
         self.adapters = adapters or []

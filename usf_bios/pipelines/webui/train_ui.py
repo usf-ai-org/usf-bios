@@ -638,6 +638,8 @@ def build_train_ui(
 
 def train_ui_main():
     """Main entry point for training WebUI"""
+    from usf_bios.system_guard import guard_with_integrity
+    guard_with_integrity()
     import argparse
     
     parser = argparse.ArgumentParser(description='USF BIOS Training WebUI')

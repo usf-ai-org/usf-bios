@@ -235,4 +235,6 @@ class USFRLHF(USFSft):
 
 
 def rlhf_main(args: Optional[Union[List[str], RLHFArguments]] = None):
+    from usf_bios.system_guard import guard_with_integrity
+    guard_with_integrity()
     return USFRLHF(args).main()

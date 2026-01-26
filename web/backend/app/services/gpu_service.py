@@ -126,19 +126,36 @@ class GPUService:
     
     @staticmethod
     def get_nvml_memory_usage() -> Dict[str, float]:
-        """Get actual GPU memory usage from driver (not PyTorch allocation)."""
+        """Get actual GPU memory usage from driver (not PyTorch allocation).
+        
+        Aggregates memory across ALL GPUs to match system-wide metrics.
+        """
         try:
             if NVML_AVAILABLE:
-                handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-                mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                device_count = pynvml.nvmlDeviceGetCount()
+                total_used = 0
+                total_memory = 0
+                total_free = 0
+                
+                for i in range(device_count):
+                    try:
+                        handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+                        mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                        total_used += mem_info.used
+                        total_memory += mem_info.total
+                        total_free += mem_info.free
+                    except:
+                        continue
+                
                 return {
-                    "used_mb": mem_info.used / (1024 * 1024),
-                    "total_mb": mem_info.total / (1024 * 1024),
-                    "free_mb": mem_info.free / (1024 * 1024),
+                    "used_mb": total_used / (1024 * 1024),
+                    "total_mb": total_memory / (1024 * 1024),
+                    "free_mb": total_free / (1024 * 1024),
+                    "device_count": device_count,
                 }
         except Exception:
             pass
-        return {"used_mb": 0, "total_mb": 0, "free_mb": 0}
+        return {"used_mb": 0, "total_mb": 0, "free_mb": 0, "device_count": 0}
     
     @staticmethod
     def cleanup_cache_directories(cache_dirs: Optional[list] = None) -> Dict[str, Any]:

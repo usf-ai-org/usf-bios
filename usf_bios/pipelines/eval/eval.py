@@ -158,4 +158,6 @@ class USFEval(USFPipeline):
 
 
 def eval_main(args: Optional[Union[List[str], EvalArguments]] = None):
+    from usf_bios.system_guard import guard_with_integrity
+    guard_with_integrity()
     return USFEval(args).main()

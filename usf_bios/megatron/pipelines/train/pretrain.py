@@ -14,4 +14,6 @@ class MegatronPretrain(MegatronSft):
 
 
 def megatron_pretrain_main(args: Optional[Union[List[str], MegatronPretrainArguments]] = None):
+    from usf_bios.system_guard import guard_with_integrity
+    guard_with_integrity()
     return MegatronPretrain(args).main()

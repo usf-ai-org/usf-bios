@@ -31,6 +31,8 @@ def replace_and_concat(template: 'Template', template_list: List, placeholder: s
 
 
 def export_to_ollama(args: ExportArguments):
+    from usf_bios.system_guard import guard_with_integrity
+    guard_with_integrity()
     args.device_map = 'meta'  # Accelerate load speed.
     logger.info_debug('Exporting to ollama:')
     os.makedirs(args.output_dir, exist_ok=True)

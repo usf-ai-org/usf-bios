@@ -32,8 +32,147 @@ class TrainingService:
     def __init__(self):
         self._running_tasks: dict = {}
     
+    def _validate_feature_flags(self, config: TrainingConfig) -> tuple[bool, str]:
+        """
+        Validate that requested features are enabled in this build.
+        
+        SECURITY: This validation uses compiled flags from system_guard.
+        Users CANNOT bypass this even by modifying frontend or version.py.
+        
+        Returns: (is_valid, error_message)
+        """
+        try:
+            from usf_bios.system_guard import (
+                validate_train_type,
+                validate_rlhf_algorithm,
+                validate_vllm_mode,
+                validate_training_method,
+                FeatureDisabledError
+            )
+            
+            # Validate training method (sft, rlhf, pt)
+            training_method = getattr(config, 'training_method', None)
+            if training_method:
+                method_value = training_method.value if hasattr(training_method, 'value') else str(training_method)
+                try:
+                    validate_train_type(method_value)
+                except FeatureDisabledError as e:
+                    return False, str(e)
+            
+            # Validate train type (lora, qlora, full, adalora)
+            train_type = getattr(config, 'train_type', None)
+            if train_type:
+                type_value = train_type.value if hasattr(train_type, 'value') else str(train_type)
+                try:
+                    validate_training_method(type_value)
+                except FeatureDisabledError as e:
+                    return False, str(e)
+            
+            # Validate RLHF algorithm if applicable
+            if training_method:
+                method_value = training_method.value if hasattr(training_method, 'value') else str(training_method)
+                if method_value == "rlhf":
+                    rlhf_type = getattr(config, 'rlhf_type', None)
+                    if rlhf_type:
+                        try:
+                            validate_rlhf_algorithm(rlhf_type)
+                        except FeatureDisabledError as e:
+                            return False, str(e)
+                    
+                    # Validate vLLM mode for online RL
+                    online_algos = ["grpo", "ppo", "gkd"]
+                    if rlhf_type in online_algos:
+                        vllm_mode = getattr(config, 'vllm_mode', None)
+                        if vllm_mode:
+                            try:
+                                validate_vllm_mode(vllm_mode)
+                            except FeatureDisabledError as e:
+                                return False, str(e)
+            
+            return True, ""
+            
+        except ImportError:
+            # system_guard not available (development mode) - allow everything
+            return True, ""
+    
+    def _validate_online_rl_config(self, config: TrainingConfig) -> tuple[bool, str]:
+        """
+        Validate online RL configuration before training starts.
+        
+        SECURITY: This validation is enforced by backend - frontend cannot bypass.
+        
+        Checks:
+        1. Server mode requires verified vLLM server endpoint
+        2. Colocate mode requires sufficient GPU resources (2+ GPUs)
+        3. Hash verification to prevent tampering with verified state
+        
+        Returns: (is_valid, error_message)
+        """
+        import hashlib
+        
+        training_method = getattr(config, 'training_method', None)
+        if training_method:
+            method_value = training_method.value if hasattr(training_method, 'value') else str(training_method)
+        else:
+            return True, ""
+        
+        if method_value != "rlhf":
+            return True, ""
+        
+        rlhf_type = getattr(config, 'rlhf_type', None)
+        online_rl_algorithms = ["grpo", "ppo", "gkd"]
+        
+        if rlhf_type not in online_rl_algorithms:
+            return True, ""  # Offline RL doesn't need validation
+        
+        use_vllm = getattr(config, 'use_vllm', True)
+        vllm_mode = getattr(config, 'vllm_mode', None)
+        
+        if not use_vllm:
+            return True, ""  # Not using vLLM
+        
+        # Server mode validation
+        if vllm_mode == "server":
+            host = getattr(config, 'vllm_server_host', None)
+            port = getattr(config, 'vllm_server_port', 8000)
+            verified = getattr(config, 'vllm_server_verified', False)
+            verified_hash = getattr(config, 'vllm_server_verified_hash', None)
+            
+            if not host:
+                return False, "Server mode requires vllm_server_host to be specified"
+            
+            if not verified:
+                return False, "vLLM server endpoint must be verified before training. Click 'Test Connection' in the UI."
+            
+            # Verify hash to prevent tampering
+            expected_hash = hashlib.sha256(f"{host}:{port}".encode()).hexdigest()[:16]
+            if verified_hash != expected_hash:
+                return False, "vLLM server verification mismatch. Please re-verify the server endpoint."
+        
+        # Colocate mode validation
+        elif vllm_mode == "colocate":
+            import torch
+            if torch.cuda.is_available():
+                gpu_count = torch.cuda.device_count()
+                if gpu_count < 2:
+                    return False, "Colocate mode requires at least 2 GPUs. Use server mode instead."
+            else:
+                return False, "No GPU available for colocate mode"
+        
+        return True, ""
+    
     def _build_command(self, config: TrainingConfig, job_id: str, resume_from_checkpoint: str = None) -> list:
         """Build the training command based on training method"""
+        # SECURITY: Validate feature flags first (compiled, cannot bypass)
+        is_valid, error = self._validate_feature_flags(config)
+        if not is_valid:
+            raise ValueError(f"Feature validation failed: {error}")
+        
+        # SECURITY: Validate online RL config before building command
+        is_valid, error = self._validate_online_rl_config(config)
+        if not is_valid:
+            raise ValueError(f"Online RL validation failed: {error}")
+        
         # Use locked output path from capabilities (ignores user-provided path when locked)
         from ..core.capabilities import get_validator
         validator = get_validator()
@@ -115,6 +254,42 @@ class TrainingService:
             elif rlhf_type == "grpo":
                 if hasattr(config, 'num_generations') and config.num_generations:
                     cmd.extend(["--num_generations", str(config.num_generations)])
+            
+            # Online RL vLLM configuration (GRPO/PPO/GKD)
+            if rlhf_type in ["grpo", "ppo", "gkd"]:
+                # vLLM usage
+                if hasattr(config, 'use_vllm') and config.use_vllm:
+                    cmd.extend(["--use_vllm", "true"])
+                    
+                    # vLLM mode (colocate or server)
+                    if hasattr(config, 'vllm_mode') and config.vllm_mode:
+                        cmd.extend(["--vllm_mode", config.vllm_mode])
+                        
+                        # Server mode specific
+                        if config.vllm_mode == "server":
+                            if hasattr(config, 'vllm_server_host') and config.vllm_server_host:
+                                cmd.extend(["--vllm_server_host", config.vllm_server_host])
+                            if hasattr(config, 'vllm_server_port') and config.vllm_server_port:
+                                cmd.extend(["--vllm_server_port", str(config.vllm_server_port)])
+                        
+                        # Colocate mode specific
+                        elif config.vllm_mode == "colocate":
+                            if hasattr(config, 'vllm_tensor_parallel_size') and config.vllm_tensor_parallel_size > 1:
+                                cmd.extend(["--vllm_tensor_parallel_size", str(config.vllm_tensor_parallel_size)])
+                            if hasattr(config, 'vllm_gpu_memory_utilization') and config.vllm_gpu_memory_utilization:
+                                cmd.extend(["--vllm_gpu_memory_utilization", str(config.vllm_gpu_memory_utilization)])
+                            
+                            # Memory optimization options
+                            if hasattr(config, 'offload_model') and config.offload_model:
+                                cmd.extend(["--offload_model", "true"])
+                            if hasattr(config, 'offload_optimizer') and config.offload_optimizer:
+                                cmd.extend(["--offload_optimizer", "true"])
+                            if hasattr(config, 'sleep_level') and config.sleep_level > 0:
+                                cmd.extend(["--sleep_level", str(config.sleep_level)])
+                
+                # Reward functions for GRPO
+                if rlhf_type == "grpo" and hasattr(config, 'reward_funcs') and config.reward_funcs:
+                    cmd.extend(["--reward_funcs", ",".join(config.reward_funcs)])
         
         # Warmup ratio
         if hasattr(config, 'warmup_ratio') and config.warmup_ratio is not None:

@@ -117,3 +117,7 @@ scripts/
 !scripts/compile_to_so.py
 !scripts/compile_backend_only.py
 !scripts/capture_versions.py
+
+# SECURITY: Private keys and decryption tools - NEVER include in Docker
+keys/usf_bios_private.pem
+scripts/decrypt_logs.py

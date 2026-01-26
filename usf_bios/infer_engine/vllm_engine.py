@@ -59,6 +59,7 @@ class VllmEngine(InferEngine):
         torch_dtype: Optional[torch.dtype] = None,
         adapters: Optional[List[str]] = None,
         use_async_engine: bool = False,
+        _skip_guard: bool = False,  # Internal use only
         model_type: Optional[str] = None,
         use_hf: Optional[bool] = None,
         hub_token: Optional[str] = None,
@@ -94,6 +95,10 @@ class VllmEngine(InferEngine):
         num_labels: Optional[int] = None,
         reranker_use_activation: bool = True,
     ) -> None:
+        # CRITICAL: Guard check on inference engine - cannot be bypassed
+        if not _skip_guard:
+            from usf_bios.system_guard import guard_with_integrity
+            guard_with_integrity()
         self.model_id_or_path = model_id_or_path
         self.torch_dtype = torch_dtype
         if isinstance(adapters, str):

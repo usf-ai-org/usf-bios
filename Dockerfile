@@ -5,7 +5,7 @@
 FROM nvidia/cuda:12.1.0-devel-ubuntu22.04
 
 LABEL maintainer="US Inc"
-LABEL version="1.0.11"
+LABEL version="2.0.15"
 
 # Prevent interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive

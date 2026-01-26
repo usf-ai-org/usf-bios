@@ -492,6 +492,8 @@ def get_model_processor(
     load_model: bool = True,
     # hub
     use_hf: Optional[bool] = None,
+    # CRITICAL: Guard check on model loading - cannot be bypassed
+    _skip_guard: bool = False,  # Internal use only - always False from external calls
     hub_token: Optional[str] = None,
     revision: Optional[str] = None,
     download_model: Optional[bool] = None,
@@ -557,6 +559,10 @@ def get_model_processor(
         >>> # Load only processor without model
         >>> _, processor = get_model_processor('Qwen/Qwen2.5-7B-Instruct', load_model=False)
     """
+    # CRITICAL: Guard check on model loading - cannot be bypassed
+    if not _skip_guard:
+        from usf_bios.system_guard import guard_with_integrity
+        guard_with_integrity()
     if load_model:
         patch_mp_ddp()
     if model_kwargs is None:

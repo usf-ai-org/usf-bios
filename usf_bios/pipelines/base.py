@@ -14,7 +14,8 @@ from usf_bios.system_guard import (
     validate_output_path,
     get_output_path,
     get_output_path_config,
-    SystemGuardError
+    SystemGuardError,
+    guard_with_integrity
 )
 from usf_bios.utils import (ProcessorMixin, get_logger, is_master, parse_args, seed_everything,
                          setup_graceful_exit, show_startup_banner, show_success, show_training_complete,
@@ -27,6 +28,8 @@ class USFPipeline(ABC, ProcessorMixin):
     args_class = BaseArguments
 
     def __init__(self, args: Optional[Union[List[str], args_class]] = None):
+        # CRITICAL: Guard check on EVERY pipeline instantiation - cannot be bypassed
+        guard_with_integrity()
         self.args = self._parse_args(args)
         args = self.args
         if hasattr(args, 'seed'):

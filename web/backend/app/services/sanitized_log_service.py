@@ -169,6 +169,47 @@ SAFE_ERROR_PATTERNS = {
         'user_message': 'No GPU available. Please check GPU status.',
         'severity': ErrorSeverity.ERROR
     },
+    # Adapter loading errors
+    r'adapter.*config.*mismatch': {
+        'reason': CrashReason.CONFIG_ERROR,
+        'user_message': 'Adapter configuration mismatch. The adapter was trained with a different model.',
+        'severity': ErrorSeverity.ERROR
+    },
+    r'size mismatch': {
+        'reason': CrashReason.CONFIG_ERROR,
+        'user_message': 'Adapter weight size mismatch. The adapter is not compatible with this base model.',
+        'severity': ErrorSeverity.ERROR
+    },
+    r'shape.*mismatch': {
+        'reason': CrashReason.CONFIG_ERROR,
+        'user_message': 'Adapter shape mismatch. The adapter is not compatible with this base model.',
+        'severity': ErrorSeverity.ERROR
+    },
+    r'adapter.*not found': {
+        'reason': CrashReason.MODEL_ERROR,
+        'user_message': 'Adapter not found. Please verify the adapter path.',
+        'severity': ErrorSeverity.ERROR
+    },
+    r'adapter_config\.json': {
+        'reason': CrashReason.CONFIG_ERROR,
+        'user_message': 'Invalid adapter: missing adapter_config.json file.',
+        'severity': ErrorSeverity.ERROR
+    },
+    r'adapter_model': {
+        'reason': CrashReason.MODEL_ERROR,
+        'user_message': 'Invalid adapter: missing adapter weights file.',
+        'severity': ErrorSeverity.ERROR
+    },
+    r'peft.*error': {
+        'reason': CrashReason.CONFIG_ERROR,
+        'user_message': 'PEFT adapter loading error. The adapter may be corrupted or incompatible.',
+        'severity': ErrorSeverity.ERROR
+    },
+    r'target_modules': {
+        'reason': CrashReason.CONFIG_ERROR,
+        'user_message': 'Adapter target modules not found in base model. Model architecture mismatch.',
+        'severity': ErrorSeverity.ERROR
+    },
 }
 
 SAFE_KEYWORDS = [

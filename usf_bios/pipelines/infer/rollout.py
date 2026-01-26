@@ -621,6 +621,8 @@ class USFRolloutDeploy(USFPipeline):
 
 
 def rollout_main(args: Optional[Union[List[str], RolloutArguments]] = None) -> None:
+    from usf_bios.system_guard import guard_with_integrity
+    guard_with_integrity()
     USFRolloutDeploy(args).main()
 
 

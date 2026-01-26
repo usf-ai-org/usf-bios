@@ -75,4 +75,6 @@ class MegatronRLHF(MegatronSft):
 
 
 def megatron_rlhf_main(args: Optional[Union[List[str], MegatronRLHFArguments]] = None):
+    from usf_bios.system_guard import guard_with_integrity
+    guard_with_integrity()
     return MegatronRLHF(args).main()

@@ -46,6 +46,12 @@ class RLHFType(str, Enum):
     GKD = "gkd"      # Generalized Knowledge Distillation
 
 
+class VLLMMode(str, Enum):
+    """vLLM deployment mode for online RL (GRPO/PPO/GKD)"""
+    COLOCATE = "colocate"  # Training and inference share GPUs (internal vLLM engine)
+    SERVER = "server"      # External vLLM server (separate GPU cluster)
+
+
 class ModelSource(str, Enum):
     """Model source"""
     HUGGINGFACE = "huggingface"
@@ -82,8 +88,14 @@ INCOMPATIBLE_COMBINATIONS = {
 # RLHF algorithms that require reference model
 RLHF_REQUIRES_REF_MODEL = ["dpo", "kto", "ppo", "grpo"]
 
-# RLHF algorithms that support vLLM
+# RLHF algorithms that support vLLM (online RL)
 RLHF_SUPPORTS_VLLM = ["grpo", "gkd"]
+
+# RLHF algorithms that are online (require model sampling during training)
+RLHF_ONLINE_ALGORITHMS = ["grpo", "ppo", "gkd"]
+
+# RLHF algorithms that are offline (use pre-collected preference data)
+RLHF_OFFLINE_ALGORITHMS = ["dpo", "orpo", "simpo", "kto", "cpo", "rm"]
 
 
 class TrainingConfig(BaseModel):
@@ -129,6 +141,45 @@ class TrainingConfig(BaseModel):
     
     # GRPO specific
     num_generations: int = Field(default=8, ge=1, description="GRPO generations per prompt")
+    
+    # Online RL vLLM configuration (for GRPO/PPO/GKD)
+    use_vllm: bool = Field(default=True, description="Use vLLM for fast inference during online RL")
+    vllm_mode: Optional[Literal["colocate", "server"]] = Field(
+        default=None, description="vLLM deployment mode: 'colocate' (same GPUs) or 'server' (external)"
+    )
+    vllm_server_host: Optional[str] = Field(
+        default=None, description="vLLM server host IP (required for server mode)"
+    )
+    vllm_server_port: Optional[int] = Field(
+        default=8000, ge=1, le=65535, description="vLLM server port (default: 8000)"
+    )
+    vllm_tensor_parallel_size: int = Field(
+        default=1, ge=1, description="Tensor parallel size for vLLM (colocate mode)"
+    )
+    vllm_gpu_memory_utilization: float = Field(
+        default=0.9, ge=0.1, le=0.99, description="GPU memory utilization for vLLM (colocate mode)"
+    )
+    
+    # Memory optimization for online RL (colocate mode)
+    offload_model: bool = Field(default=False, description="Offload model to CPU during vLLM inference")
+    offload_optimizer: bool = Field(default=False, description="Offload optimizer to CPU during vLLM inference")
+    sleep_level: int = Field(default=0, ge=0, le=2, description="vLLM sleep level during training (0=off, 1=partial, 2=full)")
+    
+    # Reward functions for GRPO
+    reward_funcs: Optional[List[str]] = Field(
+        default=None, description="List of reward function names (e.g., ['accuracy', 'format'])"
+    )
+    
+    # vLLM Server verification state (SECURITY: enforced by backend)
+    # This MUST be True for server mode before training can start
+    # Resets to False whenever host/port is changed
+    vllm_server_verified: bool = Field(
+        default=False, description="Whether vLLM server has been verified (required for server mode)"
+    )
+    # Hash of verified host:port - used by backend to detect tampering
+    vllm_server_verified_hash: Optional[str] = Field(
+        default=None, description="Hash of verified server config (backend security check)"
+    )
     
     # Dataset
     dataset_path: str = Field(..., description="Dataset path")
@@ -252,6 +303,21 @@ class TrainingConfig(BaseModel):
             # CPO/ORPO don't use ref_model with LoRA
             if self.rlhf_type in ["cpo", "orpo"] and self.train_type.value != "full":
                 pass  # Valid - no ref_model needed
+            
+            # Online RL (GRPO/PPO/GKD) vLLM validation
+            if self.rlhf_type in RLHF_ONLINE_ALGORITHMS:
+                # Auto-set vllm_mode based on context if not specified
+                if self.use_vllm and self.vllm_mode is None:
+                    # Default to colocate for simplicity (will be overridden if 1 GPU)
+                    self.vllm_mode = "colocate"
+                
+                # Server mode requires host
+                if self.vllm_mode == "server" and not self.vllm_server_host:
+                    errors.append("Server mode requires vllm_server_host to be specified")
+            else:
+                # Offline RL doesn't use vLLM
+                self.use_vllm = False
+                self.vllm_mode = None
         
         # QLoRA requires quant_bits
         if self.train_type.value == "qlora" and not self.quant_bits:

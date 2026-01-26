@@ -369,4 +369,6 @@ class USFSft(USFPipeline, TunerMixin):
 
 
 def sft_main(args: Optional[Union[List[str], SftArguments]] = None):
+    from usf_bios.system_guard import guard_with_integrity
+    guard_with_integrity()
     return USFSft(args).main()

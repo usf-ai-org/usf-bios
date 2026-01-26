@@ -238,6 +238,8 @@ class USFDeploy(USFInfer):
 
 
 def deploy_main(args: Optional[Union[List[str], DeployArguments]] = None) -> None:
+    from usf_bios.system_guard import guard_with_integrity
+    guard_with_integrity()
     USFDeploy(args).main()
 
 
@@ -257,6 +259,8 @@ def _deploy_main(args):
 
 @contextmanager
 def run_deploy(args: DeployArguments, return_url: bool = False):
+    from usf_bios.system_guard import guard_with_integrity
+    guard_with_integrity()
     if isinstance(args, DeployArguments) and args.__class__.__name__ == 'DeployArguments':
         deploy_args = args
     else:

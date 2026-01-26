@@ -6,12 +6,14 @@ This module is called by ALL CLI commands to ensure system integrity.
 Users cannot bypass these checks even if they skip the web backend.
 """
 
-from typing import Optional, Set, Tuple, List
+from typing import Optional, Set, Tuple, List, Dict
 from datetime import datetime, timezone
 import os
 import sys
 import base64
 import json
+import hashlib
+import importlib.util
 from pathlib import Path
 
 # Internal validation key (obfuscated in binary - invisible after compilation)
@@ -27,6 +29,46 @@ _COMPAT_MESSAGE = "System components are outdated. Core dependencies require upd
 # HARDCODED VALUES - NO ENVIRONMENT VARIABLES USED
 # These are compiled into .so binary at build time
 # NO ONE can change these values at runtime or deployment
+# ============================================================================
+
+# ============================================================================
+# FEATURE FLAGS - TRAINING METHOD TOGGLES
+# ============================================================================
+# These flags control which training methods are available in the system.
+# Set to True to enable, False to disable.
+# After compilation to .so, these CANNOT be changed by users.
+# Frontend will hide disabled options, backend will reject disabled methods.
+
+# Main training types
+_FEATURE_PRETRAINING_ENABLED = False  # Pre-training (PT) - DISABLED for now
+_FEATURE_SFT_ENABLED = True           # Supervised Fine-Tuning (SFT) - ENABLED
+_FEATURE_RLHF_ENABLED = True          # Reinforcement Learning (RLHF) - ENABLED
+
+# RLHF sub-types (only applies if _FEATURE_RLHF_ENABLED is True)
+_FEATURE_RLHF_ONLINE_ENABLED = False  # Online RL (GRPO, PPO, GKD) - DISABLED for now
+_FEATURE_RLHF_OFFLINE_ENABLED = True  # Offline RL (DPO, ORPO, SimPO, KTO, CPO) - ENABLED
+
+# vLLM modes for online RL (only applies if _FEATURE_RLHF_ONLINE_ENABLED is True)
+_FEATURE_VLLM_COLOCATE_ENABLED = True   # Colocate mode - ENABLED
+_FEATURE_VLLM_SERVER_ENABLED = True     # Server mode (external vLLM) - ENABLED
+
+# Training methods (LoRA, QLoRA, Full, etc.)
+_FEATURE_LORA_ENABLED = True      # LoRA training - ENABLED
+_FEATURE_QLORA_ENABLED = True     # QLoRA training - ENABLED
+_FEATURE_ADALORA_ENABLED = True   # AdaLoRA training - ENABLED
+_FEATURE_FULL_ENABLED = True      # Full fine-tuning - ENABLED
+
+# Specific RLHF algorithms
+_FEATURE_RLHF_GRPO_ENABLED = False  # GRPO (online) - DISABLED (requires online RL)
+_FEATURE_RLHF_PPO_ENABLED = False   # PPO (online) - DISABLED (requires online RL)
+_FEATURE_RLHF_GKD_ENABLED = False   # GKD (online) - DISABLED (requires online RL)
+_FEATURE_RLHF_DPO_ENABLED = True    # DPO (offline) - ENABLED
+_FEATURE_RLHF_ORPO_ENABLED = True   # ORPO (offline) - ENABLED
+_FEATURE_RLHF_SIMPO_ENABLED = True  # SimPO (offline) - ENABLED
+_FEATURE_RLHF_KTO_ENABLED = True    # KTO (offline) - ENABLED
+_FEATURE_RLHF_CPO_ENABLED = True    # CPO (offline) - ENABLED
+_FEATURE_RLHF_RM_ENABLED = True     # Reward Modeling - ENABLED
+
 # ============================================================================
 
 # LOCKED MODELS - Each model is a tuple: (source, path, name, model_type, architecture)
@@ -736,6 +778,197 @@ def validate_output_path(user_path: str) -> None:
 is_system_expired = _check_compat
 
 
+# ============================================================================
+# FEATURE FLAGS API
+# ============================================================================
+# These functions expose feature flags to backend/frontend for validation
+# All values are derived from hardcoded flags - cannot be modified at runtime
+
+class FeatureDisabledError(SystemGuardError):
+    """Raised when a disabled feature is requested."""
+    pass
+
+
+def get_feature_flags() -> Dict[str, bool]:
+    """
+    Get all feature flags as a dictionary.
+    This is the SINGLE SOURCE OF TRUTH for feature availability.
+    Called by backend API to expose to frontend.
+    """
+    return {
+        # Main training types
+        "pretraining": _FEATURE_PRETRAINING_ENABLED,
+        "sft": _FEATURE_SFT_ENABLED,
+        "rlhf": _FEATURE_RLHF_ENABLED,
+        
+        # RLHF sub-types
+        "rlhf_online": _FEATURE_RLHF_ENABLED and _FEATURE_RLHF_ONLINE_ENABLED,
+        "rlhf_offline": _FEATURE_RLHF_ENABLED and _FEATURE_RLHF_OFFLINE_ENABLED,
+        
+        # vLLM modes (only relevant if online RL is enabled)
+        "vllm_colocate": _FEATURE_RLHF_ONLINE_ENABLED and _FEATURE_VLLM_COLOCATE_ENABLED,
+        "vllm_server": _FEATURE_RLHF_ONLINE_ENABLED and _FEATURE_VLLM_SERVER_ENABLED,
+        
+        # Training methods
+        "lora": _FEATURE_LORA_ENABLED,
+        "qlora": _FEATURE_QLORA_ENABLED,
+        "adalora": _FEATURE_ADALORA_ENABLED,
+        "full": _FEATURE_FULL_ENABLED,
+        
+        # Specific RLHF algorithms
+        "grpo": _FEATURE_RLHF_ENABLED and _FEATURE_RLHF_ONLINE_ENABLED and _FEATURE_RLHF_GRPO_ENABLED,
+        "ppo": _FEATURE_RLHF_ENABLED and _FEATURE_RLHF_ONLINE_ENABLED and _FEATURE_RLHF_PPO_ENABLED,
+        "gkd": _FEATURE_RLHF_ENABLED and _FEATURE_RLHF_ONLINE_ENABLED and _FEATURE_RLHF_GKD_ENABLED,
+        "dpo": _FEATURE_RLHF_ENABLED and _FEATURE_RLHF_OFFLINE_ENABLED and _FEATURE_RLHF_DPO_ENABLED,
+        "orpo": _FEATURE_RLHF_ENABLED and _FEATURE_RLHF_OFFLINE_ENABLED and _FEATURE_RLHF_ORPO_ENABLED,
+        "simpo": _FEATURE_RLHF_ENABLED and _FEATURE_RLHF_OFFLINE_ENABLED and _FEATURE_RLHF_SIMPO_ENABLED,
+        "kto": _FEATURE_RLHF_ENABLED and _FEATURE_RLHF_OFFLINE_ENABLED and _FEATURE_RLHF_KTO_ENABLED,
+        "cpo": _FEATURE_RLHF_ENABLED and _FEATURE_RLHF_OFFLINE_ENABLED and _FEATURE_RLHF_CPO_ENABLED,
+        "rm": _FEATURE_RLHF_ENABLED and _FEATURE_RLHF_RM_ENABLED,
+    }
+
+
+def is_feature_enabled(feature_name: str) -> bool:
+    """
+    Check if a specific feature is enabled.
+    
+    Args:
+        feature_name: Feature key (e.g., "sft", "grpo", "vllm_server")
+    
+    Returns:
+        True if enabled, False if disabled or unknown
+    """
+    flags = get_feature_flags()
+    return flags.get(feature_name.lower(), False)
+
+
+def validate_train_type(train_type: str) -> None:
+    """
+    Validate that the requested training type is enabled.
+    Raises FeatureDisabledError if disabled.
+    
+    Args:
+        train_type: Training type (pt, sft, rlhf)
+    """
+    train_type_lower = train_type.lower()
+    
+    if train_type_lower == "pt" and not _FEATURE_PRETRAINING_ENABLED:
+        msg = "Invalid training configuration"
+        print(f"\n[USF BIOS] {msg}\n", file=sys.stderr)
+        raise FeatureDisabledError(msg)
+    
+    if train_type_lower == "sft" and not _FEATURE_SFT_ENABLED:
+        msg = "Invalid training configuration"
+        print(f"\n[USF BIOS] {msg}\n", file=sys.stderr)
+        raise FeatureDisabledError(msg)
+    
+    if train_type_lower == "rlhf" and not _FEATURE_RLHF_ENABLED:
+        msg = "Invalid training configuration"
+        print(f"\n[USF BIOS] {msg}\n", file=sys.stderr)
+        raise FeatureDisabledError(msg)
+
+
+def validate_rlhf_algorithm(algorithm: str) -> None:
+    """
+    Validate that the requested RLHF algorithm is enabled.
+    Raises FeatureDisabledError if disabled.
+    
+    Args:
+        algorithm: RLHF algorithm (grpo, ppo, gkd, dpo, orpo, simpo, kto, cpo, rm)
+    """
+    algo_lower = algorithm.lower()
+    
+    # Check if RLHF is enabled at all
+    if not _FEATURE_RLHF_ENABLED:
+        msg = "Unsupported algorithm"
+        print(f"\n[USF BIOS] {msg}\n", file=sys.stderr)
+        raise FeatureDisabledError(msg)
+    
+    # Online RL algorithms
+    online_algos = {"grpo", "ppo", "gkd"}
+    if algo_lower in online_algos:
+        if not _FEATURE_RLHF_ONLINE_ENABLED:
+            msg = "Unsupported algorithm"
+            print(f"\n[USF BIOS] {msg}\n", file=sys.stderr)
+            raise FeatureDisabledError(msg)
+    
+    # Offline RL algorithms
+    offline_algos = {"dpo", "orpo", "simpo", "kto", "cpo"}
+    if algo_lower in offline_algos:
+        if not _FEATURE_RLHF_OFFLINE_ENABLED:
+            msg = "Unsupported algorithm"
+            print(f"\n[USF BIOS] {msg}\n", file=sys.stderr)
+            raise FeatureDisabledError(msg)
+    
+    # Check specific algorithm flags
+    algo_flags = {
+        "grpo": _FEATURE_RLHF_GRPO_ENABLED,
+        "ppo": _FEATURE_RLHF_PPO_ENABLED,
+        "gkd": _FEATURE_RLHF_GKD_ENABLED,
+        "dpo": _FEATURE_RLHF_DPO_ENABLED,
+        "orpo": _FEATURE_RLHF_ORPO_ENABLED,
+        "simpo": _FEATURE_RLHF_SIMPO_ENABLED,
+        "kto": _FEATURE_RLHF_KTO_ENABLED,
+        "cpo": _FEATURE_RLHF_CPO_ENABLED,
+        "rm": _FEATURE_RLHF_RM_ENABLED,
+    }
+    
+    if algo_lower in algo_flags and not algo_flags[algo_lower]:
+        msg = "Unsupported algorithm"
+        print(f"\n[USF BIOS] {msg}\n", file=sys.stderr)
+        raise FeatureDisabledError(msg)
+
+
+def validate_vllm_mode(mode: str) -> None:
+    """
+    Validate that the requested vLLM mode is enabled.
+    Raises FeatureDisabledError if disabled.
+    
+    Args:
+        mode: vLLM mode (colocate, server)
+    """
+    mode_lower = mode.lower()
+    
+    # vLLM modes only apply to online RL
+    if not _FEATURE_RLHF_ONLINE_ENABLED:
+        msg = "Invalid configuration"
+        print(f"\n[USF BIOS] {msg}\n", file=sys.stderr)
+        raise FeatureDisabledError(msg)
+    
+    if mode_lower == "colocate" and not _FEATURE_VLLM_COLOCATE_ENABLED:
+        msg = "Invalid configuration"
+        print(f"\n[USF BIOS] {msg}\n", file=sys.stderr)
+        raise FeatureDisabledError(msg)
+    
+    if mode_lower == "server" and not _FEATURE_VLLM_SERVER_ENABLED:
+        msg = "Invalid configuration"
+        print(f"\n[USF BIOS] {msg}\n", file=sys.stderr)
+        raise FeatureDisabledError(msg)
+
+
+def validate_training_method(method: str) -> None:
+    """
+    Validate that the requested training method is enabled.
+    Raises FeatureDisabledError if disabled.
+    
+    Args:
+        method: Training method (lora, qlora, adalora, full)
+    """
+    method_lower = method.lower()
+    
+    method_flags = {
+        "lora": _FEATURE_LORA_ENABLED,
+        "qlora": _FEATURE_QLORA_ENABLED,
+        "adalora": _FEATURE_ADALORA_ENABLED,
+        "full": _FEATURE_FULL_ENABLED,
+    }
+    
+    if method_lower in method_flags and not method_flags[method_lower]:
+        msg = "Invalid configuration"
+        print(f"\n[USF BIOS] {msg}\n", file=sys.stderr)
+        raise FeatureDisabledError(msg)
+
+
 def validate_architecture_at_load(architecture: str, model_path: str = "") -> None:
     """
     Called by model loader after architecture is determined.
@@ -764,8 +997,185 @@ def validate_architecture_at_load(architecture: str, model_path: str = "") -> No
         raise
 
 
+# ============================================================================
+# FILE INTEGRITY VERIFICATION
+# Prevents tampering with compiled .so modules
+# ============================================================================
+
+# Critical modules that must be verified before loading
+# Format: {module_name: expected_sha256_hash}
+# These hashes are embedded in this compiled .so file and cannot be modified
+# Set to None to generate hashes during build, then update with actual values
+_CRITICAL_MODULE_HASHES: Dict[str, Optional[str]] = {
+    # Will be populated during build process
+    # "usf_bios.cli._core": "sha256_hash_here",
+    # "usf_bios.system_guard": "sha256_hash_here",
+}
+
+# Integrity check mode:
+# "strict" = fail if hash mismatch or missing
+# "warn" = warn but continue if mismatch
+# "disabled" = no integrity checks (development only)
+_INTEGRITY_MODE = "strict"
+
+
+def _compute_file_hash(file_path: str) -> str:
+    """Compute SHA256 hash of a file."""
+    sha256 = hashlib.sha256()
+    try:
+        with open(file_path, 'rb') as f:
+            for chunk in iter(lambda: f.read(8192), b''):
+                sha256.update(chunk)
+        return sha256.hexdigest()
+    except (IOError, OSError):
+        return ""
+
+
+def _get_module_file_path(module_name: str) -> Optional[str]:
+    """Get the file path of a module (.so or .py)."""
+    try:
+        spec = importlib.util.find_spec(module_name)
+        if spec and spec.origin:
+            return spec.origin
+    except (ImportError, ModuleNotFoundError):
+        pass
+    return None
+
+
+def verify_module_integrity(module_name: str) -> Tuple[bool, str]:
+    """
+    Verify integrity of a critical module by checking its hash.
+    This prevents loading of tampered .so files.
+    
+    Returns:
+        (is_valid, error_message)
+    """
+    if _INTEGRITY_MODE == "disabled":
+        return True, ""
+    
+    # Get expected hash
+    expected_hash = _CRITICAL_MODULE_HASHES.get(module_name)
+    if expected_hash is None:
+        # No hash registered - in strict mode this is an error
+        if _INTEGRITY_MODE == "strict" and module_name in _CRITICAL_MODULE_HASHES:
+            return False, f"No integrity hash registered for {module_name}"
+        return True, ""  # Not a critical module or hash not set
+    
+    # Get module file path
+    file_path = _get_module_file_path(module_name)
+    if not file_path:
+        return False, f"Cannot locate module: {module_name}"
+    
+    # Only verify .so files (compiled modules)
+    if not (file_path.endswith('.so') or file_path.endswith('.pyd')):
+        return True, ""  # Skip .py files (development mode)
+    
+    # Compute actual hash
+    actual_hash = _compute_file_hash(file_path)
+    if not actual_hash:
+        return False, f"Cannot read module file: {file_path}"
+    
+    # Compare hashes
+    if actual_hash != expected_hash:
+        if _INTEGRITY_MODE == "strict":
+            return False, "System integrity check failed. Critical module has been modified."
+        else:
+            print(f"[USF BIOS WARNING] Module integrity mismatch: {module_name}", file=sys.stderr)
+            return True, ""  # Continue with warning
+    
+    return True, ""
+
+
+def verify_all_critical_modules() -> Tuple[bool, str]:
+    """
+    Verify integrity of all critical modules.
+    Call this at system startup.
+    """
+    for module_name in _CRITICAL_MODULE_HASHES:
+        is_valid, error = verify_module_integrity(module_name)
+        if not is_valid:
+            return False, error
+    return True, ""
+
+
+def generate_module_hashes() -> Dict[str, str]:
+    """
+    Generate hashes for all critical modules.
+    Used during build process to populate _CRITICAL_MODULE_HASHES.
+    """
+    hashes = {}
+    for module_name in _CRITICAL_MODULE_HASHES:
+        file_path = _get_module_file_path(module_name)
+        if file_path:
+            hash_val = _compute_file_hash(file_path)
+            if hash_val:
+                hashes[module_name] = hash_val
+    return hashes
+
+
+class IntegrityError(SystemGuardError):
+    """Raised when module integrity check fails."""
+    pass
+
+
+def guard_with_integrity() -> None:
+    """
+    Enhanced guard function that checks both system validity AND module integrity.
+    This is the primary entry point that should be called.
+    """
+    # First verify module integrity
+    is_valid, error = verify_all_critical_modules()
+    if not is_valid:
+        print(f"\n[USF BIOS] {error}\n", file=sys.stderr)
+        raise IntegrityError(error)
+    
+    # Then check system validity
+    guard_cli_entry()
+
+
+# ============================================================================
+# RUNTIME SELF-VERIFICATION
+# Detects if this module itself has been tampered with
+# ============================================================================
+
+def _verify_self_integrity() -> bool:
+    """
+    Verify that this module hasn't been tampered with.
+    Uses multiple checks that are hard to bypass.
+    """
+    # Check 1: Verify critical functions exist and have expected signatures
+    critical_functions = [
+        'guard_cli_entry',
+        'check_system_valid',
+        'validate_model',
+        'validate_architecture',
+    ]
+    
+    for func_name in critical_functions:
+        if func_name not in globals():
+            return False
+        func = globals()[func_name]
+        if not callable(func):
+            return False
+    
+    # Check 2: Verify validation key is intact (would be modified if source was changed)
+    if not _VALIDATION_KEY:
+        return False
+    
+    # Check 3: Verify compatibility date is reasonable
+    if _COMPAT_DATE.year < 2026:
+        return False
+    
+    return True
+
+
 # Auto-check on import (prevents usage if system requires updates)
 try:
+    # Self-integrity check
+    if not _verify_self_integrity():
+        print("\n[USF BIOS] System integrity verification failed.\n", file=sys.stderr)
+        sys.exit(1)
+    
     _needs_update, _msg = _check_compat()
     if _needs_update:
         print(f"\n[USF BIOS] {_msg}\n", file=sys.stderr)

@@ -484,6 +484,21 @@ class InferenceService:
                 device_map = "auto" if torch.cuda.is_available() else "cpu"
                 torch_dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
                 
+                # Validate adapter path if provided
+                if adapter_path:
+                    adapter_dir = Path(adapter_path)
+                    if not adapter_dir.exists():
+                        return {
+                            "success": False,
+                            "error": f"Adapter path does not exist: {adapter_path}"
+                        }
+                    adapter_config = adapter_dir / "adapter_config.json"
+                    if not adapter_config.exists():
+                        return {
+                            "success": False,
+                            "error": f"Not a valid LoRA adapter: missing adapter_config.json in {adapter_path}"
+                        }
+                
                 # Load model using selected backend
                 if backend == InferenceBackend.TRANSFORMERS:
                     adapters = [adapter_path] if adapter_path else None
@@ -544,6 +559,8 @@ class InferenceService:
         """
         Load a LoRA adapter onto the currently loaded model.
         Model must already be loaded.
+        
+        Validates adapter path contains required LoRA files before loading.
         """
         if self._engine is None or self._current_model_path is None:
             return {
@@ -557,15 +574,79 @@ class InferenceService:
                 "error": "Adapter loading only supported with Transformers backend"
             }
         
+        # Validate adapter path exists and contains LoRA files
+        adapter_dir = Path(adapter_path)
+        if not adapter_dir.exists():
+            return {
+                "success": False,
+                "error": f"Adapter path does not exist: {adapter_path}"
+            }
+        
+        if not adapter_dir.is_dir():
+            return {
+                "success": False,
+                "error": f"Adapter path is not a directory: {adapter_path}"
+            }
+        
+        # Check for required LoRA adapter files
+        adapter_config = adapter_dir / "adapter_config.json"
+        adapter_model = adapter_dir / "adapter_model.safetensors"
+        adapter_model_bin = adapter_dir / "adapter_model.bin"
+        
+        if not adapter_config.exists():
+            return {
+                "success": False,
+                "error": f"Not a valid LoRA adapter: missing adapter_config.json in {adapter_path}"
+            }
+        
+        if not (adapter_model.exists() or adapter_model_bin.exists()):
+            return {
+                "success": False,
+                "error": f"Not a valid LoRA adapter: missing adapter weights in {adapter_path}"
+            }
+        
         try:
+            import logging
+            logging.info(f"Loading adapter from: {adapter_path} onto model: {self._current_model_path}")
+            
             # Reload model with the new adapter
             result = await self.load_model(
                 self._current_model_path,
                 adapter_path,
                 self._current_backend
             )
+            
+            if result.get("success"):
+                logging.info(f"Adapter loaded successfully: {adapter_path}")
+            else:
+                logging.warning(f"Adapter load returned failure: {result.get('error')}")
+            
             return result
         except Exception as e:
+            import logging
+            import traceback
+            error_msg = str(e)
+            tb = traceback.format_exc()
+            logging.error(f"Adapter loading error: {error_msg}")
+            logging.error(f"Traceback: {tb}")
+            
+            # Provide more specific error messages for common adapter issues
+            if "config" in error_msg.lower() and "mismatch" in error_msg.lower():
+                return {
+                    "success": False,
+                    "error": "Adapter configuration mismatch. The adapter was trained with a different model architecture."
+                }
+            elif "shape" in error_msg.lower() or "size mismatch" in error_msg.lower():
+                return {
+                    "success": False,
+                    "error": "Adapter weight shape mismatch. The adapter is not compatible with this base model."
+                }
+            elif "not found" in error_msg.lower() or "no such file" in error_msg.lower():
+                return {
+                    "success": False,
+                    "error": f"Adapter files not found at: {adapter_path}"
+                }
+            
             sanitized = sanitized_log_service.sanitize_error(str(e))
             return {
                 "success": False,

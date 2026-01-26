@@ -102,4 +102,6 @@ class USFSampling(USFPipeline):
 
 
 def sampling_main(args: Optional[Union[List[str], SamplingArguments]] = None):
+    from usf_bios.system_guard import guard_with_integrity
+    guard_with_integrity()
     return USFSampling(args).main()

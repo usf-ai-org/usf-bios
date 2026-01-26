@@ -51,4 +51,6 @@ class USFExport(USFPipeline):
 
 
 def export_main(args: Optional[Union[List[str], ExportArguments]] = None):
+    from usf_bios.system_guard import guard_with_integrity
+    guard_with_integrity()
     return USFExport(args).main()

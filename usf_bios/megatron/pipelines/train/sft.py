@@ -83,4 +83,6 @@ class MegatronSft(USFSft):
 
 
 def megatron_sft_main(args: Optional[Union[List[str], MegatronSftArguments]] = None):
+    from usf_bios.system_guard import guard_with_integrity
+    guard_with_integrity()
     return MegatronSft(args).main()

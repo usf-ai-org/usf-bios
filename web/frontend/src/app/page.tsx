@@ -79,6 +79,20 @@ interface TrainingConfig {
   kl_coef: number
   cliprange: number
   num_generations: number
+  // Online RL vLLM configuration
+  use_vllm: boolean
+  vllm_mode: 'colocate' | 'server' | null
+  vllm_server_host: string | null
+  vllm_server_port: number
+  vllm_tensor_parallel_size: number
+  vllm_gpu_memory_utilization: number
+  offload_model: boolean
+  offload_optimizer: boolean
+  sleep_level: number
+  reward_funcs: string[] | null
+  // vLLM Server verification state (SECURITY)
+  vllm_server_verified: boolean
+  vllm_server_verified_hash: string | null
   // Base parameters
   dataset_paths: string[]
   output_dir: string
@@ -137,6 +151,7 @@ interface SystemMetrics {
   ram_used: number | null
   ram_total: number | null
   available: boolean
+  device_count?: number  // Number of GPUs (for multi-GPU systems)
 }
 
 interface SystemStatus {
@@ -254,6 +269,20 @@ export default function Home() {
     kl_coef: 0.05,
     cliprange: 0.2,
     num_generations: 8,
+    // Online RL vLLM configuration
+    use_vllm: true,
+    vllm_mode: null,  // Auto-set based on GPU count when selecting online RL
+    vllm_server_host: null,
+    vllm_server_port: 8000,
+    vllm_tensor_parallel_size: 1,
+    vllm_gpu_memory_utilization: 0.9,
+    offload_model: false,
+    offload_optimizer: false,
+    sleep_level: 0,
+    reward_funcs: null,
+    // vLLM Server verification state (SECURITY)
+    vllm_server_verified: false,
+    vllm_server_verified_hash: null,
     // Base parameters
     dataset_paths: [],
     output_dir: '',  // Empty by default - backend auto-generates when locked
@@ -497,6 +526,37 @@ export default function Home() {
   }>({ hf_token_available: false, ms_token_available: false, hf_token_masked: null, ms_token_masked: null })
   const [useSystemToken, setUseSystemToken] = useState(false)
   
+  // Feature flags - controls what training methods are available
+  // These are compiled into the backend and CANNOT be bypassed
+  const [featureFlags, setFeatureFlags] = useState<{
+    pretraining: boolean
+    sft: boolean
+    rlhf: boolean
+    rlhf_online: boolean
+    rlhf_offline: boolean
+    vllm_colocate: boolean
+    vllm_server: boolean
+    lora: boolean
+    qlora: boolean
+    adalora: boolean
+    full: boolean
+    grpo: boolean
+    ppo: boolean
+    gkd: boolean
+    dpo: boolean
+    orpo: boolean
+    simpo: boolean
+    kto: boolean
+    cpo: boolean
+    rm: boolean
+  }>({
+    pretraining: true, sft: true, rlhf: true,
+    rlhf_online: true, rlhf_offline: true,
+    vllm_colocate: true, vllm_server: true,
+    lora: true, qlora: true, adalora: true, full: true,
+    grpo: true, ppo: true, gkd: true, dpo: true, orpo: true, simpo: true, kto: true, cpo: true, rm: true
+  })
+  
   // Derived values from locked models (computed, not hardcoded)
   const IS_MODEL_LOCKED = lockedModels.length > 0
   const IS_SINGLE_MODEL = lockedModels.length === 1
@@ -628,6 +688,30 @@ export default function Home() {
       console.error('Failed to fetch available GPUs:', e)
     }
   }, [])
+
+  // Fetch feature flags - controls which training methods are available
+  // These flags are compiled into system_guard.py and CANNOT be bypassed
+  const fetchFeatureFlags = useCallback(async () => {
+    try {
+      const res = await fetch('/api/system/feature-flags')
+      if (res.ok) {
+        const data = await res.json()
+        setFeatureFlags(data)
+        
+        // Auto-adjust config if selected method is disabled
+        // If RLHF is disabled but currently selected, switch to SFT
+        if (!data.rlhf && config.training_method === 'rlhf') {
+          setConfig(prev => ({ ...prev, training_method: 'sft', rlhf_type: null }))
+        }
+        // If pre-training is disabled but currently selected, switch to SFT
+        if (!data.pretraining && config.training_method === 'pt') {
+          setConfig(prev => ({ ...prev, training_method: 'sft' }))
+        }
+      }
+    } catch (e) {
+      console.error('Failed to fetch feature flags:', e)
+    }
+  }, [config.training_method])
 
   // Fetch hardware requirements - validates NVIDIA GPU availability
   const fetchHardwareRequirements = useCallback(async () => {
@@ -798,7 +882,8 @@ export default function Home() {
           cpu_percent: data.cpu_percent ?? null,
           ram_used: data.ram_used ?? null,
           ram_total: data.ram_total ?? null,
-          available: hasGpuData || hasCpuData
+          available: hasGpuData || hasCpuData,
+          device_count: data.device_count ?? undefined
         })
       }
     } catch (e) {
@@ -886,9 +971,10 @@ export default function Home() {
     fetchOutputPathConfig()  // Fetch output path configuration
     fetchSystemTokens()  // Check if system has HF_TOKEN/MS_TOKEN configured
     fetchHardwareRequirements()  // CRITICAL: Validate NVIDIA GPU availability
+    fetchFeatureFlags()  // CRITICAL: Fetch feature flags (compiled, cannot bypass)
     const interval = setInterval(fetchSystemStatus, 10000) // Check every 10 seconds
     return () => clearInterval(interval)
-  }, [fetchSystemStatus, fetchSystemCapabilities, fetchLockedModels, fetchAvailableGpus, fetchOutputPathConfig, fetchSystemTokens, fetchHardwareRequirements, systemExpired])
+  }, [fetchSystemStatus, fetchSystemCapabilities, fetchLockedModels, fetchAvailableGpus, fetchOutputPathConfig, fetchSystemTokens, fetchHardwareRequirements, fetchFeatureFlags, systemExpired])
   
   // Fetch model info when model_path changes to get dynamic context length
   useEffect(() => {
@@ -896,6 +982,27 @@ export default function Home() {
       fetchModelInfo(config.model_path, config.model_source)
     }
   }, [config.model_path, config.model_source, fetchModelInfo])
+
+  // Auto-set vLLM mode based on GPU count when selecting online RL algorithms
+  // - Colocate mode (default) for 2+ GPUs: Training and inference share GPUs
+  // - Server mode (forced) for 1 GPU: Requires external vLLM server
+  useEffect(() => {
+    const onlineRLAlgorithms = ['grpo', 'ppo', 'gkd']
+    const isOnlineRL = config.training_method === 'rlhf' && config.rlhf_type && onlineRLAlgorithms.includes(config.rlhf_type)
+    
+    if (isOnlineRL && config.use_vllm) {
+      const gpuCount = availableGpus.length || 1
+      
+      // Force server mode for 1 GPU (colocate not possible)
+      if (gpuCount <= 1 && config.vllm_mode !== 'server') {
+        setConfig(prev => ({ ...prev, vllm_mode: 'server' }))
+      }
+      // Default to colocate for 2+ GPUs if not set
+      else if (gpuCount > 1 && config.vllm_mode === null) {
+        setConfig(prev => ({ ...prev, vllm_mode: 'colocate' }))
+      }
+    }
+  }, [config.training_method, config.rlhf_type, config.use_vllm, config.vllm_mode, availableGpus.length])
 
   // Poll system metrics during training or inference
   useEffect(() => {
@@ -1648,6 +1755,20 @@ export default function Home() {
       return
     }
     
+    // Validate vLLM server mode requires verification (SECURITY)
+    const onlineRLAlgorithms = ['grpo', 'ppo', 'gkd']
+    const isOnlineRL = config.training_method === 'rlhf' && config.rlhf_type && onlineRLAlgorithms.includes(config.rlhf_type)
+    if (isOnlineRL && config.use_vllm && config.vllm_mode === 'server') {
+      if (!config.vllm_server_verified) {
+        showAlert('Please verify the vLLM server connection before starting training. Click "Test Connection" in the settings.', 'error', 'Server Not Verified')
+        return
+      }
+      if (!config.vllm_server_host) {
+        showAlert('vLLM server host is required for server mode', 'error', 'Missing Server Host')
+        return
+      }
+    }
+    
     // Prevent double submission
     if (isStartingTraining || isTraining) {
       console.log('[START] Already starting or training, ignoring duplicate click')
@@ -1827,6 +1948,11 @@ export default function Home() {
   }
 
   // Comprehensive load model with adapter - used after training or from history
+  // Handles different training types:
+  // - LoRA/QLoRA/AdaLoRA: Load base model with adapter
+  // - Full fine-tuning: Load output model directly (no adapter)
+  // - RLHF with LoRA: Load base model with adapter
+  // - RLHF with full: Load output model directly
   const loadModelForInference = async (modelPath: string, adapterPath?: string, switchToInference: boolean = true) => {
     setIsModelLoading(true)
     setLoadingMessage('Preparing to load model...')
@@ -1839,24 +1965,11 @@ export default function Home() {
         console.warn('Memory cleanup may have failed, continuing anyway...')
       }
       
-      // Step 2: Load base model
-      setLoadingMessage(`Loading base model: ${getModelDisplayName(modelPath)}...`)
-      const loadRes = await fetch('/api/inference/load', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model_path: modelPath })
-      })
-      const loadData = await loadRes.json()
-      
-      if (!loadData.success) {
-        showAlert(`Failed to load model: ${loadData.error || 'Unknown error'}`, 'error', 'Model Load Failed')
-        return false
-      }
-      
-      // Step 3: Load adapter if provided
+      // Step 2: Load model (with or without adapter based on training type)
       if (adapterPath) {
-        setLoadingMessage('Loading fine-tuned adapter...')
-        const adapterRes = await fetch('/api/inference/load', {
+        // LoRA-type training: Load base model with adapter in single call
+        setLoadingMessage(`Loading model with adapter: ${getModelDisplayName(modelPath)}...`)
+        const loadRes = await fetch('/api/inference/load', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ 
@@ -1864,20 +1977,38 @@ export default function Home() {
             adapter_path: adapterPath 
           })
         })
-        const adapterData = await adapterRes.json()
+        const loadData = await loadRes.json()
         
-        if (adapterData.success) {
-          // Add to loaded adapters list
-          const newAdapter: LoadedAdapter = {
-            id: `adapter-${Date.now()}`,
-            name: adapterPath.split('/').pop() || 'fine-tuned',
-            path: adapterPath,
-            active: true
-          }
-          setLoadedAdapters(prev => [...prev.map(a => ({ ...a, active: false })), newAdapter])
-        } else {
-          console.warn('Adapter load failed:', adapterData.error)
+        if (!loadData.success) {
+          showAlert(`Failed to load model with adapter: ${loadData.error || 'Unknown error'}`, 'error', 'Model Load Failed')
+          return false
         }
+        
+        // Add to loaded adapters list for UI tracking
+        const newAdapter: LoadedAdapter = {
+          id: `adapter-${Date.now()}`,
+          name: adapterPath.split('/').pop() || 'fine-tuned',
+          path: adapterPath,
+          active: true
+        }
+        setLoadedAdapters(prev => [...prev.map(a => ({ ...a, active: false })), newAdapter])
+      } else {
+        // Full fine-tuning or merged model: Load directly without adapter
+        setLoadingMessage(`Loading fine-tuned model: ${getModelDisplayName(modelPath)}...`)
+        const loadRes = await fetch('/api/inference/load', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model_path: modelPath })
+        })
+        const loadData = await loadRes.json()
+        
+        if (!loadData.success) {
+          showAlert(`Failed to load model: ${loadData.error || 'Unknown error'}`, 'error', 'Model Load Failed')
+          return false
+        }
+        
+        // Clear adapters list since we're loading a merged/full model
+        setLoadedAdapters([])
       }
       
       // Step 4: Update UI state
@@ -1891,6 +2022,10 @@ export default function Home() {
       if (switchToInference) {
         setMainTab('inference')
         setChatMessages([]) // Clear chat for fresh start
+        // Clear training state so it doesn't show stale results when returning to train tab
+        setJobStatus(null)
+        setTrainingLogs([])
+        setTrainingMetrics([])
       }
       
       setLoadingMessage('Model loaded successfully!')
@@ -2357,7 +2492,7 @@ export default function Home() {
               {systemMetrics.available && systemMetrics.gpu_memory_used !== null && systemMetrics.gpu_memory_total !== null && (
                 <div className="flex items-center gap-1 text-slate-600">
                   <HardDrive className="w-4 h-4 text-blue-500" />
-                  <span>VRAM: {systemMetrics.gpu_memory_used.toFixed(1)}/{systemMetrics.gpu_memory_total.toFixed(0)}GB</span>
+                  <span>VRAM: {systemMetrics.gpu_memory_used.toFixed(1)}/{systemMetrics.gpu_memory_total.toFixed(0)}GB{systemMetrics.device_count && systemMetrics.device_count > 1 ? ` (${systemMetrics.device_count} GPUs)` : ''}</span>
                 </div>
               )}
               <div className="text-slate-500">Powered by US Inc</div>
@@ -2425,9 +2560,9 @@ export default function Home() {
       <main className="max-w-6xl mx-auto px-4 py-6">
         
         {/* ===================== TRAINING VIEW - PROGRESS OR RESULT ===================== */}
-        {/* Show when training is active OR when we have a job result (completed/failed) */}
-        {/* Hide when user switches to Inference tab (except during active training) */}
-        {(isTraining || (mainTab === 'train' && jobStatus && (jobStatus.status === 'completed' || jobStatus.status === 'failed' || jobStatus.status === 'stopped'))) && jobStatus && (
+        {/* Show when on training tab AND (training is active OR have job result) */}
+        {/* NEVER show on Inference tab - user must be on train tab */}
+        {mainTab === 'train' && (isTraining || (jobStatus && (jobStatus.status === 'completed' || jobStatus.status === 'failed' || jobStatus.status === 'stopped'))) && jobStatus && (
           <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-4 sm:p-6">
             <div className="space-y-4">
               {/* Model Info Banner - Shows which model is being trained */}
@@ -2518,7 +2653,7 @@ export default function Home() {
                 </div>
                 <div className={`bg-gradient-to-br ${systemMetrics.available && systemMetrics.gpu_memory_used !== null ? 'from-amber-50 to-amber-100 border-amber-200' : 'from-slate-50 to-slate-100 border-slate-200'} rounded-lg p-3 text-center border`}>
                   <HardDrive className="w-5 h-5 mx-auto text-amber-600 mb-1" />
-                  <span className="text-[10px] text-amber-600 font-medium uppercase">VRAM</span>
+                  <span className="text-[10px] text-amber-600 font-medium uppercase">VRAM{systemMetrics.device_count && systemMetrics.device_count > 1 ? ` (${systemMetrics.device_count}x)` : ''}</span>
                   <p className={`text-xl font-bold ${systemMetrics.available && systemMetrics.gpu_memory_used !== null ? 'text-amber-900' : 'text-slate-400'}`}>
                     {systemMetrics.available && systemMetrics.gpu_memory_used !== null && systemMetrics.gpu_memory_total !== null 
                       ? <>{systemMetrics.gpu_memory_used.toFixed(1)}<span className="text-xs font-normal">/{systemMetrics.gpu_memory_total.toFixed(0)}G</span></>
@@ -3061,10 +3196,23 @@ export default function Home() {
               {/* Start New Training Button - show when completed/failed/stopped */}
               {!isTraining && (jobStatus.status === 'completed' || jobStatus.status === 'failed' || jobStatus.status === 'stopped') && (
                 <div className="space-y-3">
-                  {/* Load for Inference - Only show for completed training with adapter */}
+                  {/* Load for Inference - Training type aware loading */}
+                  {/* LoRA/QLoRA/AdaLoRA: Load base model + adapter from output_dir */}
+                  {/* Full fine-tuning: Load output_dir directly as the complete model */}
                   {jobStatus.status === 'completed' && (
                     <button 
-                      onClick={() => loadModelForInference(config.model_path, config.output_dir)}
+                      onClick={() => {
+                        // Use job_id to construct actual output path (backend generates /app/data/outputs/{job_id})
+                        const actualOutputPath = `/app/data/outputs/${jobStatus.job_id}`
+                        const isLoraType = ['lora', 'qlora', 'adalora'].includes(config.train_type)
+                        if (isLoraType) {
+                          // LoRA training: Load base model + adapter
+                          loadModelForInference(config.model_path, actualOutputPath)
+                        } else {
+                          // Full fine-tuning: Load the output directory as the complete model (no adapter)
+                          loadModelForInference(actualOutputPath, undefined)
+                        }
+                      }}
                       disabled={isModelLoading || isCleaningMemory}
                       className="w-full py-3 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-lg font-medium hover:from-green-600 hover:to-emerald-700 disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-green-500/20 transition-all">
                       {isModelLoading ? (
@@ -3423,6 +3571,7 @@ export default function Home() {
                     setConfig={(fn) => setConfig(prev => ({ ...prev, ...fn(prev) }))}
                     availableGpus={availableGpus}
                     modelContextLength={modelContextLength}
+                    featureFlags={featureFlags}
                   />
                 </div>
               )}

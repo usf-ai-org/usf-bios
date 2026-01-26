@@ -45,6 +45,7 @@ class LmdeployEngine(InferEngine):
         template: Optional[Template] = None,
         torch_dtype: Optional[torch.dtype] = None,
         model_type: Optional[str] = None,
+        _skip_guard: bool = False,  # Internal use only
         use_hf: Optional[bool] = None,
         hub_token: Optional[str] = None,
         revision: Optional[str] = None,
@@ -57,6 +58,10 @@ class LmdeployEngine(InferEngine):
         engine_kwargs: Optional[Dict[str, Any]] = None,
         devices: Optional[List[int]] = None,
     ) -> None:
+        # CRITICAL: Guard check on inference engine - cannot be bypassed
+        if not _skip_guard:
+            from usf_bios.system_guard import guard_with_integrity
+            guard_with_integrity()
         self.model_id_or_path = model_id_or_path
         self.torch_dtype = torch_dtype
         self.model_type = model_type

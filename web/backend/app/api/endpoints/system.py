@@ -78,13 +78,18 @@ def check_cuda_available() -> bool:
 
 def get_gpu_metrics():
     """
-    Get GPU metrics using pynvml (NVIDIA Management Library).
-    Returns None for unavailable metrics to avoid showing wrong data.
+    Get AGGREGATED GPU metrics across ALL GPUs using pynvml (NVIDIA Management Library).
+    Returns system-wide GPU metrics matching what cloud providers (RunPod, etc.) show.
     
-    IMPORTANT: We use pynvml for accurate GPU metrics because:
-    - torch.cuda.memory_allocated() only shows PyTorch's allocation, not actual GPU usage
-    - nvidia-smi subprocess is slower and less reliable
-    - pynvml gives real-time accurate data directly from NVIDIA driver
+    IMPORTANT: We aggregate metrics across ALL GPUs because:
+    - Cloud providers show total VRAM across all GPUs
+    - Users expect to see system-wide resource usage, not just one GPU
+    - This matches nvidia-smi behavior when showing total system resources
+    
+    Aggregation rules:
+    - VRAM: Sum of all GPUs (used and total)
+    - Utilization: Average across all GPUs (weighted by activity)
+    - Temperature: Maximum across all GPUs (hottest GPU matters for throttling)
     """
     result = {
         "gpu_utilization": None,
@@ -92,107 +97,148 @@ def get_gpu_metrics():
         "gpu_memory_total": None,
         "gpu_temperature": None,
         "gpu_available": False,
-        "metrics_source": "none"
+        "metrics_source": "none",
+        "device_count": 0
     }
     
     try:
         import pynvml
         pynvml.nvmlInit()
         
-        # Get device count to ensure we have GPUs
         device_count = pynvml.nvmlDeviceGetCount()
         if device_count == 0:
             pynvml.nvmlShutdown()
             return result
         
-        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
         result["gpu_available"] = True
         result["metrics_source"] = "pynvml"
+        result["device_count"] = device_count
         
-        # GPU Utilization (0-100%)
-        try:
-            util = pynvml.nvmlDeviceGetUtilizationRates(handle)
-            # Validate: utilization should be 0-100
-            if 0 <= util.gpu <= 100:
-                result["gpu_utilization"] = int(util.gpu)
-            else:
-                result["gpu_utilization"] = None  # Invalid value
-        except pynvml.NVMLError:
-            pass  # Keep as None
+        total_memory_used = 0
+        total_memory_total = 0
+        total_utilization = 0
+        valid_util_count = 0
+        max_temperature = 0
+        valid_temp_count = 0
         
-        # GPU Memory (in GB)
-        try:
-            mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-            # Validate: memory values should be positive
-            if mem_info.used >= 0 and mem_info.total > 0:
-                result["gpu_memory_used"] = round(mem_info.used / (1024**3), 2)
-                result["gpu_memory_total"] = round(mem_info.total / (1024**3), 2)
-                # Sanity check: used should not exceed total
-                if result["gpu_memory_used"] > result["gpu_memory_total"]:
-                    result["gpu_memory_used"] = None
-                    result["gpu_memory_total"] = None
-        except pynvml.NVMLError:
-            pass  # Keep as None
+        for i in range(device_count):
+            try:
+                handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+                
+                # GPU Memory - sum across all GPUs
+                try:
+                    mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                    if mem_info.used >= 0 and mem_info.total > 0:
+                        total_memory_used += mem_info.used
+                        total_memory_total += mem_info.total
+                except pynvml.NVMLError:
+                    pass
+                
+                # GPU Utilization - average across all GPUs
+                try:
+                    util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+                    if 0 <= util.gpu <= 100:
+                        total_utilization += util.gpu
+                        valid_util_count += 1
+                except pynvml.NVMLError:
+                    pass
+                
+                # GPU Temperature - take maximum (hottest GPU)
+                try:
+                    temperature = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+                    if 0 <= temperature <= 120:
+                        max_temperature = max(max_temperature, temperature)
+                        valid_temp_count += 1
+                except pynvml.NVMLError:
+                    pass
+                    
+            except pynvml.NVMLError:
+                continue
         
-        # GPU Temperature (in Celsius)
-        try:
-            temperature = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
-            # Validate: reasonable temperature range (0-120°C)
-            # GPUs typically operate between 30-90°C, throttle around 83-90°C
-            if 0 <= temperature <= 120:
-                result["gpu_temperature"] = int(temperature)
-            else:
-                result["gpu_temperature"] = None  # Unrealistic value
-        except pynvml.NVMLError:
-            pass  # Keep as None
+        # Set aggregated values
+        if total_memory_total > 0:
+            result["gpu_memory_used"] = round(total_memory_used / (1024**3), 2)
+            result["gpu_memory_total"] = round(total_memory_total / (1024**3), 2)
+            if result["gpu_memory_used"] > result["gpu_memory_total"]:
+                result["gpu_memory_used"] = None
+                result["gpu_memory_total"] = None
+        
+        if valid_util_count > 0:
+            result["gpu_utilization"] = int(round(total_utilization / valid_util_count))
+        
+        if valid_temp_count > 0:
+            result["gpu_temperature"] = int(max_temperature)
         
         pynvml.nvmlShutdown()
         return result
         
     except ImportError:
-        # pynvml not available - try nvidia-smi as fallback
+        # pynvml not available - try nvidia-smi as fallback with ALL GPUs
         try:
             import subprocess
-            # Use nvidia-smi for metrics
             cmd = "nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits"
             output = subprocess.check_output(cmd.split(), timeout=5).decode().strip()
-            values = output.split(',')
+            lines = output.strip().split('\n')
             
-            if len(values) >= 4:
+            if lines:
                 result["gpu_available"] = True
                 result["metrics_source"] = "nvidia-smi"
+                result["device_count"] = len(lines)
                 
-                # Parse utilization
-                try:
-                    util = int(values[0].strip())
-                    if 0 <= util <= 100:
-                        result["gpu_utilization"] = util
-                except (ValueError, IndexError):
-                    pass
+                total_memory_used = 0
+                total_memory_total = 0
+                total_utilization = 0
+                valid_util_count = 0
+                max_temperature = 0
+                valid_temp_count = 0
                 
-                # Parse memory used (MiB to GB)
-                try:
-                    mem_used = float(values[1].strip()) / 1024
-                    if mem_used >= 0:
-                        result["gpu_memory_used"] = round(mem_used, 2)
-                except (ValueError, IndexError):
-                    pass
+                for line in lines:
+                    values = line.split(',')
+                    if len(values) >= 4:
+                        # Parse utilization
+                        try:
+                            util = int(values[0].strip())
+                            if 0 <= util <= 100:
+                                total_utilization += util
+                                valid_util_count += 1
+                        except ValueError:
+                            pass
+                        
+                        # Parse memory used (MiB to bytes for summing)
+                        try:
+                            mem_used = float(values[1].strip()) * 1024 * 1024
+                            if mem_used >= 0:
+                                total_memory_used += mem_used
+                        except ValueError:
+                            pass
+                        
+                        # Parse memory total (MiB to bytes for summing)
+                        try:
+                            mem_total = float(values[2].strip()) * 1024 * 1024
+                            if mem_total > 0:
+                                total_memory_total += mem_total
+                        except ValueError:
+                            pass
+                        
+                        # Parse temperature (take max)
+                        try:
+                            temp = int(values[3].strip())
+                            if 0 <= temp <= 120:
+                                max_temperature = max(max_temperature, temp)
+                                valid_temp_count += 1
+                        except ValueError:
+                            pass
                 
-                # Parse memory total (MiB to GB)
-                try:
-                    mem_total = float(values[2].strip()) / 1024
-                    if mem_total > 0:
-                        result["gpu_memory_total"] = round(mem_total, 2)
-                except (ValueError, IndexError):
-                    pass
+                # Set aggregated values
+                if total_memory_total > 0:
+                    result["gpu_memory_used"] = round(total_memory_used / (1024**3), 2)
+                    result["gpu_memory_total"] = round(total_memory_total / (1024**3), 2)
                 
-                # Parse temperature
-                try:
-                    temp = int(values[3].strip())
-                    if 0 <= temp <= 120:
-                        result["gpu_temperature"] = temp
-                except (ValueError, IndexError):
-                    pass
+                if valid_util_count > 0:
+                    result["gpu_utilization"] = int(round(total_utilization / valid_util_count))
+                
+                if valid_temp_count > 0:
+                    result["gpu_temperature"] = int(max_temperature)
                 
                 return result
         except (subprocess.SubprocessError, FileNotFoundError, subprocess.TimeoutExpired):
@@ -202,21 +248,22 @@ def get_gpu_metrics():
         try:
             import torch
             if torch.cuda.is_available():
+                device_count = torch.cuda.device_count()
                 result["gpu_available"] = True
                 result["metrics_source"] = "torch"
-                # Note: torch only gives total memory, not actual usage
-                result["gpu_memory_total"] = round(
-                    torch.cuda.get_device_properties(0).total_memory / (1024**3), 2
-                )
-                # torch.cuda.memory_allocated() only shows PyTorch allocations
-                # This is NOT accurate for total GPU usage, so we don't use it
+                result["device_count"] = device_count
+                
+                total_memory = 0
+                for i in range(device_count):
+                    total_memory += torch.cuda.get_device_properties(i).total_memory
+                
+                result["gpu_memory_total"] = round(total_memory / (1024**3), 2)
         except:
             pass
         
         return result
         
     except Exception as e:
-        # Log error but don't expose internal details
         import logging
         logging.warning(f"GPU metrics error: {e}")
         return result
@@ -750,6 +797,66 @@ async def get_locked_models():
         "is_locked": validator.is_model_locked(),
         "models": validator.get_locked_models()
     }
+
+
+@router.get("/feature-flags")
+async def get_feature_flags():
+    """
+    Get feature flags for training methods and capabilities.
+    These flags are compiled into the system and CANNOT be changed at runtime.
+    Frontend uses these to show/hide options accordingly.
+    
+    Response format:
+    {
+        "pretraining": false,      # Pre-training disabled
+        "sft": true,               # SFT enabled
+        "rlhf": true,              # RLHF enabled
+        "rlhf_online": false,      # Online RL (GRPO, PPO, GKD) disabled
+        "rlhf_offline": true,      # Offline RL (DPO, ORPO, etc.) enabled
+        "vllm_colocate": false,    # Colocate mode disabled (requires online RL)
+        "vllm_server": false,      # Server mode disabled (requires online RL)
+        "lora": true,              # LoRA enabled
+        "qlora": true,             # QLoRA enabled
+        "adalora": true,           # AdaLoRA enabled
+        "full": true,              # Full fine-tuning enabled
+        "grpo": false,             # GRPO algorithm disabled
+        "ppo": false,              # PPO algorithm disabled
+        "gkd": false,              # GKD algorithm disabled
+        "dpo": true,               # DPO algorithm enabled
+        "orpo": true,              # ORPO algorithm enabled
+        "simpo": true,             # SimPO algorithm enabled
+        "kto": true,               # KTO algorithm enabled
+        "cpo": true,               # CPO algorithm enabled
+        "rm": true                 # Reward Modeling enabled
+    }
+    """
+    try:
+        from usf_bios.system_guard import get_feature_flags as get_flags
+        return get_flags()
+    except ImportError:
+        # Fallback if system_guard is not available (development mode)
+        return {
+            "pretraining": True,
+            "sft": True,
+            "rlhf": True,
+            "rlhf_online": True,
+            "rlhf_offline": True,
+            "vllm_colocate": True,
+            "vllm_server": True,
+            "lora": True,
+            "qlora": True,
+            "adalora": True,
+            "full": True,
+            "grpo": True,
+            "ppo": True,
+            "gkd": True,
+            "dpo": True,
+            "orpo": True,
+            "simpo": True,
+            "kto": True,
+            "cpo": True,
+            "rm": True,
+        }
 
 
 @router.get("/output-path-config", include_in_schema=False)
@@ -1630,3 +1737,498 @@ async def deep_cleanup_gpu():
         exclude_pids=[os.getpid()]
     )
     return result
+
+
+# ============================================================================
+# vLLM Server Validation for Online RL (GRPO/PPO/GKD)
+# ============================================================================
+
+class VLLMServerTestRequest(BaseModel):
+    """Request to test vLLM server connectivity for RL training"""
+    host: str
+    port: int = 8000
+    # NCCL group port for weight sync (required for online RL)
+    group_port: int = 51216
+
+
+class VLLMServerTestResponse(BaseModel):
+    """Response from vLLM server test"""
+    success: bool
+    verified: bool = False
+    message: str
+    error: Optional[str] = None
+    # What was tested and results
+    tests_passed: List[str] = []
+    tests_failed: List[str] = []
+    # Sample output showing the required keys
+    sample_output: Optional[dict] = None
+    # Server capabilities
+    server_type: Optional[str] = None  # "standard_vllm" or "rl_rollout"
+    supports_weight_sync: bool = False
+
+
+@router.post("/vllm/test", response_model=VLLMServerTestResponse)
+async def test_vllm_server(request: VLLMServerTestRequest):
+    """
+    Test vLLM server for RL training compatibility.
+    
+    Simple test: Send sample input → Check output has required keys (logprobs).
+    If it works with sample, it will work during training.
+    
+    SECURITY: Must pass before training can start in server mode.
+    """
+    import httpx
+    import socket
+    
+    host = request.host.strip()
+    port = request.port
+    base_url = f"http://{host}:{port}"
+    
+    tests_passed = []
+    tests_failed = []
+    sample_output = {}
+    
+    # Validate host format
+    if not host or len(host) > 255:
+        return VLLMServerTestResponse(
+            success=False,
+            verified=False,
+            message="Invalid host format",
+            error="Host must be a valid IP address or hostname"
+        )
+    
+    try:
+        # Step 1: Can we connect?
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(5)
+            result = sock.connect_ex((host, port))
+            sock.close()
+            if result != 0:
+                return VLLMServerTestResponse(
+                    success=False,
+                    verified=False,
+                    message=f"Cannot connect to {host}:{port}",
+                    error="Server not reachable. Check IP/port and ensure vLLM is running.",
+                    tests_failed=["connection"]
+                )
+            tests_passed.append("connection")
+        except socket.gaierror:
+            return VLLMServerTestResponse(
+                success=False,
+                verified=False,
+                message=f"Cannot resolve hostname: {host}",
+                error="DNS resolution failed. Check the hostname.",
+                tests_failed=["connection"]
+            )
+        except socket.timeout:
+            return VLLMServerTestResponse(
+                success=False,
+                verified=False,
+                message=f"Connection timeout to {host}:{port}",
+                error="Server not responding.",
+                tests_failed=["connection"]
+            )
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Step 2: Get model name
+            try:
+                models_resp = await client.get(f"{base_url}/v1/models")
+                if models_resp.status_code != 200:
+                    return VLLMServerTestResponse(
+                        success=False,
+                        verified=False,
+                        message="Cannot get models from server",
+                        error=f"/v1/models returned status {models_resp.status_code}",
+                        tests_passed=tests_passed,
+                        tests_failed=["models_endpoint"]
+                    )
+                models_data = models_resp.json()
+                if "data" not in models_data or len(models_data["data"]) == 0:
+                    return VLLMServerTestResponse(
+                        success=False,
+                        verified=False,
+                        message="No models loaded on server",
+                        error="Start vLLM with a model loaded.",
+                        tests_passed=tests_passed,
+                        tests_failed=["no_models"]
+                    )
+                model_id = models_data["data"][0].get("id", "unknown")
+                sample_output["model"] = model_id
+                tests_passed.append("model_available")
+            except Exception as e:
+                return VLLMServerTestResponse(
+                    success=False,
+                    verified=False,
+                    message="Cannot reach vLLM API",
+                    error=str(e),
+                    tests_passed=tests_passed,
+                    tests_failed=["api_unreachable"]
+                )
+            
+            # Step 3: THE MAIN TEST - Send sample input, check output has logprobs
+            # This is what matters for RL training
+            try:
+                test_payload = {
+                    "model": model_id,
+                    "messages": [
+                        {"role": "user", "content": "What is 2+2? Answer with just the number."}
+                    ],
+                    "max_tokens": 10,
+                    "temperature": 0,
+                    "logprobs": True,  # REQUIRED for RL training
+                    "top_logprobs": 5
+                }
+                
+                response = await client.post(
+                    f"{base_url}/v1/chat/completions",
+                    json=test_payload,
+                    timeout=60.0
+                )
+                
+                if response.status_code != 200:
+                    return VLLMServerTestResponse(
+                        success=False,
+                        verified=False,
+                        message="Generation request failed",
+                        error=f"Server returned status {response.status_code}. Check server logs.",
+                        tests_passed=tests_passed,
+                        tests_failed=["generation_failed"]
+                    )
+                
+                data = response.json()
+                
+                # Check required keys exist
+                missing_keys = []
+                
+                # Must have choices
+                if "choices" not in data or len(data["choices"]) == 0:
+                    missing_keys.append("choices")
+                
+                # Must have usage (token counts)
+                if "usage" not in data:
+                    missing_keys.append("usage")
+                else:
+                    usage = data["usage"]
+                    sample_output["usage"] = usage
+                    for key in ["prompt_tokens", "completion_tokens", "total_tokens"]:
+                        if key not in usage:
+                            missing_keys.append(f"usage.{key}")
+                
+                if missing_keys:
+                    return VLLMServerTestResponse(
+                        success=False,
+                        verified=False,
+                        message="Response missing required keys",
+                        error=f"Missing: {', '.join(missing_keys)}",
+                        tests_passed=tests_passed,
+                        tests_failed=["missing_keys"],
+                        sample_output=sample_output
+                    )
+                tests_passed.append("response_format")
+                
+                # Check logprobs - CRITICAL for RL training
+                choice = data["choices"][0]
+                sample_output["content"] = choice.get("message", {}).get("content", "")[:100]
+                
+                if "logprobs" not in choice or choice["logprobs"] is None:
+                    return VLLMServerTestResponse(
+                        success=False,
+                        verified=False,
+                        message="Server does not return logprobs",
+                        error="logprobs is required for RL training. The server returned None for logprobs. Check vLLM configuration.",
+                        tests_passed=tests_passed,
+                        tests_failed=["no_logprobs"],
+                        sample_output=sample_output
+                    )
+                
+                logprobs = choice["logprobs"]
+                if "content" not in logprobs or logprobs["content"] is None or len(logprobs["content"]) == 0:
+                    return VLLMServerTestResponse(
+                        success=False,
+                        verified=False,
+                        message="logprobs.content is empty",
+                        error="Server returned logprobs but content is empty. This won't work for RL training.",
+                        tests_passed=tests_passed,
+                        tests_failed=["empty_logprobs"],
+                        sample_output=sample_output
+                    )
+                
+                # Check logprobs structure has required keys
+                token_info = logprobs["content"][0]
+                logprobs_required = ["token", "logprob"]
+                logprobs_missing = [k for k in logprobs_required if k not in token_info]
+                
+                if logprobs_missing:
+                    return VLLMServerTestResponse(
+                        success=False,
+                        verified=False,
+                        message="logprobs missing required keys",
+                        error=f"Each token needs: {', '.join(logprobs_required)}. Missing: {', '.join(logprobs_missing)}",
+                        tests_passed=tests_passed,
+                        tests_failed=["logprobs_keys"],
+                        sample_output=sample_output
+                    )
+                
+                # SUCCESS - logprobs work!
+                tests_passed.append("logprobs")
+                sample_output["logprobs_sample"] = {
+                    "token": token_info["token"],
+                    "logprob": token_info["logprob"],
+                    "top_logprobs_count": len(token_info.get("top_logprobs", []))
+                }
+                
+            except httpx.TimeoutException:
+                return VLLMServerTestResponse(
+                    success=False,
+                    verified=False,
+                    message="Request timed out",
+                    error="Server took too long to respond (>60s). May be overloaded.",
+                    tests_passed=tests_passed,
+                    tests_failed=["timeout"]
+                )
+            except Exception as e:
+                return VLLMServerTestResponse(
+                    success=False,
+                    verified=False,
+                    message="Generation test failed",
+                    error=str(e),
+                    tests_passed=tests_passed,
+                    tests_failed=["generation_error"]
+                )
+        
+            # Step 4: Check for RL-specific endpoints (weight sync capability)
+            # These are required for online RL training
+            server_type = "standard_vllm"
+            supports_weight_sync = False
+            
+            try:
+                # Check if this is an RL rollout server with weight sync endpoints
+                # Try /health/ (RL rollout server uses trailing slash)
+                rl_health = await client.get(f"{base_url}/health/", timeout=5.0)
+                if rl_health.status_code == 200:
+                    # Check for get_engine_type (RL-specific endpoint)
+                    engine_type_resp = await client.post(f"{base_url}/get_engine_type/", timeout=5.0)
+                    if engine_type_resp.status_code == 200:
+                        server_type = "rl_rollout"
+                        supports_weight_sync = True
+                        tests_passed.append("rl_endpoints")
+                        sample_output["server_type"] = "rl_rollout"
+                        sample_output["weight_sync_available"] = True
+            except Exception:
+                # Standard vLLM server without RL extensions
+                pass
+            
+            if not supports_weight_sync:
+                sample_output["server_type"] = "standard_vllm"
+                sample_output["weight_sync_available"] = False
+                sample_output["warning"] = (
+                    "Server does not have RL weight sync endpoints. "
+                    "You must start vLLM with: usf-bios rollout --vllm_mode server"
+                )
+                tests_failed.append("no_weight_sync")
+                return VLLMServerTestResponse(
+                    success=False,
+                    verified=False,
+                    message="Server missing RL weight sync endpoints",
+                    error=(
+                        "This vLLM server does not support weight updates. "
+                        "For online RL, start the server with: "
+                        "usf-bios rollout --model <model> --vllm_mode server --port 8000"
+                    ),
+                    tests_passed=tests_passed,
+                    tests_failed=tests_failed,
+                    sample_output=sample_output,
+                    server_type=server_type,
+                    supports_weight_sync=False
+                )
+        
+        # All tests passed!
+        return VLLMServerTestResponse(
+            success=True,
+            verified=True,
+            message=f"Server ready for RL training with weight sync",
+            tests_passed=tests_passed,
+            sample_output=sample_output,
+            server_type=server_type,
+            supports_weight_sync=supports_weight_sync
+        )
+        
+    except Exception as e:
+        return VLLMServerTestResponse(
+            success=False,
+            verified=False,
+            message="Test failed",
+            error=str(e),
+            tests_failed=["unknown_error"]
+        )
+
+
+class GPUResourceCheckRequest(BaseModel):
+    """Request to check if GPU resources are sufficient for colocate mode"""
+    model_path: str
+    train_type: str = "lora"  # lora, qlora, full
+    rlhf_type: str = "grpo"
+    max_length: int = 2048
+    per_device_train_batch_size: int = 1
+    vllm_gpu_memory_utilization: float = 0.9
+
+
+class GPUResourceCheckResponse(BaseModel):
+    """Response from GPU resource check"""
+    sufficient: bool
+    can_use_colocate: bool
+    message: str
+    details: dict = {}
+    recommendations: List[str] = []
+
+
+@router.post("/gpu/resource-check", response_model=GPUResourceCheckResponse)
+async def check_gpu_resources_for_colocate(request: GPUResourceCheckRequest):
+    """
+    Check if GPU resources are sufficient for colocate mode (training + vLLM on same GPUs).
+    
+    This validates:
+    1. Available GPU memory
+    2. Estimated model memory requirements
+    3. vLLM KV cache requirements
+    4. Training overhead (gradients, optimizer states)
+    
+    SECURITY: This check is enforced by backend. Frontend cannot bypass.
+    """
+    import torch
+    
+    details = {
+        "gpu_count": 0,
+        "total_gpu_memory_gb": 0,
+        "available_gpu_memory_gb": 0,
+        "estimated_model_memory_gb": 0,
+        "estimated_training_overhead_gb": 0,
+        "estimated_vllm_memory_gb": 0,
+        "total_required_gb": 0,
+    }
+    recommendations = []
+    
+    try:
+        if not torch.cuda.is_available():
+            return GPUResourceCheckResponse(
+                sufficient=False,
+                can_use_colocate=False,
+                message="No GPU available",
+                details=details,
+                recommendations=["Install NVIDIA drivers and CUDA toolkit"]
+            )
+        
+        gpu_count = torch.cuda.device_count()
+        details["gpu_count"] = gpu_count
+        
+        # Get total GPU memory
+        total_memory_gb = 0
+        available_memory_gb = 0
+        for i in range(gpu_count):
+            props = torch.cuda.get_device_properties(i)
+            total_memory_gb += props.total_memory / (1024**3)
+            # Get current free memory
+            free_mem, total_mem = torch.cuda.mem_get_info(i)
+            available_memory_gb += free_mem / (1024**3)
+        
+        details["total_gpu_memory_gb"] = round(total_memory_gb, 2)
+        details["available_gpu_memory_gb"] = round(available_memory_gb, 2)
+        
+        # Estimate model memory (rough heuristics based on model path)
+        model_path_lower = request.model_path.lower()
+        estimated_params_b = 7  # Default 7B
+        
+        # Parse model size from path
+        if "70b" in model_path_lower or "72b" in model_path_lower:
+            estimated_params_b = 70
+        elif "32b" in model_path_lower or "34b" in model_path_lower:
+            estimated_params_b = 32
+        elif "14b" in model_path_lower or "13b" in model_path_lower:
+            estimated_params_b = 14
+        elif "8b" in model_path_lower or "7b" in model_path_lower:
+            estimated_params_b = 7
+        elif "3b" in model_path_lower or "4b" in model_path_lower:
+            estimated_params_b = 4
+        elif "1b" in model_path_lower or "2b" in model_path_lower:
+            estimated_params_b = 2
+        elif "0.5b" in model_path_lower or "500m" in model_path_lower:
+            estimated_params_b = 0.5
+        
+        # Memory per parameter depends on dtype and training type
+        if request.train_type == "qlora":
+            bytes_per_param = 0.5  # 4-bit quantized
+            training_multiplier = 1.5  # Lower overhead for QLoRA
+        elif request.train_type == "lora":
+            bytes_per_param = 2  # bfloat16
+            training_multiplier = 2  # LoRA adapters + activations
+        else:  # full
+            bytes_per_param = 2  # bfloat16
+            training_multiplier = 4  # Full gradients + optimizer states
+        
+        model_memory_gb = (estimated_params_b * bytes_per_param)
+        training_overhead_gb = model_memory_gb * (training_multiplier - 1)
+        
+        # vLLM memory estimate (KV cache + model)
+        vllm_memory_gb = model_memory_gb * request.vllm_gpu_memory_utilization
+        
+        details["estimated_model_memory_gb"] = round(model_memory_gb, 2)
+        details["estimated_training_overhead_gb"] = round(training_overhead_gb, 2)
+        details["estimated_vllm_memory_gb"] = round(vllm_memory_gb, 2)
+        
+        # Total required for colocate mode
+        # Note: In colocate mode, model is shared, but we need memory for both purposes
+        # With sleep_level, vLLM releases memory during training and vice versa
+        total_required_gb = model_memory_gb + max(training_overhead_gb, vllm_memory_gb)
+        details["total_required_gb"] = round(total_required_gb, 2)
+        
+        # Check if sufficient
+        # We need at least 2 GPUs for colocate mode
+        if gpu_count < 2:
+            return GPUResourceCheckResponse(
+                sufficient=False,
+                can_use_colocate=False,
+                message="Colocate mode requires at least 2 GPUs",
+                details=details,
+                recommendations=[
+                    "Use server mode with external vLLM server",
+                    "Add more GPUs to your system"
+                ]
+            )
+        
+        # Check memory
+        if available_memory_gb < total_required_gb:
+            recommendations.append(f"Estimated {total_required_gb:.1f}GB required, only {available_memory_gb:.1f}GB available")
+            recommendations.append("Use QLoRA instead of LoRA to reduce memory")
+            recommendations.append("Enable offload_model and offload_optimizer")
+            recommendations.append("Set sleep_level to 1 or 2")
+            recommendations.append("Or use server mode with dedicated inference GPU")
+            
+            return GPUResourceCheckResponse(
+                sufficient=False,
+                can_use_colocate=False,
+                message="Insufficient GPU memory for colocate mode",
+                details=details,
+                recommendations=recommendations
+            )
+        
+        # Memory is sufficient
+        if available_memory_gb < total_required_gb * 1.2:
+            recommendations.append("Memory is tight - consider enabling memory optimization options")
+        
+        return GPUResourceCheckResponse(
+            sufficient=True,
+            can_use_colocate=True,
+            message=f"GPU resources sufficient for colocate mode ({gpu_count} GPUs, {available_memory_gb:.1f}GB available)",
+            details=details,
+            recommendations=recommendations
+        )
+        
+    except Exception as e:
+        return GPUResourceCheckResponse(
+            sufficient=False,
+            can_use_colocate=False,
+            message=f"GPU resource check failed: {str(e)}",
+            details=details,
+            recommendations=["Check GPU drivers and CUDA installation"]
+        )
