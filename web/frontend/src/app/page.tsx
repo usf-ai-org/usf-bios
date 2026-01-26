@@ -417,6 +417,14 @@ export default function Home() {
   const [systemPrompt, setSystemPrompt] = useState('')
   const [keepHistory, setKeepHistory] = useState(true)
   
+  // Inference backend selection - transformers is default
+  const [inferenceBackend, setInferenceBackend] = useState<'transformers' | 'vllm' | 'sglang'>('transformers')
+  const [availableBackends, setAvailableBackends] = useState<{
+    transformers: boolean
+    vllm: boolean
+    sglang: boolean
+  }>({ transformers: true, vllm: false, sglang: false })
+  
   // System metrics state - null means data not available
   const [systemMetrics, setSystemMetrics] = useState<SystemMetrics>({
     gpu_utilization: null, gpu_memory_used: null, gpu_memory_total: null,
@@ -1875,9 +1883,28 @@ export default function Home() {
       if (res.ok) {
         const data = await res.json()
         setInferenceStatus(data)
+        // Update available backends from status response
+        if (data.available_backends) {
+          setAvailableBackends(data.available_backends)
+        }
       }
     } catch (e) {
       console.error('Failed to fetch inference status:', e)
+    }
+  }
+  
+  // Fetch available inference backends
+  const fetchAvailableBackends = async () => {
+    try {
+      const res = await fetch('/api/inference/backends')
+      if (res.ok) {
+        const data = await res.json()
+        if (data.backends) {
+          setAvailableBackends(data.backends)
+        }
+      }
+    } catch (e) {
+      console.error('Failed to fetch available backends:', e)
     }
   }
 
@@ -1927,11 +1954,14 @@ export default function Home() {
       // First clean memory
       await deepCleanMemory()
       
-      setLoadingMessage('Loading base model...')
+      setLoadingMessage(`Loading base model with ${inferenceBackend} backend...`)
       const res = await fetch('/api/inference/load', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model_path: inferenceModel })
+        body: JSON.stringify({ 
+          model_path: inferenceModel,
+          backend: inferenceBackend 
+        })
       })
       const data = await res.json()
       if (data.success) {
@@ -1966,6 +1996,9 @@ export default function Home() {
       }
       
       // Step 2: Load model (with or without adapter based on training type)
+      // Note: LoRA adapters only work with transformers backend
+      const backendToUse = adapterPath ? 'transformers' : inferenceBackend
+      
       if (adapterPath) {
         // LoRA-type training: Load base model with adapter in single call
         setLoadingMessage(`Loading model with adapter: ${getModelDisplayName(modelPath)}...`)
@@ -1974,7 +2007,8 @@ export default function Home() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ 
             model_path: modelPath,
-            adapter_path: adapterPath 
+            adapter_path: adapterPath,
+            backend: backendToUse
           })
         })
         const loadData = await loadRes.json()
@@ -1994,11 +2028,14 @@ export default function Home() {
         setLoadedAdapters(prev => [...prev.map(a => ({ ...a, active: false })), newAdapter])
       } else {
         // Full fine-tuning or merged model: Load directly without adapter
-        setLoadingMessage(`Loading fine-tuned model: ${getModelDisplayName(modelPath)}...`)
+        setLoadingMessage(`Loading fine-tuned model with ${backendToUse} backend: ${getModelDisplayName(modelPath)}...`)
         const loadRes = await fetch('/api/inference/load', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model_path: modelPath })
+          body: JSON.stringify({ 
+            model_path: modelPath,
+            backend: backendToUse
+          })
         })
         const loadData = await loadRes.json()
         
@@ -3753,6 +3790,30 @@ export default function Home() {
                   onChange={(e) => setInferenceModel(e.target.value)}
                   placeholder="/path/to/model"
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 text-sm placeholder-slate-400" />
+                
+                {/* Backend Selection */}
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-slate-500 whitespace-nowrap">Backend:</label>
+                  <select 
+                    value={inferenceBackend}
+                    onChange={(e) => setInferenceBackend(e.target.value as 'transformers' | 'vllm' | 'sglang')}
+                    className="flex-1 px-2 py-1.5 border border-slate-300 rounded-lg text-slate-900 text-xs bg-white"
+                  >
+                    <option value="transformers" disabled={!availableBackends.transformers}>
+                      Transformers {!availableBackends.transformers && '(unavailable)'}
+                    </option>
+                    <option value="vllm" disabled={!availableBackends.vllm}>
+                      vLLM {!availableBackends.vllm && '(unavailable)'}
+                    </option>
+                    <option value="sglang" disabled={!availableBackends.sglang}>
+                      SGLang {!availableBackends.sglang && '(unavailable)'}
+                    </option>
+                  </select>
+                </div>
+                {inferenceBackend !== 'transformers' && (
+                  <p className="text-xs text-amber-600">Note: LoRA adapters only work with Transformers backend</p>
+                )}
+                
                 <button onClick={loadModel} disabled={!inferenceModel.trim() || isModelLoading}
                   className="w-full py-2 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600 disabled:opacity-50 flex items-center justify-center gap-2">
                   {isModelLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}

@@ -561,7 +561,17 @@ class InferenceService:
         Model must already be loaded.
         
         Validates adapter path contains required LoRA files before loading.
+        Performs VRAM cleanup before reloading to ensure clean state.
         """
+        import logging
+        import traceback
+        import json
+        
+        logging.info(f"=== ADAPTER LOAD REQUEST ===")
+        logging.info(f"Adapter path: {adapter_path}")
+        logging.info(f"Current model: {self._current_model_path}")
+        logging.info(f"Current backend: {self._current_backend}")
+        
         if self._engine is None or self._current_model_path is None:
             return {
                 "success": False,
@@ -571,7 +581,7 @@ class InferenceService:
         if self._current_backend != InferenceBackend.TRANSFORMERS:
             return {
                 "success": False,
-                "error": "Adapter loading only supported with Transformers backend"
+                "error": f"Adapter loading only supported with Transformers backend. Current backend: {self._current_backend.value}"
             }
         
         # Validate adapter path exists and contains LoRA files
@@ -605,9 +615,28 @@ class InferenceService:
                 "error": f"Not a valid LoRA adapter: missing adapter weights in {adapter_path}"
             }
         
+        # Validate adapter config matches base model
         try:
-            import logging
+            with open(adapter_config, 'r') as f:
+                config = json.load(f)
+            base_model_name = config.get('base_model_name_or_path', '')
+            logging.info(f"Adapter was trained on base model: {base_model_name}")
+            
+            # Check if adapter's base model matches current model (warning only)
+            if base_model_name and self._current_model_path:
+                current_model_name = self._current_model_path.split('/')[-1].lower()
+                adapter_base_name = base_model_name.split('/')[-1].lower()
+                if current_model_name != adapter_base_name:
+                    logging.warning(f"Adapter base model ({adapter_base_name}) may not match current model ({current_model_name})")
+        except Exception as e:
+            logging.warning(f"Could not validate adapter config: {e}")
+        
+        try:
             logging.info(f"Loading adapter from: {adapter_path} onto model: {self._current_model_path}")
+            
+            # Clear existing engine before reload to free VRAM
+            logging.info("Clearing VRAM before adapter reload...")
+            await self._clear_all_engines()
             
             # Reload model with the new adapter
             result = await self.load_model(
@@ -622,32 +651,57 @@ class InferenceService:
                 logging.warning(f"Adapter load returned failure: {result.get('error')}")
             
             return result
+            
         except Exception as e:
-            import logging
-            import traceback
             error_msg = str(e)
             tb = traceback.format_exc()
             logging.error(f"Adapter loading error: {error_msg}")
             logging.error(f"Traceback: {tb}")
             
             # Provide more specific error messages for common adapter issues
-            if "config" in error_msg.lower() and "mismatch" in error_msg.lower():
+            error_lower = error_msg.lower()
+            
+            if "config" in error_lower and "mismatch" in error_lower:
                 return {
                     "success": False,
                     "error": "Adapter configuration mismatch. The adapter was trained with a different model architecture."
                 }
-            elif "shape" in error_msg.lower() or "size mismatch" in error_msg.lower():
+            elif "shape" in error_lower or "size mismatch" in error_lower:
                 return {
                     "success": False,
                     "error": "Adapter weight shape mismatch. The adapter is not compatible with this base model."
                 }
-            elif "not found" in error_msg.lower() or "no such file" in error_msg.lower():
+            elif "not found" in error_lower or "no such file" in error_lower:
                 return {
                     "success": False,
                     "error": f"Adapter files not found at: {adapter_path}"
                 }
+            elif "target_modules" in error_lower:
+                return {
+                    "success": False,
+                    "error": "Adapter target modules not found in base model. The model architecture may not be compatible."
+                }
+            elif "peft" in error_lower:
+                return {
+                    "success": False,
+                    "error": f"PEFT adapter error: {error_msg[:200]}"
+                }
+            elif "cuda" in error_lower or "memory" in error_lower:
+                return {
+                    "success": False,
+                    "error": "GPU memory error while loading adapter. Try clearing memory first."
+                }
             
-            sanitized = sanitized_log_service.sanitize_error(str(e))
+            # For unknown errors, include more context instead of generic message
+            sanitized = sanitized_log_service.sanitize_error(error_msg)
+            # If sanitization made it too generic, provide the first part of the actual error
+            if sanitized['user_message'] == 'An unexpected error occurred.':
+                # Extract first meaningful part of error (up to 200 chars, no sensitive paths)
+                safe_error = error_msg.split('\n')[0][:200]
+                return {
+                    "success": False,
+                    "error": f"Adapter load failed: {safe_error}"
+                }
             return {
                 "success": False,
                 "error": sanitized['user_message']
@@ -661,30 +715,85 @@ class InferenceService:
         return await self.load_adapter(adapter_path)
     
     async def _clear_all_engines(self):
-        """Internal helper to clear all engine instances"""
+        """
+        Internal helper to clear all engine instances and free VRAM.
+        
+        Performs:
+        1. Delete all engine references (Transformers, vLLM, SGLang)
+        2. Clear model from memory
+        3. Multiple garbage collection passes
+        4. Clear CUDA cache on all GPUs
+        5. Use GPU cleanup service for thorough cleanup
+        """
+        import logging
+        logging.info("Clearing all inference engines...")
+        
+        # Step 1: Clear Transformers engine
         if self._engine is not None:
-            if hasattr(self._engine, 'model'):
-                del self._engine.model
-            del self._engine
+            try:
+                if hasattr(self._engine, 'model'):
+                    if hasattr(self._engine.model, 'cpu'):
+                        # Move to CPU first to help release GPU memory
+                        try:
+                            self._engine.model.cpu()
+                        except:
+                            pass
+                    del self._engine.model
+                if hasattr(self._engine, 'tokenizer'):
+                    del self._engine.tokenizer
+                del self._engine
+            except Exception as e:
+                logging.warning(f"Error clearing transformers engine: {e}")
             self._engine = None
         
+        # Step 2: Clear vLLM engine
         if self._vllm_engine is not None:
-            del self._vllm_engine
+            try:
+                del self._vllm_engine
+            except Exception as e:
+                logging.warning(f"Error clearing vLLM engine: {e}")
             self._vllm_engine = None
         
+        # Step 3: Clear SGLang engine
         if self._sglang_engine is not None:
-            if hasattr(self._sglang_engine, 'shutdown'):
-                self._sglang_engine.shutdown()
-            del self._sglang_engine
+            try:
+                if hasattr(self._sglang_engine, 'shutdown'):
+                    self._sglang_engine.shutdown()
+                del self._sglang_engine
+            except Exception as e:
+                logging.warning(f"Error clearing SGLang engine: {e}")
             self._sglang_engine = None
         
+        # Step 4: Reset state
         self._current_model_path = None
         self._current_adapter_path = None
         self._loaded_adapters = []
         
-        gc.collect()
+        # Step 5: Aggressive memory cleanup
+        # Multiple GC passes to handle circular references
+        for _ in range(3):
+            gc.collect()
+        
+        # Step 6: Clear CUDA cache
         if TORCH_AVAILABLE and torch.cuda.is_available():
-            torch.cuda.empty_cache()
+            try:
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+                # Reset memory stats for accurate tracking
+                if hasattr(torch.cuda, 'reset_peak_memory_stats'):
+                    torch.cuda.reset_peak_memory_stats()
+            except Exception as e:
+                logging.warning(f"Error clearing CUDA cache: {e}")
+        
+        # Step 7: Use GPU cleanup service for thorough cleanup
+        try:
+            cleanup_result = gpu_cleanup_service.clear_torch_cuda_cache()
+            if cleanup_result.get("success"):
+                logging.info("GPU cleanup service completed successfully")
+        except Exception as e:
+            logging.warning(f"GPU cleanup service error: {e}")
+        
+        logging.info("All engines cleared")
     
     async def generate(self, request: InferenceRequest) -> InferenceResponse:
         """

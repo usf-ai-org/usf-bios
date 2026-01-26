@@ -210,6 +210,47 @@ SAFE_ERROR_PATTERNS = {
         'user_message': 'Adapter target modules not found in base model. Model architecture mismatch.',
         'severity': ErrorSeverity.ERROR
     },
+    # Additional adapter loading errors
+    r'lora.*rank': {
+        'reason': CrashReason.CONFIG_ERROR,
+        'user_message': 'LoRA rank mismatch. The adapter configuration does not match the base model.',
+        'severity': ErrorSeverity.ERROR
+    },
+    r'base_model.*mismatch': {
+        'reason': CrashReason.CONFIG_ERROR,
+        'user_message': 'Base model mismatch. The adapter was trained on a different model.',
+        'severity': ErrorSeverity.ERROR
+    },
+    r'cannot.*load.*adapter': {
+        'reason': CrashReason.MODEL_ERROR,
+        'user_message': 'Cannot load adapter. Please verify the adapter path and format.',
+        'severity': ErrorSeverity.ERROR
+    },
+    r'incompatible.*adapter': {
+        'reason': CrashReason.CONFIG_ERROR,
+        'user_message': 'Incompatible adapter. The adapter is not compatible with this model.',
+        'severity': ErrorSeverity.ERROR
+    },
+    r'safetensors.*error': {
+        'reason': CrashReason.MODEL_ERROR,
+        'user_message': 'Safetensors file error. The adapter weights file may be corrupted.',
+        'severity': ErrorSeverity.ERROR
+    },
+    r'module.*not found': {
+        'reason': CrashReason.CONFIG_ERROR,
+        'user_message': 'Module not found in base model. The adapter targets layers that do not exist.',
+        'severity': ErrorSeverity.ERROR
+    },
+    r'weight.*dtype': {
+        'reason': CrashReason.CONFIG_ERROR,
+        'user_message': 'Weight dtype mismatch. Try loading with a different precision setting.',
+        'severity': ErrorSeverity.ERROR
+    },
+    r'transformers.*version': {
+        'reason': CrashReason.CONFIG_ERROR,
+        'user_message': 'Transformers version incompatibility. The adapter may require a different version.',
+        'severity': ErrorSeverity.ERROR
+    },
 }
 
 SAFE_KEYWORDS = [

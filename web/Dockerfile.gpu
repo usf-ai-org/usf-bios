@@ -80,6 +80,9 @@ WORKDIR /build/frontend
 COPY web/frontend/package*.json ./
 RUN npm ci
 COPY web/frontend/ ./
+# CRITICAL: Remove any stale .next cache to ensure fresh build
+# This prevents ChunkLoadError when cached chunks don't match new build hashes
+RUN rm -rf .next node_modules/.cache
 RUN npm run build
 
 # ============================================================================
