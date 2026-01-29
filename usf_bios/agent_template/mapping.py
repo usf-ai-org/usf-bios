@@ -10,6 +10,7 @@ from .qwen3_coder import Qwen3CoderAgentTemplate
 from .react import ReactEnAgentTemplate, ReactZnAgentTemplate
 from .seed_oss import SeedAgentTemplate
 from .toolbench import ToolBenchAgentTemplate
+from .usf_omega import UsfOmegaAgentTemplate
 from .youtu import YoutuAgentTemplate
 
 agent_template_map = {
@@ -38,4 +39,6 @@ agent_template_map = {
     'react_grpo': ReactGRPOAgentTemplate,
     'mistral': MistralAgentTemplate,
     'youtu': YoutuAgentTemplate,
+    # USF Omega - Ultrasafe AI
+    'usf_omega': UsfOmegaAgentTemplate,
 }

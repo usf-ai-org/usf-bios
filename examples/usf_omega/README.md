@@ -266,9 +266,10 @@ prompt = tokenizer.apply_chat_template(messages, add_generation_prompt=True, tok
 
 | File | Description |
 |------|-------------|
-| `chat_template.jinja2` | Full Jinja2 template with reasoning support |
-| `chat_template_no_reasoning.jinja2` | Default template without reasoning |
-| `tokenizer_config_chat_template.json` | Minified templates for tokenizer_config.json |
+| `chat_template.jinja2` | Full Jinja2 template (instruct/non-reasoning) |
+| `chat_template_reasoning.jinja2` | Reasoning template with thinking blocks |
+| `training_data_examples.jsonl` | Training data examples for all features |
+| `USF_OMEGA_TRAINING_FORMAT.md` | Complete training data format documentation |
 | `test_chat_template_openai.py` | Test script for all template scenarios |
 
 ## Running Tests

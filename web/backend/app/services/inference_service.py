@@ -1307,15 +1307,32 @@ class InferenceService:
         return response_text, tokens_generated
     
     async def _generate_sglang(self, request: InferenceRequest) -> tuple:
-        """Generate using SGLang backend with streaming support"""
+        """
+        Generate using SGLang backend.
+        
+        Supports multimodal input for VLM models (Qwen2-VL, LLaVA, etc.)
+        by passing images in the prompt.
+        """
         if not SGLANG_AVAILABLE:
             raise RuntimeError("SGLang not available")
         
         # Build prompt from messages
         prompt = self._messages_to_prompt(request.messages)
         
+        # Extract multimodal data for VLM models
+        images = None
+        if self._model_capabilities and self._model_capabilities.supports_image_input:
+            mm_data = self._extract_multimodal_data(request.messages)
+            if mm_data["images"]:
+                images = mm_data["images"]
+        
         @sgl.function
         def chat_completion(s):
+            # Add images if present (SGLang VLM support)
+            if images:
+                for img in images:
+                    if hasattr(sgl, 'image'):
+                        s += sgl.image(img)
             s += prompt
             s += sgl.gen(
                 "response",

@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from .sampling import sampling_main
     from .base import USFPipeline
     from .utils import prepare_model_template
-    from .webui import train_ui_main, build_train_ui, build_usf_omega_train_ui, usf_omega_train_ui_main
+    from .webui import train_ui_main, build_train_ui
 else:
     _import_structure = {
         'infer': [
@@ -30,7 +30,7 @@ else:
         'sampling': ['sampling_main'],
         'base': ['USFPipeline'],
         'utils': ['prepare_model_template'],
-        'webui': ['train_ui_main', 'build_train_ui', 'build_usf_omega_train_ui', 'usf_omega_train_ui_main'],
+        'webui': ['train_ui_main', 'build_train_ui'],
     }
 
     import sys

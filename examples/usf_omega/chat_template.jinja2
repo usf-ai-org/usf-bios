@@ -1,0 +1,1117 @@
+{#-
+Copyright (c) Ultrasafe AI. All rights reserved.
+USF Omega Chat Template - Instruct Model (No Reasoning)
+
+Fully compatible with:
+- USF format (functions, function_calls, response_schema)
+- Alternative format (tools, tool_calls, response_format)
+
+Supports:
+- System messages (immutable rules from provider, combined into developer block)
+- Developer messages (user instructions, combined into developer block)
+- Instructions parameter (high-level system instructions)
+- User messages  
+- Assistant messages
+- Function definitions and calls (single and parallel)
+- Tool responses (batched)
+- Search function (prebuilt, auto-added when search_enabled=True)
+- Citations (inline references to function results)
+- Response schema (structured output with full TypeScript-like type conversion)
+- Constrained output (json mode)
+
+Parameters (accepts multiple naming conventions):
+- functions/tools: list - Function definitions
+- response_schema/response_format: dict - Schema for structured output
+- model_identity: str - Custom system message (default: "You are a helpful assistant.")
+- search_enabled: bool - Enable search function
+- citations_enabled: bool - Enable citation instructions
+- self_reflection_enabled: bool - Enable self-reflection instructions
+- add_generation_prompt: bool - Add assistant prompt for generation
+- json_mode: bool - Enable JSON constrained output
+
+System/Developer Behavior:
+- System block: model_identity OR default "You are a helpful assistant."
+- Developer block (optional): role:system messages + role:developer messages + auto-instructions
+- Developer block only rendered if there is content
+
+Roles: system, developer, user, assistant, tool
+-#}
+
+{#- ==================== SPECIAL TOKENS ==================== -#}
+{%- set bos_token = '<|:@:|startoftext|:@:|>' -%}
+{%- set eos_token = '<|:@:|endoftext|:@:|>' -%}
+{%- set start_token = '<|:@:|start|:@:|>' -%}
+{%- set end_token = '<|:@:|end|:@:|>' -%}
+
+{#- Message content tokens -#}
+{%- set message_start = '<|:@:|message_start|:@:|>' -%}
+{%- set message_end = '<|:@:|message_end|:@:|>' -%}
+
+{#- Function/Tool call tokens -#}
+{%- set functions_start = '<|:@:|functions_start|:@:|>' -%}
+{%- set functions_end = '<|:@:|functions_end|:@:|>' -%}
+{%- set invoke_end = '<||invoke_end||>' -%}
+{%- set parameters_start = '<|:@:|parameters_start|:@:|>' -%}
+{%- set parameters_end = '<|:@:|parameters_end|:@:|>' -%}
+
+{#- Tool response tokens -#}
+{%- set function_results_start = '<|:@:|function_results_start|:@:|>' -%}
+{%- set function_results_end = '<|:@:|function_results_end|:@:|>' -%}
+
+{#- Constrain tokens -#}
+{%- set constrain_start = '<|:@:|constrain_start|:@:|>' -%}
+{%- set constrain_end = '<|:@:|constrain_end|:@:|>' -%}
+
+{#- Citations tokens -#}
+{%- set citations_start = '<||citations_start ref=' -%}
+{%- set citations_end = '<||citations_end||>' -%}
+
+{#- Self-reflection tokens -#}
+{%- set self_reflection_start = '<|:@:|self_reflection_start|:@:|>' -%}
+{%- set self_reflection_end = '<|:@:|self_reflection_end|:@:|>' -%}
+
+{#- ==================== FEATURE FLAGS ==================== -#}
+{%- set search_enabled = search_enabled | default(false) -%}
+{%- set citations_enabled = citations_enabled | default(false) -%}
+{%- set self_reflection_enabled = self_reflection_enabled | default(false) -%}
+
+{#- ==================== STRIP CITATIONS MACRO ==================== -#}
+{#- Removes citation tokens from content when citations_enabled=false -#}
+{#- Format: <||citations_start ref=["id1","id2"]||>cited content<||citations_end||> -#}
+{%- macro strip_citations(content_text) -%}
+{%- if content_text is none or content_text == '' -%}
+{{ content_text }}
+{%- elif not citations_enabled -%}
+{%- set result = content_text | string -%}
+{#- Remove citations_end token -#}
+{%- set result = result | replace('<||citations_end||>', '') -%}
+{#- Remove citations_start with ref=[...]|| pattern -#}
+{%- set parts = result.split('<||citations_start ref=') -%}
+{%- set ns_strip = namespace(output=parts[0]) -%}
+{%- for part in parts[1:] -%}
+{#- Find the closing ||> of the start token -#}
+{%- set token_end = part.find('||>') -%}
+{%- if token_end > 0 -%}
+{#- Remove the ref=[...]||> part, keep the rest -#}
+{%- set ns_strip.output = ns_strip.output ~ part[token_end + 3:] -%}
+{%- else -%}
+{#- No closing ||> found - keep content as-is -#}
+{%- set ns_strip.output = ns_strip.output ~ part -%}
+{%- endif -%}
+{%- endfor -%}
+{{ ns_strip.output }}
+{%- else -%}
+{{ content_text }}
+{%- endif -%}
+{%- endmacro -%}
+
+{#- ==================== STRIP SELF-REFLECTION MACRO ==================== -#}
+{#- Removes self-reflection tokens and content when self_reflection_enabled=false -#}
+{%- macro strip_self_reflection(content_text) -%}
+{%- if content_text is none or content_text == '' -%}
+{{ content_text }}
+{%- elif not self_reflection_enabled -%}
+{%- set result = content_text | string -%}
+{#- Remove self_reflection token and everything after it until next message_start or end of content -#}
+{%- set parts = result.split('<|:@:|self_reflection_start|:@:|>') -%}
+{%- set ns_strip = namespace(output='') -%}
+{%- for part in parts -%}
+{%- if loop.first -%}
+{%- set ns_strip.output = part -%}
+{%- else -%}
+{#- Find if there's a message_start after this - keep content from message_start onwards -#}
+{%- set msg_start_pos = part.find('<|:@:|message_start|:@:|>') -%}
+{%- if msg_start_pos >= 0 -%}
+{%- set ns_strip.output = ns_strip.output ~ part[msg_start_pos:] -%}
+{%- endif -%}
+{#- If no message_start, discard this self-reflection content entirely -#}
+{%- endif -%}
+{%- endfor -%}
+{{ ns_strip.output }}
+{%- else -%}
+{{ content_text }}
+{%- endif -%}
+{%- endmacro -%}
+
+{#- ==================== NORMALIZE INPUT FORMATS ==================== -#}
+{#- Accept both USF (functions) and alternative (tools) formats -#}
+{#- Use namespace for sandbox-safe list building -#}
+{%- set ns = namespace(input_functions=[]) -%}
+
+{#- Process tools format -#}
+{%- if tools is defined and tools is not none and tools | length > 0 -%}
+    {%- for tool in tools -%}
+        {%- if tool.type == 'function' and tool.function is defined -%}
+            {%- set ns.input_functions = ns.input_functions + [tool.function] -%}
+        {%- elif tool.name is defined -%}
+            {%- set ns.input_functions = ns.input_functions + [tool] -%}
+        {%- endif -%}
+    {%- endfor -%}
+{%- endif -%}
+
+{#- Process USF functions format (also handles wrapper format if present) -#}
+{%- if functions is defined and functions is not none and functions | length > 0 -%}
+    {%- for func in functions -%}
+        {%- if func.type == 'function' and func.function is defined -%}
+            {%- set ns.input_functions = ns.input_functions + [func.function] -%}
+        {%- elif func.name is defined -%}
+            {%- set ns.input_functions = ns.input_functions + [func] -%}
+        {%- endif -%}
+    {%- endfor -%}
+{%- endif -%}
+
+{%- set input_functions = ns.input_functions -%}
+
+{#- Normalize response schema (accept multiple formats) -#}
+{%- set output_schema = none -%}
+{%- set schema_strict = none -%}
+{%- if response_schema is defined -%}
+    {%- set output_schema = response_schema -%}
+    {%- set schema_strict = response_schema.strict | default(none) -%}
+{%- elif response_format is defined -%}
+    {%- if response_format.json_schema is defined -%}
+        {%- set output_schema = response_format.json_schema.schema | default(response_format.json_schema) -%}
+        {%- set schema_strict = response_format.json_schema.strict | default(none) -%}
+    {%- elif response_format.schema is defined -%}
+        {%- set output_schema = response_format.schema -%}
+        {%- set schema_strict = response_format.strict | default(none) -%}
+    {%- elif response_format.type == 'json_object' -%}
+        {%- set output_schema = {"type": "object"} -%}
+    {%- elif response_format.type is not defined or response_format.type != 'text' -%}
+        {%- set output_schema = response_format -%}
+        {%- set schema_strict = response_format.strict | default(none) -%}
+    {%- endif -%}
+{%- endif -%}
+{#- If strict not found at wrapper level, check inside schema -#}
+{%- if schema_strict is none and output_schema is not none and output_schema.strict is defined -%}
+    {%- set schema_strict = output_schema.strict -%}
+{%- endif -%}
+
+{#- Validate: when strict=true, schema must have at least one property defined -#}
+{%- if schema_strict == true and output_schema is not none -%}
+    {%- set has_properties = output_schema.properties is defined and output_schema.properties is mapping and output_schema.properties | length > 0 -%}
+    {%- if not has_properties -%}
+        {{ "ERROR: When strict=true, schema must have at least one property defined. Cannot use strict mode with empty schema or json_object type." / 0 }}
+    {%- endif -%}
+{%- endif -%}
+
+{%- set has_functions = input_functions | length > 0 -%}
+{%- set has_response_schema = output_schema is not none -%}
+
+{#- ==================== SCHEMA TO TYPESCRIPT CONVERSION ==================== -#}
+
+{#- Build constraint comment for a schema property -#}
+{%- macro build_constraints(schema) -%}
+{%- set constraints = [] -%}
+{%- if schema.default is defined -%}
+    {%- set constraints = constraints + ["default: " ~ (schema.default | tojson)] -%}
+{%- endif -%}
+{%- if schema.minimum is defined -%}
+    {%- set constraints = constraints + ["min: " ~ schema.minimum] -%}
+{%- endif -%}
+{%- if schema.maximum is defined -%}
+    {%- set constraints = constraints + ["max: " ~ schema.maximum] -%}
+{%- endif -%}
+{%- if schema.exclusiveMinimum is defined -%}
+    {%- set constraints = constraints + ["exclusiveMin: " ~ schema.exclusiveMinimum] -%}
+{%- endif -%}
+{%- if schema.exclusiveMaximum is defined -%}
+    {%- set constraints = constraints + ["exclusiveMax: " ~ schema.exclusiveMaximum] -%}
+{%- endif -%}
+{%- if schema.minLength is defined -%}
+    {%- set constraints = constraints + ["minLength: " ~ schema.minLength] -%}
+{%- endif -%}
+{%- if schema.maxLength is defined -%}
+    {%- set constraints = constraints + ["maxLength: " ~ schema.maxLength] -%}
+{%- endif -%}
+{%- if schema.minItems is defined -%}
+    {%- set constraints = constraints + ["minItems: " ~ schema.minItems] -%}
+{%- endif -%}
+{%- if schema.maxItems is defined -%}
+    {%- set constraints = constraints + ["maxItems: " ~ schema.maxItems] -%}
+{%- endif -%}
+{%- if schema.pattern is defined -%}
+    {%- set constraints = constraints + ["pattern: " ~ schema.pattern] -%}
+{%- endif -%}
+{%- if schema.format is defined -%}
+    {%- set constraints = constraints + ["format: " ~ schema.format] -%}
+{%- endif -%}
+{%- if schema.multipleOf is defined -%}
+    {%- set constraints = constraints + ["multipleOf: " ~ schema.multipleOf] -%}
+{%- endif -%}
+{%- if schema.uniqueItems is defined and schema.uniqueItems -%}
+    {%- set constraints = constraints + ["uniqueItems"] -%}
+{%- endif -%}
+{{ constraints | join(", ") }}
+{%- endmacro -%}
+
+{#- Recursive macro to convert JSON Schema to TypeScript-like type -#}
+{%- macro convert_type(schema, indent_level, visited) -%}
+{%- set indent = '  ' * indent_level -%}
+{%- set next_indent = '  ' * (indent_level + 1) -%}
+
+{#- Handle non-mapping types -#}
+{%- if schema is not mapping -%}
+any
+{%- elif schema.type is not defined and schema.properties is not defined and schema.items is not defined and schema.oneOf is not defined and schema.anyOf is not defined and schema.allOf is not defined and schema['$ref'] is not defined -%}
+any
+
+{#- Handle $ref -#}
+{%- elif schema['$ref'] is defined -%}
+any /* $ref: {{ schema['$ref'] }} */
+
+{#- Handle oneOf -#}
+{%- elif schema.oneOf is defined -%}
+({% for sub_schema in schema.oneOf %}{{ convert_type(sub_schema, indent_level, visited) }}{% if not loop.last %} | {% endif %}{% endfor %})
+
+{#- Handle anyOf -#}
+{%- elif schema.anyOf is defined -%}
+({% for sub_schema in schema.anyOf %}{{ convert_type(sub_schema, indent_level, visited) }}{% if not loop.last %} | {% endif %}{% endfor %})
+
+{#- Handle allOf -#}
+{%- elif schema.allOf is defined -%}
+({% for sub_schema in schema.allOf %}{{ convert_type(sub_schema, indent_level, visited) }}{% if not loop.last %} & {% endif %}{% endfor %})
+
+{#- Handle multiple types (e.g., ["string", "null"]) -#}
+{%- elif schema.type is iterable and schema.type is not string -%}
+({% for t in schema.type %}{%- if t == 'string' -%}string{%- elif t == 'number' or t == 'integer' -%}number{%- elif t == 'boolean' -%}boolean{%- elif t == 'null' -%}null{%- elif t == 'array' -%}any[]{%- elif t == 'object' -%}object{%- else -%}any{%- endif -%}{% if not loop.last %} | {% endif %}{% endfor %})
+
+{#- Handle string type with enum and nullable -#}
+{%- elif schema.type == 'string' -%}
+    {%- if schema.enum is defined -%}
+{{ schema.enum | map('tojson') | join(' | ') }}{%- if schema.nullable %} | null{%- endif -%}
+    {%- elif schema.const is defined -%}
+{{ schema.const | tojson }}
+    {%- else -%}
+string{%- if schema.nullable %} | null{%- endif -%}
+    {%- endif -%}
+
+{#- Handle number/integer type with enum and nullable -#}
+{%- elif schema.type == 'number' or schema.type == 'integer' -%}
+    {%- if schema.enum is defined -%}
+{{ schema.enum | join(' | ') }}{%- if schema.nullable %} | null{%- endif -%}
+    {%- elif schema.const is defined -%}
+{{ schema.const }}
+    {%- else -%}
+number{%- if schema.nullable %} | null{%- endif -%}
+    {%- endif -%}
+
+{#- Handle boolean type with nullable -#}
+{%- elif schema.type == 'boolean' -%}
+    {%- if schema.const is defined -%}
+{{ schema.const | lower }}
+    {%- else -%}
+boolean{%- if schema.nullable %} | null{%- endif -%}
+    {%- endif -%}
+
+{#- Handle null type -#}
+{%- elif schema.type == 'null' -%}
+null
+
+{#- Handle array type -#}
+{%- elif schema.type == 'array' -%}
+    {%- if schema['items'] is defined -%}
+        {%- if schema['items'] is mapping -%}
+{{ convert_type(schema['items'], indent_level, visited) }}[]
+        {%- else -%}
+any[]
+        {%- endif -%}
+    {%- elif schema.prefixItems is defined -%}
+[{% for item_schema in schema.prefixItems %}{{ convert_type(item_schema, indent_level, visited) }}{% if not loop.last %}, {% endif %}{% endfor %}]
+    {%- else -%}
+any[]
+    {%- endif -%}
+
+{#- Handle object type -#}
+{%- elif schema.type == 'object' or schema.properties is defined -%}
+    {%- if schema.properties is defined and schema.properties is mapping -%}
+        {%- set required_fields = schema.required | default([]) -%}
+        {%- set ns_obj = namespace(lines=[]) -%}
+        {%- for prop_name, prop_schema in schema.properties.items() -%}
+            {%- set prop_constraints = build_constraints(prop_schema) -%}
+            {%- set comment_parts = [] -%}
+            {%- if prop_schema.description is defined -%}
+                {%- set comment_parts = comment_parts + [prop_schema.description] -%}
+            {%- endif -%}
+            {%- if prop_constraints -%}
+                {%- set comment_parts = comment_parts + [prop_constraints] -%}
+            {%- endif -%}
+            {%- if comment_parts | length > 0 -%}
+                {%- set ns_obj.lines = ns_obj.lines + [next_indent ~ '// ' ~ (comment_parts | join(' | '))] -%}
+            {%- endif -%}
+            {%- set ns_obj.lines = ns_obj.lines + [next_indent ~ prop_name ~ ('?' if prop_name not in required_fields else '') ~ ': ' ~ convert_type(prop_schema, indent_level + 1, visited) ~ ','] -%}
+        {%- endfor -%}
+{
+{{ ns_obj.lines | join('\n') }}
+{{ indent }}}
+    {%- elif schema.additionalProperties is defined and schema.additionalProperties is mapping -%}
+Record<string, {{ convert_type(schema.additionalProperties, indent_level, visited) }}>
+    {%- elif schema.additionalProperties == true -%}
+Record<string, any>
+    {%- else -%}
+object
+    {%- endif -%}
+
+{#- Default fallback -#}
+{%- else -%}
+any
+{%- endif -%}
+{%- endmacro -%}
+
+{#- Format function in typescript namespace style -#}
+{%- macro format_function(func) -%}
+{%- set params = func.parameters | default({}) -%}
+{%- set props = params.properties | default({}) -%}
+{%- set required = params.required | default([]) -%}
+
+// {{ func.description | default(func.name) }}
+type {{ func.name }} = (_: {
+{% set ns_params = namespace(lines=[]) -%}
+{%- for pname, pschema in props.items() -%}
+{%- set prop_constraints = build_constraints(pschema) -%}
+{%- set comment_parts = [] -%}
+{%- if pschema.description is defined -%}
+    {%- set comment_parts = comment_parts + [pschema.description] -%}
+{%- endif -%}
+{%- if prop_constraints -%}
+    {%- set comment_parts = comment_parts + [prop_constraints] -%}
+{%- endif -%}
+{%- if comment_parts | length > 0 -%}
+    {%- set ns_params.lines = ns_params.lines + ['  // ' ~ (comment_parts | join(' | '))] -%}
+{%- endif -%}
+{%- set ns_params.lines = ns_params.lines + ['  ' ~ pname ~ ('?' if pname not in required else '') ~ ': ' ~ convert_type(pschema, 1, {}) ~ ','] -%}
+{%- endfor %}
+{{ ns_params.lines | join('\n') }}
+}) => any;
+{%- endmacro -%}
+
+{#- Macro to validate if JSON content matches schema -#}
+{#- Returns true if: valid JSON, required fields present, strict mode respected -#}
+{%- macro validate_json_content(content_str, schema, is_strict) -%}
+{%- set ns_valid = namespace(is_valid=false) -%}
+{%- set trimmed = (content_str | string | trim) if content_str else '' -%}
+
+{#- Skip if empty, None, or "None" string -#}
+{%- if trimmed and trimmed != 'None' and (trimmed.startswith('{') or trimmed.startswith('[')) -%}
+    {%- set parsed = trimmed | fromjson | default(none) -%}
+    
+    {%- if parsed is not none -%}
+        {#- JSON is valid, now check schema if provided -#}
+        {%- if schema is defined and schema is mapping and schema.properties is defined -%}
+            {%- set required_fields = schema.required | default([]) -%}
+            {%- set schema_fields = schema.properties.keys() | list -%}
+            
+            {%- if parsed is mapping -%}
+                {%- set content_fields = parsed.keys() | list -%}
+                
+                {#- Check all required fields exist -#}
+                {%- set ns_req = namespace(all_required=true) -%}
+                {%- for req_field in required_fields -%}
+                    {%- if req_field not in content_fields -%}
+                        {%- set ns_req.all_required = false -%}
+                    {%- endif -%}
+                {%- endfor -%}
+                
+                {#- Check strict mode: no extra fields -#}
+                {%- set ns_strict = namespace(no_extra=true) -%}
+                {%- if is_strict -%}
+                    {%- for field in content_fields -%}
+                        {%- if field not in schema_fields -%}
+                            {%- set ns_strict.no_extra = false -%}
+                        {%- endif -%}
+                    {%- endfor -%}
+                {%- endif -%}
+                
+                {#- Valid if: all required present AND (not strict OR no extra fields) -#}
+                {%- if ns_req.all_required and (not is_strict or ns_strict.no_extra) -%}
+                    {%- set ns_valid.is_valid = true -%}
+                {%- endif -%}
+            {%- elif parsed is iterable and parsed is not string -%}
+                {#- Array - just check it's valid JSON -#}
+                {%- set ns_valid.is_valid = true -%}
+            {%- endif -%}
+        {%- else -%}
+            {#- No schema defined, just valid JSON is enough -#}
+            {%- set ns_valid.is_valid = true -%}
+        {%- endif -%}
+    {%- endif -%}
+{%- endif -%}
+{{ ns_valid.is_valid }}
+{%- endmacro -%}
+
+{#- ==================== SEARCH FUNCTION DEFINITION ==================== -#}
+{%- set search_function = {
+  "name": "search",
+  "description": "Search the web for information. Use this to find current information, facts, or answers.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "queries": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "Search queries - single or multiple for parallel search"
+      },
+      "language": {
+        "type": "string",
+        "description": "Language code (e.g., 'en', 'es', 'fr')"
+      },
+      "country": {
+        "type": "string", 
+        "description": "Country code (e.g., 'US', 'GB', 'DE')"
+      },
+      "location": {
+        "type": "string",
+        "description": "Geographic location for local results"
+      },
+      "freshness": {
+        "type": "string",
+        "enum": ["day", "week", "month", "year", "any"],
+        "description": "Time filter for freshness"
+      },
+      "include_domains": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "Only include results from these domains"
+      },
+      "exclude_domains": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "Exclude results from these domains"
+      },
+      "safe_search": {
+        "type": "boolean",
+        "description": "Enable safe search"
+      },
+      "max_results": {
+        "type": "integer",
+        "description": "Maximum results per query"
+      }
+    },
+    "required": ["queries"]
+  }
+} -%}
+
+{#- ==================== DEVELOPER INSTRUCTIONS ==================== -#}
+
+{%- set function_instructions = "# Functions
+
+## Description
+
+You have access to the functions listed below. These are the **only** functions available to connect with external services.
+
+When the user provides a task, evaluate whether any functions are needed to complete it:
+
+- **Parallel execution:** If tasks are independent, call the relevant functions in parallel for speed optimization.
+- **Sequential execution:** If a function's output is required as input for another, execute them sequentially.
+
+You may call functions **multiple times** and in **any order** depending on what the task requires. Optimize for both correctness and speed.
+
+**Important:**
+- Always include all **required** parameters as defined in the function schema.
+- Do **not** add extra parameters that are not defined in the function schema.
+
+## Function Call Format
+
+To call a function, use the following format:
+
+```
+<|:@:|functions_start|:@:|>
+<||invoke_start to=function.FUNCTION_NAME||>
+<||parameter_start name=PARAM_NAME||>PARAM_VALUE<||parameter_end||>
+<||invoke_end||>
+<|:@:|functions_end|:@:|>
+```
+
+For **parallel function calls** (multiple independent calls), include multiple invoke blocks:
+
+```
+<|:@:|functions_start|:@:|>
+<||invoke_start to=function.FUNCTION_NAME_1||>
+<||parameter_start name=param||>value1<||parameter_end||>
+<||invoke_end||>
+<||invoke_start to=function.FUNCTION_NAME_2||>
+<||parameter_start name=param||>value2<||parameter_end||>
+<||invoke_end||>
+<|:@:|functions_end|:@:|>
+```" -%}
+
+{#- response_schema_instructions will be built dynamically based on strict value -#}
+
+{%- set citation_instructions = "# Citations
+
+Cite sources when using function results.
+
+## Format
+
+```
+<||citations_start ref=[\"RESULT_ID\"]||>cited content<||citations_end||>
+```
+
+## Example
+
+```
+The answer is <||citations_start ref=[\"s001\"]||>42<||citations_end||>.
+```
+
+Multiple sources:
+```
+<||citations_start ref=[\"s001\",\"s002\"]||>fact from multiple sources<||citations_end||>
+```
+
+Nested citations:
+```
+<||citations_start ref=[\"s001\"]||>fact from source 1 <||citations_start ref=[\"s002\"]||>combined with source 2<||citations_end||><||citations_end||>
+```" -%}
+
+{%- set self_reflection_instructions = "# Self-Reflection
+
+You can use self-reflection to verify, correct, or improve your responses.
+
+## When to Use
+
+- After providing an answer, to verify correctness
+- When you realize an error in your reasoning
+- To consider alternative approaches
+- After function calls, to evaluate if more calls are needed
+
+## Format
+
+```
+<|:@:|message_start|:@:|>Your response<|:@:|message_end|:@:|>
+<|:@:|self_reflection_start|:@:|>
+Your reflection on the response...
+<|:@:|self_reflection_end|:@:|>
+<|:@:|message_start|:@:|>Improved response if needed<|:@:|message_end|:@:|>
+```
+
+You may reflect multiple times. End with your final answer." -%}
+
+{#- ==================== BUILD FUNCTION LIST ==================== -#}
+{#- Check for conflict: user cannot pass function named 'search' when search_enabled -#}
+{%- if search_enabled -%}
+    {%- for func in input_functions -%}
+        {%- if func.name == 'search' -%}
+            {{ "ERROR: Cannot define function named 'search' when search_enabled=True. The 'search' function is automatically provided." / 0 }}
+        {%- endif -%}
+    {%- endfor -%}
+{%- endif -%}
+
+{%- set ns2 = namespace(all_functions=[]) -%}
+{%- if search_enabled -%}
+    {%- set ns2.all_functions = ns2.all_functions + [search_function] -%}
+{%- endif -%}
+{%- for func in input_functions -%}
+    {%- set ns2.all_functions = ns2.all_functions + [func] -%}
+{%- endfor -%}
+{%- set all_functions = ns2.all_functions -%}
+{%- set has_any_functions = all_functions | length > 0 -%}
+
+{#- ==================== MESSAGE VALIDATION ==================== -#}
+{%- set ns_val = namespace(
+    system_count=0, 
+    developer_count=0, 
+    first_conv_role=none,
+    prev_role=none
+) -%}
+
+{%- for message in messages -%}
+    {%- if message.role == 'system' -%}
+        {%- set ns_val.system_count = ns_val.system_count + 1 -%}
+        {%- if ns_val.system_count > 1 -%}
+            {{ "ERROR: Multiple system messages not allowed." / 0 }}
+        {%- endif -%}
+        {%- if ns_val.developer_count > 0 or ns_val.first_conv_role is not none -%}
+            {{ "ERROR: System message must be at the beginning." / 0 }}
+        {%- endif -%}
+    {%- elif message.role == 'developer' -%}
+        {%- set ns_val.developer_count = ns_val.developer_count + 1 -%}
+        {%- if ns_val.developer_count > 1 -%}
+            {{ "ERROR: Multiple developer messages not allowed." / 0 }}
+        {%- endif -%}
+        {%- if ns_val.first_conv_role is not none -%}
+            {{ "ERROR: Developer message must appear before user/assistant." / 0 }}
+        {%- endif -%}
+    {%- elif message.role == 'user' -%}
+        {%- if ns_val.first_conv_role is none -%}
+            {%- set ns_val.first_conv_role = 'user' -%}
+        {%- endif -%}
+    {%- elif message.role == 'assistant' -%}
+        {%- if ns_val.first_conv_role is none -%}
+            {{ "ERROR: Conversation must start with user, not assistant." / 0 }}
+        {%- endif -%}
+    {%- elif message.role == 'tool' -%}
+        {%- if ns_val.prev_role != 'assistant' and ns_val.prev_role != 'tool' -%}
+            {{ "ERROR: Tool response must come after assistant with function calls." / 0 }}
+        {%- endif -%}
+    {%- endif -%}
+    {%- set ns_val.prev_role = message.role -%}
+{%- endfor -%}
+
+{#- ==================== COMBINE CONSECUTIVE TOOL MESSAGES ==================== -#}
+{#- Support both USF format (results array) and alternative format (content field) -#}
+{%- set ns_msg = namespace(processed_messages=[], tool_buffer=[], prev_was_tool=false, prev_assistant_calls=[]) -%}
+{%- for message in messages -%}
+    {%- if message.role == 'tool' -%}
+        {#- Normalize tool response to common format -#}
+        {%- if message.results is defined -%}
+            {#- Batch format: results is array of {name, tool_call_id, content} -#}
+            {%- for result in message.results -%}
+                {%- set ns_msg.tool_buffer = ns_msg.tool_buffer + [{"name": result.name, "id": result.tool_call_id | default(result.id | default(none)), "content": result.content}] -%}
+            {%- endfor -%}
+        {%- elif message.content is defined -%}
+            {#- Single format: {role: tool, content, tool_call_id, name} -#}
+            {%- set tool_name = message.name | default(none) -%}
+            {%- set tool_id = message.tool_call_id | default(message.id | default(none)) -%}
+            {%- set ns_msg.tool_buffer = ns_msg.tool_buffer + [{"name": tool_name, "id": tool_id, "content": message.content}] -%}
+        {%- endif -%}
+        {%- set ns_msg.prev_was_tool = true -%}
+    {%- else -%}
+        {%- if ns_msg.prev_was_tool and ns_msg.tool_buffer | length > 0 -%}
+            {%- set ns_msg.processed_messages = ns_msg.processed_messages + [{"role": "tool", "results": ns_msg.tool_buffer}] -%}
+            {%- set ns_msg.tool_buffer = [] -%}
+        {%- endif -%}
+        {%- set ns_msg.processed_messages = ns_msg.processed_messages + [message] -%}
+        {%- set ns_msg.prev_was_tool = false -%}
+    {%- endif -%}
+{%- endfor -%}
+{%- if ns_msg.tool_buffer | length > 0 -%}
+    {%- set ns_msg.processed_messages = ns_msg.processed_messages + [{"role": "tool", "results": ns_msg.tool_buffer}] -%}
+{%- endif -%}
+{%- set messages = ns_msg.processed_messages -%}
+
+{#- ==================== TOOL RESPONSE VALIDATION ==================== -#}
+{#- Validate: 1) tool must follow assistant with tool_calls, 2) count/order/names must match -#}
+{%- set ns_tc = namespace(expected_call_ids=[], expected_call_names=[], has_tool_calls=false, prev_role='') -%}
+{%- for message in messages -%}
+    {%- if message.role == 'assistant' -%}
+        {#- Collect expected function call IDs and names from this assistant message -#}
+        {%- set ns_tc.expected_call_ids = [] -%}
+        {%- set ns_tc.expected_call_names = [] -%}
+        {%- set ns_tc.has_tool_calls = false -%}
+        {%- if message.function_calls is defined and message.function_calls | length > 0 -%}
+            {%- set ns_tc.has_tool_calls = true -%}
+            {%- for call in message.function_calls -%}
+                {%- if call.id is defined -%}
+                    {%- set ns_tc.expected_call_ids = ns_tc.expected_call_ids + [call.id] -%}
+                {%- endif -%}
+                {%- set ns_tc.expected_call_names = ns_tc.expected_call_names + [call.name] -%}
+            {%- endfor -%}
+        {%- endif -%}
+        {%- if message.tool_calls is defined and message.tool_calls | length > 0 -%}
+            {%- set ns_tc.has_tool_calls = true -%}
+            {%- for tc in message.tool_calls -%}
+                {%- if tc.id is defined -%}
+                    {%- set ns_tc.expected_call_ids = ns_tc.expected_call_ids + [tc.id] -%}
+                {%- endif -%}
+                {%- set call_name = tc.function.name if tc.function is defined else tc.name -%}
+                {%- set ns_tc.expected_call_names = ns_tc.expected_call_names + [call_name] -%}
+            {%- endfor -%}
+        {%- endif -%}
+        {#- Also check for tool_calls inside contents array (OpenAI-style with type field) -#}
+        {%- if message.contents is defined and message.contents -%}
+            {%- for item in message.contents -%}
+                {%- if item.type == 'tool_calls' and item.tool_calls is defined and item.tool_calls | length > 0 -%}
+                    {%- set ns_tc.has_tool_calls = true -%}
+                    {%- for tc in item.tool_calls -%}
+                        {%- if tc.id is defined -%}
+                            {%- set ns_tc.expected_call_ids = ns_tc.expected_call_ids + [tc.id] -%}
+                        {%- endif -%}
+                        {%- set call_name = tc.function.name if tc.function is defined else tc.name -%}
+                        {%- set ns_tc.expected_call_names = ns_tc.expected_call_names + [call_name] -%}
+                    {%- endfor -%}
+                {%- endif -%}
+            {%- endfor -%}
+        {%- endif -%}
+        {%- set ns_tc.prev_role = 'assistant' -%}
+    {%- elif message.role == 'tool' -%}
+        {#- Validate: tool must follow assistant with tool_calls -#}
+        {%- if ns_tc.prev_role != 'assistant' or not ns_tc.has_tool_calls -%}
+            {{ "ERROR: Tool message must follow assistant message with tool_calls." / 0 }}
+        {%- endif -%}
+        {#- Get tool results (batched or single) -#}
+        {%- if message.results is defined -%}
+            {%- set tool_results = message.results -%}
+        {%- elif message.name is defined -%}
+            {%- set tool_results = [message] -%}
+        {%- else -%}
+            {%- set tool_results = [] -%}
+        {%- endif -%}
+        {#- Check if this is a search-only call (search can return multiple results from one call) -#}
+        {%- set is_search_only = ns_tc.expected_call_names | length == 1 and ns_tc.expected_call_names[0] == 'search' -%}
+        {#- Validate count: tool results must match tool_calls count (skip for search function) -#}
+        {%- if not is_search_only and tool_results | length != ns_tc.expected_call_names | length -%}
+            {{ "ERROR: Tool results count (" ~ (tool_results | length) ~ ") must match tool_calls count (" ~ (ns_tc.expected_call_names | length) ~ ")." / 0 }}
+        {%- endif -%}
+        {#- Validate names: for search, all results should be 'search'; for others, must match order -#}
+        {%- for result in tool_results -%}
+            {%- set result_name = result.name | default('') -%}
+            {%- if is_search_only -%}
+                {%- if result_name != 'search' -%}
+                    {{ "ERROR: Search result name must be 'search', got '" ~ result_name ~ "'." / 0 }}
+                {%- endif -%}
+            {%- else -%}
+                {%- set expected_name = ns_tc.expected_call_names[loop.index0] | default('') -%}
+                {%- if result_name != expected_name -%}
+                    {{ "ERROR: Tool result[" ~ loop.index0 ~ "] name '" ~ result_name ~ "' must match tool_call name '" ~ expected_name ~ "'." / 0 }}
+                {%- endif -%}
+            {%- endif -%}
+        {%- endfor -%}
+        {#- Validate IDs match and length (only when tool_calls have IDs) -#}
+        {%- if ns_tc.expected_call_ids | length > 0 -%}
+            {%- for result in tool_results -%}
+                {%- set result_id = result.id | default(result.tool_call_id | default(none)) -%}
+                {%- if result_id -%}
+                    {#- Validate ID length: 3-20 characters -#}
+                    {%- if result_id | string | length < 3 or result_id | string | length > 20 -%}
+                        {{ "ERROR: Tool result id '" ~ result_id ~ "' must be 3-20 characters, got " ~ (result_id | string | length) ~ "." / 0 }}
+                    {%- endif -%}
+                {%- endif -%}
+            {%- endfor -%}
+        {%- endif -%}
+        {%- if ns_tc.expected_call_ids | length > 0 -%}
+            {%- set ns_resp_ids = namespace(ids=[]) -%}
+            {%- for result in tool_results -%}
+                {%- set result_id = result.id | default(result.tool_call_id | default(none)) -%}
+                {%- if result_id -%}
+                    {%- set ns_resp_ids.ids = ns_resp_ids.ids + [result_id] -%}
+                {%- endif -%}
+            {%- endfor -%}
+            {%- if ns_resp_ids.ids | length > 0 -%}
+                {%- for expected_id in ns_tc.expected_call_ids -%}
+                    {%- if expected_id not in ns_resp_ids.ids -%}
+                        {{ "ERROR: Missing tool response for call_id '" ~ expected_id ~ "'." / 0 }}
+                    {%- endif -%}
+                {%- endfor -%}
+            {%- endif -%}
+        {%- endif -%}
+        {#- Reset after processing tool message -#}
+        {%- set ns_tc.expected_call_ids = [] -%}
+        {%- set ns_tc.expected_call_names = [] -%}
+        {%- set ns_tc.has_tool_calls = false -%}
+        {%- set ns_tc.prev_role = 'tool' -%}
+    {%- else -%}
+        {%- set ns_tc.prev_role = message.role -%}
+    {%- endif -%}
+{%- endfor -%}
+
+{#- ==================== SELF-REFLECTION VALIDATION (when enabled) ==================== -#}
+{%- if self_reflection_enabled -%}
+    {%- for message in messages -%}
+        {%- if message.role == 'assistant' -%}
+            {%- set ns_has = namespace(has_reflection=false) -%}
+            {#- Simple format validation -#}
+            {%- if message.self_reflection is defined and message.self_reflection is not none and message.self_reflection != '' -%}
+                {%- set ns_has.has_reflection = true -%}
+                {%- if message.self_reflection is not string -%}
+                    {{ "ERROR: self_reflection must be a string." / 0 }}
+                {%- endif -%}
+            {%- endif -%}
+            {#- Contents array validation: OpenAI-style with type field -#}
+            {#- Types: reasoning (once, first only), text, tool_calls, self_reflection -#}
+            {#- Order: reasoning (optional, once at top) -> text -> tool_calls -> self_reflection (can repeat text/tool_calls/self_reflection) -#}
+            {%- if message.contents is defined and message.contents -%}
+                {%- set ns_ord = namespace(prev='start', has_reasoning=false) -%}
+                {%- for item in message.contents -%}
+                    {%- set item_type = item.type | default('') -%}
+                    {#- Validate type field exists -#}
+                    {%- if item_type == '' -%}
+                        {{ "ERROR: contents item must have 'type' field." / 0 }}
+                    {%- endif -%}
+                    {#- Validate type is one of allowed values -#}
+                    {%- if item_type not in ['reasoning', 'text', 'tool_calls', 'self_reflection'] -%}
+                        {{ "ERROR: contents type must be 'reasoning', 'text', 'tool_calls', or 'self_reflection'. Got: '" ~ item_type ~ "'." / 0 }}
+                    {%- endif -%}
+                    {#- Rule: reasoning can only appear ONCE and must be FIRST -#}
+                    {%- if item_type == 'reasoning' -%}
+                        {%- if ns_ord.has_reasoning -%}
+                            {{ "ERROR: type='reasoning' can only appear once." / 0 }}
+                        {%- endif -%}
+                        {%- if loop.index0 != 0 -%}
+                            {{ "ERROR: type='reasoning' must be first item in contents." / 0 }}
+                        {%- endif -%}
+                        {%- set ns_ord.has_reasoning = true -%}
+                        {%- set ns_ord.prev = 'reasoning' -%}
+                    {%- else -%}
+                        {#- Rule: First non-reasoning item must be text -#}
+                        {%- if ns_ord.prev == 'start' and item_type != 'text' -%}
+                            {{ "ERROR: First item must be type='text' (or 'reasoning' then 'text')." / 0 }}
+                        {%- endif -%}
+                        {%- if ns_ord.prev == 'reasoning' and item_type != 'text' -%}
+                            {{ "ERROR: After reasoning, next item must be type='text'." / 0 }}
+                        {%- endif -%}
+                        {#- Rule: After self_reflection, must be text (new cycle) -#}
+                        {%- if ns_ord.prev == 'self_reflection' and item_type != 'text' -%}
+                            {{ "ERROR: After self_reflection, next item must be type='text' to start new cycle." / 0 }}
+                        {%- endif -%}
+                        {#- Rule: tool_calls must come after text -#}
+                        {%- if item_type == 'tool_calls' and ns_ord.prev not in ['text', 'reasoning'] -%}
+                            {%- if ns_ord.prev == 'start' -%}
+                                {{ "ERROR: tool_calls must come after text." / 0 }}
+                            {%- endif -%}
+                        {%- endif -%}
+                        {#- Rule: No two consecutive same types -#}
+                        {%- if item_type == 'text' and ns_ord.prev == 'text' -%}
+                            {{ "ERROR: Two consecutive type='text' items not allowed." / 0 }}
+                        {%- endif -%}
+                        {%- if item_type == 'tool_calls' and ns_ord.prev == 'tool_calls' -%}
+                            {{ "ERROR: Two consecutive type='tool_calls' items not allowed." / 0 }}
+                        {%- endif -%}
+                        {%- if item_type == 'self_reflection' and ns_ord.prev == 'self_reflection' -%}
+                            {{ "ERROR: Two consecutive type='self_reflection' items not allowed." / 0 }}
+                        {%- endif -%}
+                        {#- Track type -#}
+                        {%- set ns_ord.prev = item_type -%}
+                        {%- if item_type == 'self_reflection' -%}
+                            {%- set ns_has.has_reflection = true -%}
+                        {%- endif -%}
+                    {%- endif -%}
+                {%- endfor -%}
+                {#- Rule: Must end with self_reflection -#}
+                {%- if ns_ord.prev != 'self_reflection' -%}
+                    {{ "ERROR: contents must end with type='self_reflection'." / 0 }}
+                {%- endif -%}
+            {%- endif -%}
+            {%- if not ns_has.has_reflection -%}
+                {{ "ERROR: assistant message must have self_reflection when enabled." / 0 }}
+            {%- endif -%}
+        {%- endif -%}
+    {%- endfor -%}
+{%- endif -%}
+
+{#- ==================== OUTPUT ==================== -#}
+
+{{- bos_token }}
+
+{#- ==================== SYSTEM MESSAGE ==================== -#}
+{#- System message: model_identity OR default -#}
+{%- set system_message = model_identity | default("You are a helpful assistant.") -%}
+{{ start_token }}system
+{{ system_message }}
+{{ end_token }}
+{# ==================== DEVELOPER BLOCK (optional) ==================== #}
+{# Build developer content: role:system messages + role:developer messages + auto-instructions #}
+{%- set ns3 = namespace(developer_content=[]) -%}
+
+{#- 1. Role:system messages (provider rules) -#}
+{%- for message in messages -%}
+    {%- if message.role == 'system' -%}
+        {%- set ns3.developer_content = ns3.developer_content + [message.content] -%}
+    {%- endif -%}
+{%- endfor -%}
+
+{#- 2. Role:developer messages (user instructions) -#}
+{%- for message in messages -%}
+    {%- if message.role == 'developer' -%}
+        {%- set ns3.developer_content = ns3.developer_content + [message.content] -%}
+    {%- endif -%}
+{%- endfor -%}
+
+{#- 3. Auto-appended instructions -#}
+{%- if has_any_functions -%}
+    {%- set ns3.developer_content = ns3.developer_content + [function_instructions] -%}
+{%- endif -%}
+
+{%- if has_response_schema -%}
+    {%- set is_strict_mode = schema_strict | default(false) -%}
+    {%- if is_strict_mode -%}
+        {%- set strict_instruction = "This schema is **strict**. Do NOT add any keys that are not defined in the schema. Only include the exact fields specified." -%}
+    {%- else -%}
+        {%- set strict_instruction = "This schema is **non-strict**. You may add extra keys if they are important and relevant to the response." -%}
+    {%- endif -%}
+    {%- set response_schema_instructions = "# Response Format
+
+## Description
+
+Below is the required response format in JSON schema. When generating your response, **always follow this schema**:
+
+- " ~ strict_instruction ~ "
+- **Required keys:** Always include all `required` fields in your response—even if the value is empty or null, depending on context." -%}
+    {%- set schema_with_type = response_schema_instructions ~ "\n\n## Schema\n\n```typescript\ntype Response = " ~ convert_type(output_schema, 0, {}) ~ "\n```" -%}
+    {%- set ns3.developer_content = ns3.developer_content + [schema_with_type] -%}
+{%- endif -%}
+
+{%- if citations_enabled -%}
+    {%- set ns3.developer_content = ns3.developer_content + [citation_instructions] -%}
+{%- endif -%}
+
+{%- if self_reflection_enabled -%}
+    {%- set ns3.developer_content = ns3.developer_content + [self_reflection_instructions] -%}
+{%- endif -%}
+
+{%- set developer_content = ns3.developer_content -%}
+
+{#- Output as developer block -#}
+{%- if developer_content | length > 0 %}
+{{ start_token }}developer
+{{ developer_content | join('\n\n') }}
+{{ end_token }}
+{% endif %}
+{#- Functions definition (typescript namespace format) -#}
+{%- if has_any_functions %}
+{{ start_token }}functions
+namespace functions {
+{% for func in all_functions %}
+{{ format_function(func) }}
+{% if not loop.last %}
+
+{% endif -%}
+{%- endfor %}
+} // namespace functions
+{{ end_token }}
+{% endif %}
+{#- ==================== CONVERSATION ==================== -#}
+{%- for message in messages %}
+
+    {#- User -#}
+    {%- if message.role == 'user' %}
+{{ start_token }}user
+{{ strip_citations(message.content) }}
+{{ end_token }}
+{% endif %}
+    {#- Assistant -#}
+    {%- if message.role == 'assistant' %}
+{{ start_token }}assistant
+{% set content_str = message.content | default('') | trim -%}
+{%- set is_strict = schema_strict | default(false) -%}
+{%- set json_valid = validate_json_content(content_str, output_schema | default({}), is_strict) | trim == 'True' -%}
+{%- set has_constrain = message.constrain is defined or ((has_response_schema or (json_mode is defined and json_mode)) and json_valid) -%}
+{%- if message.constrain is defined -%}
+{{ constrain_start }}{{ message.constrain }}{{ constrain_end }}
+{%- elif (has_response_schema or (json_mode is defined and json_mode)) and json_valid -%}
+{{ constrain_start }}response.format={type:json, strict:{{ 'true' if is_strict else 'false' }}}{{ constrain_end }}
+{%- endif -%}
+{#- Handle contents array: OpenAI-style with type field -#}
+{#- Types: reasoning (once, first), text, tool_calls, self_reflection -#}
+{%- if message.contents is defined and message.contents -%}
+{%- if self_reflection_enabled -%}
+{#- When enabled: output each item based on type -#}
+{%- for item in message.contents -%}
+{%- if item.type == 'reasoning' and item.reasoning -%}
+{#- Reasoning is only rendered in REASONING template, skip in INSTRUCT -#}
+{%- elif item.type == 'text' -%}
+{{ message_start }}{{ strip_citations(item.text | default('')) }}{{ message_end }}
+{%- elif item.type == 'tool_calls' and item.tool_calls -%}
+{{ functions_start }}{%- for tc in item.tool_calls -%}
+<||invoke_start to=function.{{ tc.function.name if tc.function is defined else tc.name }}||>
+{%- set args = (tc.function.arguments if tc.function is defined else tc.arguments) | default({}) -%}
+{%- if args is string -%}{%- set args = args | fromjson -%}{%- endif -%}
+{%- for key, value in args.items() -%}
+{%- if value is mapping or (value is iterable and value is not string) -%}
+<||parameter_start name={{ key }}||>{{ value | tojson }}<||parameter_end||>
+{%- else -%}
+<||parameter_start name={{ key }}||>{{ value }}<||parameter_end||>
+{%- endif -%}
+{%- endfor -%}
+{{ invoke_end }}{%- endfor -%}
+{{ functions_end }}
+{%- elif item.type == 'self_reflection' and item.self_reflection -%}
+{{ self_reflection_start }}{{ strip_citations(item.self_reflection) }}{{ self_reflection_end }}
+{%- endif -%}
+{%- endfor -%}
+{%- else -%}
+{#- When disabled: only output text and tool_calls, skip reasoning/self_reflection -#}
+{%- for item in message.contents -%}
+{%- if item.type == 'text' -%}
+{{ message_start }}{{ strip_citations(item.text | default('')) }}{{ message_end }}
+{%- elif item.type == 'tool_calls' and item.tool_calls -%}
+{{ functions_start }}{%- for tc in item.tool_calls -%}
+<||invoke_start to=function.{{ tc.function.name if tc.function is defined else tc.name }}||>
+{%- set args = (tc.function.arguments if tc.function is defined else tc.arguments) | default({}) -%}
+{%- if args is string -%}{%- set args = args | fromjson -%}{%- endif -%}
+{%- for key, value in args.items() -%}
+{%- if value is mapping or (value is iterable and value is not string) -%}
+<||parameter_start name={{ key }}||>{{ value | tojson }}<||parameter_end||>
+{%- else -%}
+<||parameter_start name={{ key }}||>{{ value }}<||parameter_end||>
+{%- endif -%}
+{%- endfor -%}
+{{ invoke_end }}{%- endfor -%}
+{{ functions_end }}
+{%- endif -%}
+{%- endfor -%}
+{%- endif -%}
+{%- else -%}
+{#- Simple message format (not contents array) -#}
+{#- Always output message_start/message_end (even if content is null/empty) -#}
+{{ message_start }}{% if message.content is not none and message.content != None %}{{ strip_citations(message.content) }}{% endif %}{{ message_end }}
+{#- Handle function_calls (USF format) -#}
+{%- if message.function_calls is defined and message.function_calls -%}
+{{ functions_start }}{%- for call in message.function_calls -%}
+<||invoke_start to=function.{{ call.name }}||>
+{%- set args = call.arguments | default({}) -%}
+{%- if args is string -%}{%- set args = args | fromjson -%}{%- endif -%}
+{%- for key, value in args.items() -%}
+{%- if value is mapping or (value is iterable and value is not string) -%}
+<||parameter_start name={{ key }}||>{{ value | tojson }}<||parameter_end||>
+{%- else -%}
+<||parameter_start name={{ key }}||>{{ value }}<||parameter_end||>
+{%- endif -%}
+{%- endfor -%}
+{{ invoke_end }}{%- endfor -%}
+{{ functions_end }}
+{%- endif -%}
+{#- Handle tool_calls -#}
+{%- if message.tool_calls is defined and message.tool_calls -%}
+{{ functions_start }}{%- for tc in message.tool_calls -%}
+<||invoke_start to=function.{{ tc.function.name }}||>
+{%- set args = tc.function.arguments | default({}) -%}
+{%- if args is string -%}{%- set args = args | fromjson -%}{%- endif -%}
+{%- for key, value in args.items() -%}
+{%- if value is mapping or (value is iterable and value is not string) -%}
+<||parameter_start name={{ key }}||>{{ value | tojson }}<||parameter_end||>
+{%- else -%}
+<||parameter_start name={{ key }}||>{{ value }}<||parameter_end||>
+{%- endif -%}
+{%- endfor -%}
+{{ invoke_end }}{%- endfor -%}
+{{ functions_end }}
+{%- endif -%}
+{#- Self-reflection at end (simple message format) -#}
+{%- if self_reflection_enabled and message.self_reflection is defined and message.self_reflection -%}
+{{ self_reflection_start }}{{ strip_citations(message.self_reflection) }}{{ self_reflection_end }}
+{%- endif -%}
+{%- endif -%}
+{{ end_token }}
+{% endif %}
+    {#- Tool responses (batched) -#}
+    {%- if message.role == 'tool' %}
+{{ start_token }}tool
+{{ function_results_start }}
+        {%- if message.results is defined -%}
+            {%- for result in message.results -%}
+                {%- set result_id = result.id | default(result.tool_call_id | default(none)) -%}
+                {%- if result_id -%}
+<||function_response_start to=function.{{ result.name }} id="{{ result_id }}"||>
+                {%- else -%}
+<||function_response_start to=function.{{ result.name }}||>
+                {%- endif -%}
+                {%- if result.content is mapping -%}{{ result.content | tojson }}{%- else -%}{{ result.content }}{%- endif -%}
+<||function_response_end||>
+            {%- endfor -%}
+        {%- elif message.name is defined -%}
+            {%- set msg_id = message.tool_call_id | default(message.id | default(none)) -%}
+            {%- if msg_id -%}
+<||function_response_start to=function.{{ message.name }} id="{{ msg_id }}"||>{{ message.content }}<||function_response_end||>
+            {%- else -%}
+<||function_response_start to=function.{{ message.name }}||>{{ message.content }}<||function_response_end||>
+            {%- endif -%}
+        {%- else -%}
+{{ message.content }}
+        {%- endif -%}
+{{ function_results_end }}
+{{ end_token }}
+{% endif %}
+{%- endfor -%}
+
+{#- Generation prompt OR EOS token -#}
+{%- if add_generation_prompt %}
+{{ start_token }}assistant
+{% if has_response_schema or (json_mode is defined and json_mode) -%}
+{%- set gen_strict = schema_strict | default(false) -%}
+{{ constrain_start }}response.format={type:json, strict:{{ 'true' if gen_strict else 'false' }}}{{ constrain_end }}{{ message_start }}
+{%- else -%}
+{{ message_start }}
+{%- endif %}
+{%- else -%}
+{{ eos_token }}
+{%- endif -%}

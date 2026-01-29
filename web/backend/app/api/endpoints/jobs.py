@@ -1158,29 +1158,46 @@ async def get_unified_metrics(
             rlhf_type = job.config.rlhf_type.value if hasattr(job.config.rlhf_type, 'value') else job.config.rlhf_type
             effective_type = rlhf_type  # Use specific RLHF type (dpo, ppo, kto, etc.)
         
-        # Define metric configurations for each training type
+        # Define metric configurations for each training type (comprehensive)
         TRAINING_TYPE_METRICS = {
             # SFT and variants
-            "sft": ["loss", "learning_rate", "grad_norm", "epoch"],
-            "lora": ["loss", "learning_rate", "grad_norm", "epoch"],
-            "qlora": ["loss", "learning_rate", "grad_norm", "epoch"],
-            "adalora": ["loss", "learning_rate", "grad_norm", "epoch"],
-            "full": ["loss", "learning_rate", "grad_norm", "epoch"],
-            # Pre-training
-            "pt": ["loss", "learning_rate", "grad_norm", "perplexity", "epoch"],
-            "pretrain": ["loss", "learning_rate", "grad_norm", "perplexity", "epoch"],
-            # DPO and variants
-            "dpo": ["loss", "learning_rate", "chosen_rewards", "rejected_rewards", "reward_margin"],
-            "kto": ["loss", "learning_rate", "chosen_rewards", "rejected_rewards", "kl_divergence"],
-            "simpo": ["loss", "learning_rate", "chosen_rewards", "rejected_rewards", "reward_margin"],
-            "orpo": ["loss", "learning_rate", "chosen_rewards", "rejected_rewards"],
-            "rpo": ["loss", "learning_rate", "chosen_rewards", "rejected_rewards"],
-            # PPO/RLHF
-            "ppo": ["reward", "policy_loss", "value_loss", "entropy", "kl_divergence", "learning_rate"],
-            "grpo": ["reward", "loss", "kl_divergence", "policy_loss", "learning_rate"],
-            "rlhf": ["reward", "policy_loss", "value_loss", "entropy", "kl_divergence"],
+            "sft": ["loss", "learning_rate", "grad_norm", "epoch", "token_acc", "seq_acc", "eval_loss", "MFU"],
+            "lora": ["loss", "learning_rate", "grad_norm", "epoch", "token_acc", "seq_acc", "eval_loss", "MFU"],
+            "qlora": ["loss", "learning_rate", "grad_norm", "epoch", "token_acc", "seq_acc", "eval_loss", "MFU"],
+            "adalora": ["loss", "learning_rate", "grad_norm", "epoch", "token_acc", "seq_acc", "eval_loss"],
+            "dora": ["loss", "learning_rate", "grad_norm", "epoch", "token_acc", "seq_acc", "eval_loss"],
+            "full": ["loss", "learning_rate", "grad_norm", "epoch", "token_acc", "seq_acc", "eval_loss", "MFU"],
+            # Pre-training / Megatron
+            "pt": ["loss", "learning_rate", "grad_norm", "perplexity", "epoch", "throughput", "iteration_time", 
+                   "loss_scale", "params_norm", "batch_size", "num_zeros", "world_size"],
+            "pretrain": ["loss", "learning_rate", "grad_norm", "perplexity", "epoch", "throughput", "iteration_time",
+                        "loss_scale", "params_norm", "batch_size"],
+            # DPO and variants (Offline RLHF)
+            "dpo": ["loss", "learning_rate", "chosen_rewards", "rejected_rewards", "reward_margin", "reward_accuracy",
+                   "logps_chosen", "logps_rejected", "nll_loss", "mean_chosen_logits", "mean_rejected_logits"],
+            "kto": ["loss", "learning_rate", "chosen_rewards", "rejected_rewards", "kl_divergence", "reward_accuracy",
+                   "logps_chosen", "logps_rejected", "nll_loss"],
+            "simpo": ["loss", "learning_rate", "chosen_rewards", "rejected_rewards", "reward_margin", "reward_accuracy"],
+            "orpo": ["loss", "learning_rate", "chosen_rewards", "rejected_rewards", "reward_accuracy"],
+            "cpo": ["loss", "learning_rate", "chosen_rewards", "rejected_rewards", "reward_margin", "nll_loss"],
+            "rpo": ["loss", "learning_rate", "chosen_rewards", "rejected_rewards", "reward_margin"],
+            # PPO (Online RLHF)
+            "ppo": ["reward", "policy_loss", "value_loss", "entropy", "kl_divergence", "learning_rate",
+                   "clip_fraction", "approx_kl", "reward_std"],
+            # GRPO (Online RLHF)
+            "grpo": ["reward", "loss", "kl_divergence", "learning_rate", "reward_std", "frac_reward_zero_std",
+                    "entropy_mean", "entropy_min", "entropy_max", "entropy_threshold", "policy_loss", "value_loss",
+                    "clip_ratio_region_mean", "clip_ratio_low_min", "clip_ratio_high_max", "cispo_clip_ratio",
+                    "completions_mean_length", "completions_min_length", "completions_max_length", 
+                    "completions_clipped_ratio", "num_turns"],
+            # GKD (Generative Knowledge Distillation)
+            "gkd": ["loss", "learning_rate", "reward", "kl_divergence"],
+            # Generic RLHF
+            "rlhf": ["reward", "policy_loss", "value_loss", "entropy", "kl_divergence", "learning_rate"],
             # Reward Model
-            "rm": ["loss", "accuracy", "chosen_rewards", "rejected_rewards"],
+            "rm": ["loss", "accuracy", "chosen_rewards", "rejected_rewards", "reward_margin", "center_rewards_loss"],
+            # MoE (Mixture of Experts)
+            "moe": ["loss", "learning_rate", "grad_norm", "aux_loss", "load_balancing_loss", "z_loss"],
         }
         
         relevant_metrics = TRAINING_TYPE_METRICS.get(effective_type, TRAINING_TYPE_METRICS["sft"])

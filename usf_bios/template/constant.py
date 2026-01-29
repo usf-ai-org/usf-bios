@@ -30,6 +30,7 @@ class LLMTemplateType:
     reflection = 'reflection'
     megrez = 'megrez'
     usf_omega = 'usf_omega'
+    usf_omega_reasoning = 'usf_omega_reasoning'
     yi_coder = 'yi_coder'
     sus = 'sus'
     gpt_oss = 'gpt_oss'

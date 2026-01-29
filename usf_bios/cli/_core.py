@@ -263,8 +263,8 @@ def web_ui_entry():
 def train_ui_entry():
     """Entry point for train-ui - guard is inside compiled code"""
     guard_with_integrity()
-    from usf_bios.pipelines.webui import usf_omega_train_ui_main
-    usf_omega_train_ui_main()
+    from usf_bios.pipelines.webui import train_ui_main
+    train_ui_main()
 
 
 # Megatron entry points
