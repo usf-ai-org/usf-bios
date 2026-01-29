@@ -882,7 +882,7 @@ def get_tensorboard_charts(log_dir: str) -> str:
         chosen_logps = get_metric('logps/chosen', 'train/logps/chosen')
         rejected_logps = get_metric('logps/rejected', 'train/logps/rejected')
         if chosen_logps and rejected_logps:
-            html_parts.append(make_dual_metric("Log Probabilities", chosen_logps, rejected_logps, "Chosen", "Rejected", "#f1f8e9", "📊"))
+            html_parts.append(make_dual_chart("Log Probabilities", chosen_logps, rejected_logps, "Chosen", "Rejected", "#f1f8e9", "📊", "logps"))
         
         nll_data = get_metric('nll_loss', 'train/nll_loss')
         if nll_data:
