@@ -690,6 +690,13 @@ export default function Home() {
   const logsEndRef = useRef<HTMLDivElement>(null)
   const terminalContainerRef = useRef<HTMLDivElement>(null) // Container ref for terminal scroll
   const fileInputRef = useRef<HTMLInputElement>(null)
+  
+  // Refs to prevent duplicate API calls (fixes infinite retry loop)
+  const lastFetchedModelPath = useRef<string | null>(null)
+  const lastFetchedModelSource = useRef<string | null>(null)
+  const isFetchingModelInfo = useRef(false)
+  const modelInfoAbortController = useRef<AbortController | null>(null)
+  const modelInfoDebounceTimer = useRef<NodeJS.Timeout | null>(null)
 
   // Fetch datasets on mount and when on step 2
   useEffect(() => {
@@ -869,36 +876,82 @@ export default function Home() {
   }, [])
   
   // Fetch model info to get context length for dynamic UI ranges
-  const fetchModelInfo = useCallback(async (modelPath: string, source: string) => {
+  // BULLETPROOF: Uses refs, debouncing, and AbortController to prevent infinite loops
+  const fetchModelInfo = useCallback((modelPath: string, source: string) => {
     if (!modelPath) return
     
-    setModelInfo(prev => ({ ...prev, isLoading: true, error: null }))
-    
-    try {
-      const res = await fetch(`/api/models/info?model_path=${encodeURIComponent(modelPath)}&source=${source}`)
-      if (res.ok) {
-        const data = await res.json()
-        if (data.context_length && data.context_length > 0) {
-          setModelContextLength(data.context_length)
-        } else {
-          setModelContextLength(4096) // Default fallback
-        }
-        setModelInfo({
-          model_type: data.model_type || null,
-          architecture: data.architecture || null,
-          isLoading: false,
-          error: null
-        })
-      } else {
-        setModelInfo(prev => ({ ...prev, isLoading: false, error: 'Failed to fetch model info' }))
-        setModelContextLength(4096)
-      }
-    } catch (e) {
-      console.error('Failed to fetch model info:', e)
-      setModelContextLength(4096) // Default fallback
-      setModelInfo(prev => ({ ...prev, isLoading: false, error: 'Failed to fetch model info' }))
+    // Prevent duplicate calls for same model (check refs, not state)
+    if (lastFetchedModelPath.current === modelPath && 
+        lastFetchedModelSource.current === source) {
+      return
     }
-  }, [])
+    
+    // Clear any pending debounce timer
+    if (modelInfoDebounceTimer.current) {
+      clearTimeout(modelInfoDebounceTimer.current)
+    }
+    
+    // Debounce: wait 100ms before making the actual request
+    modelInfoDebounceTimer.current = setTimeout(async () => {
+      // Cancel any in-flight request
+      if (modelInfoAbortController.current) {
+        modelInfoAbortController.current.abort()
+      }
+      
+      // Create new abort controller for this request
+      const abortController = new AbortController()
+      modelInfoAbortController.current = abortController
+      
+      // Mark as fetching
+      isFetchingModelInfo.current = true
+      setModelInfo(prev => ({ ...prev, isLoading: true, error: null }))
+      
+      try {
+        const res = await fetch(
+          `/api/models/info?model_path=${encodeURIComponent(modelPath)}&source=${source}`,
+          { signal: abortController.signal }
+        )
+        
+        // Check if request was aborted
+        if (abortController.signal.aborted) return
+        
+        if (res.ok) {
+          const data = await res.json()
+          
+          // Double-check abort status after json parsing
+          if (abortController.signal.aborted) return
+          
+          // Update refs ONLY on success
+          lastFetchedModelPath.current = modelPath
+          lastFetchedModelSource.current = source
+          
+          if (data.context_length && data.context_length > 0) {
+            setModelContextLength(data.context_length)
+          } else {
+            setModelContextLength(4096)
+          }
+          setModelInfo({
+            model_type: data.model_type || null,
+            architecture: data.architecture || null,
+            isLoading: false,
+            error: null
+          })
+        } else {
+          setModelInfo(prev => ({ ...prev, isLoading: false, error: 'Failed to fetch model info' }))
+          setModelContextLength(4096)
+        }
+      } catch (e: unknown) {
+        // Ignore abort errors
+        if (e instanceof Error && e.name === 'AbortError') return
+        
+        console.error('Failed to fetch model info:', e)
+        setModelContextLength(4096)
+        setModelInfo(prev => ({ ...prev, isLoading: false, error: 'Failed to fetch model info' }))
+      } finally {
+        isFetchingModelInfo.current = false
+      }
+    }, 100) // 100ms debounce
+  }, []) // NO DEPENDENCIES - completely stable callback
 
   // Fetch output path configuration from backend API
   const fetchOutputPathConfig = useCallback(async () => {
@@ -983,45 +1036,98 @@ export default function Home() {
     setPreviousDatasetType(typeInfo.dataset_type)
   }, [previousDatasetType, config.training_method, showAlert])
 
+  // Ref to track last fetched model type path (prevents infinite loops)
+  const lastFetchedModelTypePath = useRef<string | null>(null)
+  const isFetchingModelType = useRef(false)
+  const modelTypeAbortController = useRef<AbortController | null>(null)
+  const modelTypeDebounceTimer = useRef<NodeJS.Timeout | null>(null)
+  
   // Fetch model type info when model changes
-  const fetchModelTypeInfo = useCallback(async (modelPath: string) => {
+  // BULLETPROOF: Uses refs, debouncing, and AbortController to prevent infinite loops
+  const fetchModelTypeInfo = useCallback((modelPath: string) => {
     if (!modelPath) {
       setModelTypeInfo(null)
       return
     }
     
-    try {
-      const res = await fetch(`/api/datasets/detect-model-type?model_path=${encodeURIComponent(modelPath)}`)
-      if (res.ok) {
-        const data = await res.json()
-        setModelTypeInfo(data)
-        
-        // Show warning if model is a LoRA adapter
-        if (data.is_adapter && data.warnings && data.warnings.length > 0) {
-          showAlert(
-            data.warnings.join(' '),
-            'warning',
-            'LoRA Adapter Detected'
-          )
-        }
-        
-        // Auto-adjust train_type if needed
-        if (data.is_adapter && config.train_type === 'full') {
-          setConfig(prev => ({
-            ...prev,
-            train_type: 'lora' // Switch to LoRA since full is not available for adapters
-          }))
-          showAlert(
-            'Full fine-tuning is not available for LoRA adapters. Switched to LoRA training.',
-            'info',
-            'Training Type Adjusted'
-          )
-        }
-      }
-    } catch (e) {
-      console.error('Failed to fetch model type info:', e)
+    // Prevent duplicate calls for same model
+    if (lastFetchedModelTypePath.current === modelPath) {
+      return
     }
-  }, [config.train_type, showAlert])
+    
+    // Clear any pending debounce timer
+    if (modelTypeDebounceTimer.current) {
+      clearTimeout(modelTypeDebounceTimer.current)
+    }
+    
+    // Debounce: wait 100ms before making the actual request
+    modelTypeDebounceTimer.current = setTimeout(async () => {
+      // Cancel any in-flight request
+      if (modelTypeAbortController.current) {
+        modelTypeAbortController.current.abort()
+      }
+      
+      // Create new abort controller for this request
+      const abortController = new AbortController()
+      modelTypeAbortController.current = abortController
+      
+      isFetchingModelType.current = true
+      
+      try {
+        const res = await fetch(
+          `/api/datasets/detect-model-type?model_path=${encodeURIComponent(modelPath)}`,
+          { signal: abortController.signal }
+        )
+        
+        // Check if request was aborted
+        if (abortController.signal.aborted) return
+        
+        if (res.ok) {
+          const data = await res.json()
+          
+          // Double-check abort status
+          if (abortController.signal.aborted) return
+          
+          // Update ref ONLY on success
+          lastFetchedModelTypePath.current = modelPath
+          setModelTypeInfo(data)
+          
+          // Show warning if model is a LoRA adapter (use setAlertModal directly)
+          if (data.is_adapter && data.warnings && data.warnings.length > 0) {
+            setAlertModal({
+              isOpen: true,
+              message: data.warnings.join(' '),
+              type: 'warning',
+              title: 'LoRA Adapter Detected'
+            })
+          }
+          
+          // Auto-adjust train_type if needed (check current value via callback)
+          if (data.is_adapter) {
+            setConfig(prev => {
+              if (prev.train_type === 'full') {
+                setAlertModal({
+                  isOpen: true,
+                  message: 'Full fine-tuning is not available for LoRA adapters. Switched to LoRA training.',
+                  type: 'info',
+                  title: 'Training Type Adjusted'
+                })
+                return { ...prev, train_type: 'lora' }
+              }
+              return prev
+            })
+          }
+        }
+      } catch (e: unknown) {
+        // Ignore abort errors
+        if (e instanceof Error && e.name === 'AbortError') return
+        
+        console.error('Failed to fetch model type info:', e)
+      } finally {
+        isFetchingModelType.current = false
+      }
+    }, 100) // 100ms debounce
+  }, []) // NO DEPENDENCIES - completely stable callback
 
   // Fetch system capabilities - what this system can fine-tune
   const fetchSystemCapabilities = useCallback(async () => {
@@ -1205,6 +1311,7 @@ export default function Home() {
   }, [fetchSystemStatus, fetchSystemCapabilities, fetchLockedModels, fetchAvailableGpus, fetchOutputPathConfig, fetchSystemTokens, fetchHardwareRequirements, fetchFeatureFlags, systemExpired])
   
   // Fetch model info when model_path changes to get dynamic context length
+  // BULLETPROOF: Callbacks are stable (no deps), use debouncing + AbortController
   useEffect(() => {
     if (config.model_path) {
       fetchModelInfo(config.model_path, config.model_source)
@@ -1212,6 +1319,14 @@ export default function Home() {
       if (config.model_source === 'local') {
         fetchModelTypeInfo(config.model_path)
       }
+    }
+    
+    // Cleanup: cancel pending requests and timers on unmount or model change
+    return () => {
+      if (modelInfoDebounceTimer.current) clearTimeout(modelInfoDebounceTimer.current)
+      if (modelTypeDebounceTimer.current) clearTimeout(modelTypeDebounceTimer.current)
+      if (modelInfoAbortController.current) modelInfoAbortController.current.abort()
+      if (modelTypeAbortController.current) modelTypeAbortController.current.abort()
     }
   }, [config.model_path, config.model_source, fetchModelInfo, fetchModelTypeInfo])
 
