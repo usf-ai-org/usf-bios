@@ -1528,76 +1528,94 @@ export default function Home() {
   const [wsConnected, setWsConnected] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
   const wsReconnectAttempts = useRef(0)
-  const maxWsReconnectAttempts = 5
+  const wsDisabled = useRef(false)
   
-  // WebSocket for training updates (real-time progress) with auto-reconnect
+  // WebSocket for training updates (real-time progress) - OPTIONAL enhancement
+  // If WebSocket fails, we silently fall back to HTTP polling (which is the primary mechanism)
+  // This prevents console spam when WebSocket proxy is not available
   useEffect(() => {
-    if (jobStatus?.job_id && isTraining) {
-      let reconnectTimeout: NodeJS.Timeout
+    if (jobStatus?.job_id && isTraining && !wsDisabled.current) {
       
       const connectWebSocket = () => {
-        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-        const ws = new WebSocket(`${wsProtocol}//${window.location.host}/api/jobs/ws/${jobStatus.job_id}`)
-        wsRef.current = ws
+        // Skip WebSocket if already disabled for this session
+        if (wsDisabled.current) return
         
-        ws.onopen = () => {
-          console.log('[WS] Connected')
-          setWsConnected(true)
-          wsReconnectAttempts.current = 0
-        }
-        
-        ws.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data)
-            // WebSocket handles progress and status updates
-            if (data.type === 'progress') {
-              setJobStatus(prev => prev ? {
-                ...prev,
-                current_step: data.step || prev.current_step,
-                total_steps: data.total_steps || prev.total_steps,
-                current_loss: data.loss ?? prev.current_loss,
-                learning_rate: data.learning_rate ?? prev.learning_rate,
-                epoch: data.epoch ?? prev.epoch,
-                total_epochs: data.total_epochs ?? prev.total_epochs,
-                samples_per_second: data.samples_per_second ?? prev.samples_per_second,
-                eta_seconds: data.eta_seconds ?? prev.eta_seconds,
-              } : null)
-            }
-            if (data.type === 'status') {
-              if (data.status === 'completed' || data.status === 'failed' || data.status === 'stopped') {
-                setIsTraining(false)
-              }
-              setJobStatus(prev => prev ? { ...prev, status: data.status } : null)
-            }
-          } catch (e) {
-            console.error('[WS] Parse error:', e)
-          }
-        }
-        
-        ws.onerror = (e) => {
-          console.error('[WS] Error:', e)
-          setWsConnected(false)
-        }
-        
-        ws.onclose = () => {
-          console.log('[WS] Closed')
-          setWsConnected(false)
-          wsRef.current = null
+        try {
+          const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+          const ws = new WebSocket(`${wsProtocol}//${window.location.host}/api/jobs/ws/${jobStatus.job_id}`)
+          wsRef.current = ws
           
-          // Auto-reconnect if still training and under max attempts
-          if (isTraining && wsReconnectAttempts.current < maxWsReconnectAttempts) {
-            wsReconnectAttempts.current++
-            const delay = Math.min(1000 * Math.pow(2, wsReconnectAttempts.current), 10000)
-            console.log(`[WS] Reconnecting in ${delay}ms (attempt ${wsReconnectAttempts.current})`)
-            reconnectTimeout = setTimeout(connectWebSocket, delay)
+          // Set a connection timeout - if not connected in 5s, disable WebSocket
+          const connectionTimeout = setTimeout(() => {
+            if (ws.readyState !== WebSocket.OPEN) {
+              ws.close()
+              wsDisabled.current = true
+              setWsConnected(false)
+            }
+          }, 5000)
+          
+          ws.onopen = () => {
+            clearTimeout(connectionTimeout)
+            setWsConnected(true)
+            wsReconnectAttempts.current = 0
           }
+          
+          ws.onmessage = (event) => {
+            try {
+              const data = JSON.parse(event.data)
+              if (data.type === 'progress') {
+                setJobStatus(prev => prev ? {
+                  ...prev,
+                  current_step: data.step || prev.current_step,
+                  total_steps: data.total_steps || prev.total_steps,
+                  current_loss: data.loss ?? prev.current_loss,
+                  learning_rate: data.learning_rate ?? prev.learning_rate,
+                  epoch: data.epoch ?? prev.epoch,
+                  total_epochs: data.total_epochs ?? prev.total_epochs,
+                  samples_per_second: data.samples_per_second ?? prev.samples_per_second,
+                  eta_seconds: data.eta_seconds ?? prev.eta_seconds,
+                } : null)
+              }
+              if (data.type === 'status') {
+                if (data.status === 'completed' || data.status === 'failed' || data.status === 'stopped') {
+                  setIsTraining(false)
+                }
+                setJobStatus(prev => prev ? { ...prev, status: data.status } : null)
+              }
+            } catch (e) {
+              // Silent parse error - polling will handle updates
+            }
+          }
+          
+          ws.onerror = () => {
+            // Silent error - disable WebSocket and rely on polling
+            clearTimeout(connectionTimeout)
+            wsDisabled.current = true
+            setWsConnected(false)
+          }
+          
+          ws.onclose = () => {
+            clearTimeout(connectionTimeout)
+            setWsConnected(false)
+            wsRef.current = null
+            
+            // Only retry once, then disable WebSocket for this session
+            if (isTraining && wsReconnectAttempts.current < 1 && !wsDisabled.current) {
+              wsReconnectAttempts.current++
+              setTimeout(connectWebSocket, 3000)
+            } else {
+              wsDisabled.current = true
+            }
+          }
+        } catch (e) {
+          // Silent catch - WebSocket not available, rely on polling
+          wsDisabled.current = true
         }
       }
       
       connectWebSocket()
       
       return () => {
-        clearTimeout(reconnectTimeout)
         if (wsRef.current) {
           wsRef.current.close()
           wsRef.current = null
