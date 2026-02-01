@@ -2,9 +2,11 @@
 """Job manager for tracking training jobs"""
 
 import asyncio
-import uuid
+import os
 import random
+import signal
 import subprocess
+import uuid
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -234,8 +236,6 @@ class JobManager:
     def stop_training_process_by_pid(self, pid: int) -> bool:
         """Stop a training process by its PID (fallback when job state is lost)."""
         try:
-            import signal
-            import os
             os.kill(pid, signal.SIGTERM)
             return True
         except Exception:
@@ -260,7 +260,6 @@ class JobManager:
         """
         from .encrypted_log_service import encrypted_log_service
         from .sanitized_log_service import sanitized_log_service
-        import os
         
         async with self._lock:
             if job_id in self._jobs:

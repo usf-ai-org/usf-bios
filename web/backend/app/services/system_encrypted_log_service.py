@@ -28,14 +28,15 @@ Components Logged:
 
 import asyncio
 import base64
+import json
 import os
 import shutil
 import threading
+import time
+import traceback
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-import traceback
-import json
 
 try:
     from cryptography.hazmat.primitives import serialization, hashes
@@ -722,8 +723,6 @@ class SystemEncryptedLogService:
         NEVER exits, NEVER raises exceptions.
         Runs cleanup every hour indefinitely.
         """
-        import time
-        
         while True:
             try:
                 # Sleep for 1 hour (3600 seconds)

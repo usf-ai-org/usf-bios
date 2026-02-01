@@ -1,8 +1,10 @@
 # Copyright (c) US Inc. All rights reserved.
 """Dataset-related endpoints"""
 
+import csv
 import json
 import os
+import shutil
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -189,8 +191,6 @@ async def _validate_json(path: Path) -> DatasetValidation:
 async def _validate_csv(path: Path) -> DatasetValidation:
     """Validate CSV dataset"""
     try:
-        import csv
-        
         samples = []
         total = 0
         
@@ -258,7 +258,6 @@ async def check_name_available(name: str = Query(..., description="Dataset name 
 
 def _get_available_disk_space_gb(path: Path) -> float:
     """Get available disk space in GB for a path."""
-    import shutil
     try:
         check_path = path
         while not check_path.exists() and str(check_path) != '/':
@@ -987,9 +986,6 @@ async def validate_adapter_base(request: AdapterValidationRequest):
     2. Merge adapter into base at runtime for full training options
     3. Validate compatibility before training starts
     """
-    from pathlib import Path
-    import json
-    
     adapter_path = Path(request.adapter_path)
     base_path = Path(request.base_model_path)
     merge_warnings = []

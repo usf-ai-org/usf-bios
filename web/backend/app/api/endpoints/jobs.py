@@ -1,6 +1,12 @@
 # Copyright (c) US Inc. All rights reserved.
 """Job management endpoints"""
 
+import asyncio
+import json
+import math
+import os
+import shutil
+import traceback
 from datetime import datetime, timedelta
 from typing import List, Optional
 
@@ -519,7 +525,6 @@ async def get_terminal_logs(job_id: str, lines: int = 100):
     which is useful when in-memory logs are lost (e.g., after page refresh).
     """
     from ...services.sanitized_log_service import sanitized_log_service
-    import os
     
     try:
         log_path = sanitized_log_service.get_terminal_log_path(job_id)
@@ -542,7 +547,6 @@ async def get_terminal_logs(job_id: str, lines: int = 100):
             }
         }
     except Exception as e:
-        import traceback
         print(f"[TERMINAL-LOGS] ERROR for job_id={job_id}: {e}")
         traceback.print_exc()
         return {
@@ -569,8 +573,6 @@ async def stream_logs(job_id: str):
     """
     from fastapi.responses import StreamingResponse
     from ...services.sanitized_log_service import sanitized_log_service
-    import asyncio
-    import json
     
     async def log_generator():
         """Generator that yields log updates as SSE events."""
@@ -634,7 +636,6 @@ async def get_checkpoint_info(job_id: str):
     
     Returns available checkpoints that can be used to resume training.
     """
-    import os
     from pathlib import Path
     from ...core.capabilities import get_system_settings
     
@@ -758,7 +759,6 @@ async def restart_job(job_id: str, delete_data: bool = True):
     If delete_data is True, deletes the job's output folder (checkpoints, logs)
     but keeps the dataset and model intact.
     """
-    import shutil
     from pathlib import Path
     from ...core.capabilities import get_system_settings
     
@@ -1158,8 +1158,6 @@ async def get_tensorboard_data(job_id: str):
     IMPORTANT: Only returns validated data. If data appears corrupt or
     inconsistent, it is excluded to maintain user trust.
     """
-    import os
-    import math
     from pathlib import Path
     from ...core.capabilities import get_system_settings
     
@@ -1312,8 +1310,6 @@ async def get_unified_metrics(
     - database: Good accuracy, parsed from training logs
     - none: No data available yet
     """
-    import math
-    
     def is_valid_value(val) -> bool:
         """Check if a value is valid for display."""
         if val is None:
@@ -1643,7 +1639,6 @@ async def get_training_history(
             "history": history
         }
     except Exception as e:
-        import traceback
         return {
             "count": 0,
             "history": [],

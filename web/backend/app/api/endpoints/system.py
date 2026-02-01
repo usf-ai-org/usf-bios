@@ -197,7 +197,6 @@ def get_gpu_metrics():
     except ImportError:
         # pynvml not available - try nvidia-smi as fallback with ALL GPUs
         try:
-            import subprocess
             cmd = "nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits"
             output = subprocess.check_output(cmd.split(), timeout=5).decode().strip()
             lines = output.strip().split('\n')
@@ -286,7 +285,6 @@ def get_gpu_metrics():
         return result
         
     except Exception as e:
-        import logging
         logging.warning(f"GPU metrics error: {e}")
         return result
 
@@ -303,8 +301,7 @@ def get_cpu_metrics():
         "cpu_available": False
     }
     
-    try:
-        import psutil
+    if PSUTIL_AVAILABLE:
         result["cpu_available"] = True
         
         # CPU Utilization (0-100%)
@@ -333,14 +330,8 @@ def get_cpu_metrics():
             pass
         
         return result
-        
-    except ImportError:
-        # psutil not available
-        return result
-    except Exception as e:
-        import logging
-        logging.warning(f"CPU metrics error: {e}")
-        return result
+    
+    return result
 
 
 def get_storage_metrics():
@@ -367,7 +358,6 @@ def get_storage_metrics():
     }
     
     try:
-        import shutil
         from pathlib import Path
         
         # Get the output directory from settings
@@ -431,7 +421,6 @@ def get_storage_metrics():
         return result
         
     except Exception as e:
-        import logging
         logging.warning(f"Storage metrics error: {e}")
         return result
 
@@ -1168,7 +1157,6 @@ def detect_gpu_architecture() -> dict:
         return result
         
     except Exception as e:
-        import logging
         logging.warning(f"GPU architecture detection error: {e}")
         return result
 
@@ -1776,8 +1764,6 @@ async def cleanup_gpu_memory(
     Returns:
         GPUCleanupResponse with memory freed and current state.
     """
-    import os
-    
     try:
         if deep:
             result = await gpu_cleanup_service.async_deep_cleanup(
@@ -1878,7 +1864,6 @@ async def deep_cleanup_gpu():
     
     Use this after training failures or when VRAM is stuck at high usage.
     """
-    import os
     result = await gpu_cleanup_service.async_deep_cleanup(
         kill_orphans=True,
         exclude_pids=[os.getpid()]
@@ -1924,9 +1909,6 @@ async def test_vllm_server(request: VLLMServerTestRequest):
     
     SECURITY: Must pass before training can start in server mode.
     """
-    import httpx
-    import socket
-    
     host = request.host.strip()
     port = request.port
     base_url = f"http://{host}:{port}"

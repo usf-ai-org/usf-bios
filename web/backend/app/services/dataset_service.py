@@ -1,8 +1,10 @@
+import csv
+import json
 import os
 import shutil
-import json
-from typing import List, Optional, Dict, Any
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+
 from sqlalchemy.orm import Session
 
 from app.models.db_models import Dataset, DatasetStatus, DatasetSource, TrainingJob
@@ -317,7 +319,6 @@ class DatasetService:
                     stats["column_info"] = list(first.keys())
         
         elif file_format == "csv":
-            import csv
             with open(file_path, "r", encoding="utf-8") as f:
                 reader = csv.reader(f)
                 header = next(reader, None)
@@ -354,7 +355,6 @@ class DatasetService:
                 preview["columns"] = list(preview["rows"][0].keys())
         
         elif file_format == "csv":
-            import csv
             with open(file_path, "r", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
                 preview["columns"] = reader.fieldnames or []

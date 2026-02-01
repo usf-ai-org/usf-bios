@@ -1,8 +1,17 @@
-import re
 import os
-from typing import Dict, Any, Optional, List
+import re
+import sys
 from datetime import datetime
 from enum import Enum
+from typing import Any, Dict, List, Optional
+
+# Optional imports
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    psutil = None
+    PSUTIL_AVAILABLE = False
 
 
 class CrashReason(str, Enum):
@@ -482,7 +491,6 @@ class SanitizedLogService:
                 os.fsync(f.fileno())  # Ensure OS writes to disk
         except Exception as e:
             # Log to stderr so it appears in container logs
-            import sys
             print(f"[TERMINAL_LOG_ERROR] Failed to write log for job {job_id}: {e}", file=sys.stderr)
         
         return log_line
@@ -605,9 +613,9 @@ class SanitizedLogService:
         self.create_terminal_log(job_id, msg, "INFO")
     
     def log_system_info(self, job_id: str) -> None:
+        if not PSUTIL_AVAILABLE:
+            return
         try:
-            import psutil
-            
             cpu_percent = psutil.cpu_percent()
             memory = psutil.virtual_memory()
             
@@ -617,8 +625,6 @@ class SanitizedLogService:
             ]
             
             self.create_terminal_log(job_id, " | ".join(parts), "INFO")
-        except ImportError:
-            pass
         except Exception:
             pass
     

@@ -2,12 +2,27 @@
 """Training service - executes fine-tuning jobs"""
 
 import asyncio
+import hashlib
+import json
 import os
+import platform
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
+import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+# Optional imports
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError:
+    torch = None
+    TORCH_AVAILABLE = False
 
 from ..core.config import settings
 from ..core.capabilities import get_system_settings
@@ -73,8 +88,6 @@ def _get_model_size_from_config(model_path: str) -> Optional[float]:
     
     Returns size in GB if calculable, None otherwise.
     """
-    import json
-    
     config_path = os.path.join(model_path, "config.json")
     if not os.path.exists(config_path):
         return None
@@ -184,8 +197,6 @@ def _get_model_size_from_directory(model_path: str, job_id: str = None) -> Optio
     
     Returns None if path doesn't exist or size cannot be determined.
     """
-    import json
-    
     if not os.path.isdir(model_path):
         return None
     
@@ -412,9 +423,6 @@ def _get_dir_size_gb_fast(path: str, job_id: str = None, timeout_seconds: int = 
     
     Returns size in GB, or 0 if cannot determine.
     """
-    import subprocess
-    import platform
-    
     if not os.path.exists(path):
         return 0
     
@@ -467,8 +475,6 @@ async def _get_dir_size_gb_async(path: str, job_id: str = None, timeout_seconds:
     Uses asyncio.to_thread() to run the blocking 'du' command in a thread pool.
     Falls back to estimation from model name if du fails or times out.
     """
-    import asyncio
-    
     try:
         # Run blocking du command in thread pool with overall timeout
         size = await asyncio.wait_for(
@@ -491,7 +497,6 @@ def _get_available_space_gb(path: str) -> float:
     
     SAFETY: Uses iteration limit to prevent infinite loops in edge cases.
     """
-    import shutil
     try:
         check_path = path
         max_iterations = 100  # Safety limit to prevent infinite loops
@@ -562,8 +567,6 @@ def _calculate_storage_requirements(config, model_path: str, model_source: str,
         - local_model_path: Actual local path to use for training (important for remote!)
         - error: error message if failed
     """
-    import tempfile
-    
     result = {
         'temp_required_gb': 0,
         'output_required_gb': 0,
@@ -719,7 +722,6 @@ def _log_step(job_id: str, step_name: str, details: dict = None, level: str = "I
     COMPLETE LOGGING: Every step is logged with all details.
     This ensures full traceability for debugging.
     """
-    import json
     detail_str = ""
     if details:
         try:
@@ -815,8 +817,6 @@ class TrainingService:
         
         Returns: (is_valid, error_message)
         """
-        import hashlib
-        
         training_method = getattr(config, 'training_method', None)
         if training_method:
             method_value = training_method.value if hasattr(training_method, 'value') else str(training_method)
@@ -858,8 +858,7 @@ class TrainingService:
         
         # Colocate mode validation
         elif vllm_mode == "colocate":
-            import torch
-            if torch.cuda.is_available():
+            if TORCH_AVAILABLE and torch.cuda.is_available():
                 gpu_count = torch.cuda.device_count()
                 if gpu_count < 2:
                     return False, "Colocate mode requires at least 2 GPUs. Use server mode instead."
@@ -2543,7 +2542,6 @@ class TrainingService:
             # ============================================================
             # ENCRYPTED LOG: Full error details (only US Inc can read)
             # ============================================================
-            import traceback
             full_error = str(e)
             full_traceback = traceback.format_exc()
             _log_step(job_id, "TRAINING_EXCEPTION", {

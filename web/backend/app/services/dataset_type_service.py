@@ -27,17 +27,18 @@ Production Features:
 - Sample-based type detection (first N rows only)
 """
 
+import csv
 import json
-import os
+import logging
 import mmap
-import signal
+import os
 import resource
+import signal
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any, Iterator, Generator
-from dataclasses import dataclass, field
-import logging
+from typing import Any, Dict, Generator, Iterator, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -673,8 +674,6 @@ class DatasetTypeService:
         Uses memory-efficient streaming - only reads first N rows.
         Handles both CSV and TSV formats.
         """
-        import csv
-        
         samples = []
         sample_limit = FileFormatConfig.SAMPLE_ROWS_FOR_DETECTION
         total_bytes_sampled = 0

@@ -18,15 +18,26 @@ NOT the standard HuggingFace transformers library.
 import asyncio
 import base64
 import gc
+import json
+import logging
 import os
 import re
 import sys
+import traceback
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field
+
+# Optional imports
+try:
+    import pynvml
+    PYNVML_AVAILABLE = True
+except ImportError:
+    pynvml = None
+    PYNVML_AVAILABLE = False
 
 from .sanitized_log_service import sanitized_log_service
 from .gpu_cleanup_service import gpu_cleanup_service
@@ -244,38 +255,40 @@ class InferenceService:
         NOTE: torch.cuda.memory_allocated() only shows PyTorch's allocation,
         not actual GPU memory usage. We use pynvml for driver-level accuracy.
         """
-        try:
-            import pynvml
-            pynvml.nvmlInit()
-            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-            mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-            pynvml.nvmlShutdown()
-            return mem_info.used / (1024 ** 3)
-        except Exception:
-            # Fallback to torch if pynvml fails
+        if PYNVML_AVAILABLE:
             try:
-                if TORCH_AVAILABLE and torch.cuda.is_available():
-                    return torch.cuda.memory_allocated() / (1024 ** 3)
+                pynvml.nvmlInit()
+                handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                pynvml.nvmlShutdown()
+                return mem_info.used / (1024 ** 3)
             except Exception:
                 pass
+        # Fallback to torch if pynvml fails
+        try:
+            if TORCH_AVAILABLE and torch.cuda.is_available():
+                return torch.cuda.memory_allocated() / (1024 ** 3)
+        except Exception:
+            pass
         return 0.0
     
     def _get_total_gpu_memory(self) -> float:
         """Get total GPU memory in GB using pynvml for accuracy."""
-        try:
-            import pynvml
-            pynvml.nvmlInit()
-            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-            mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-            pynvml.nvmlShutdown()
-            return mem_info.total / (1024 ** 3)
-        except Exception:
-            # Fallback to torch if pynvml fails
+        if PYNVML_AVAILABLE:
             try:
-                if TORCH_AVAILABLE and torch.cuda.is_available():
-                    return torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+                pynvml.nvmlInit()
+                handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                pynvml.nvmlShutdown()
+                return mem_info.total / (1024 ** 3)
             except Exception:
                 pass
+        # Fallback to torch if pynvml fails
+        try:
+            if TORCH_AVAILABLE and torch.cuda.is_available():
+                return torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+        except Exception:
+            pass
         return 0.0
     
     def _resolve_adapter_path(self, adapter_path: str) -> Optional[str]:
@@ -343,8 +356,6 @@ class InferenceService:
         - i2i: Image to image (transformers only - diffusers)
         - t2v: Text to video (transformers only)
         """
-        import json
-        
         model_path_lower = model_path.lower()
         
         # Pattern definitions for each model type
@@ -902,10 +913,6 @@ class InferenceService:
         Validates adapter path contains required LoRA files before loading.
         Performs VRAM cleanup before reloading to ensure clean state.
         """
-        import logging
-        import traceback
-        import json
-        
         logging.info(f"=== ADAPTER LOAD REQUEST ===")
         logging.info(f"Adapter path: {adapter_path}")
         logging.info(f"Current model: {self._current_model_path}")
@@ -1075,7 +1082,6 @@ class InferenceService:
         4. Clear CUDA cache on all GPUs
         5. Use GPU cleanup service for thorough cleanup
         """
-        import logging
         logging.info("Clearing all inference engines...")
         
         # Step 1: Clear Transformers engine

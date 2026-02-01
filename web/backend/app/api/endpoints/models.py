@@ -1,6 +1,7 @@
 # Copyright (c) US Inc. All rights reserved.
 """Model-related endpoints"""
 
+import json
 import os
 from pathlib import Path
 from typing import Optional, Literal, List
@@ -463,8 +464,6 @@ async def get_model_info(
     global _model_info_cache
     
     try:
-        import json
-        
         # Check cache first
         cache_key = f"{source.value}:{model_path}"
         if cache_key in _model_info_cache:
@@ -789,8 +788,6 @@ async def get_model_capabilities(
     - max_context_length: Maximum context window size
     - model_type: llm, vlm, mllm, asr, tts
     """
-    import json
-    
     try:
         capabilities = ModelCapabilities()
         
