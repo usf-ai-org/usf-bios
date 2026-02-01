@@ -223,6 +223,25 @@ RUN cd $CORE_DIR && pip3 install --no-cache-dir -e . && \
     echo "✓ usf_bios installed successfully" || \
     (echo "✗ usf_bios installation failed" && exit 1)
 
+# ============================================================================
+# CLEANUP: Remove ALL build files not needed at runtime
+# CRITICAL: These files contain package structure, dependencies, and metadata
+# ============================================================================
+RUN echo "=== Removing build files not needed at runtime ===" && \
+    rm -f $CORE_DIR/setup.py $CORE_DIR/setup.cfg $CORE_DIR/MANIFEST.in $CORE_DIR/requirements.txt && \
+    rm -rf $CORE_DIR/*.egg-info $CORE_DIR/build $CORE_DIR/dist $CORE_DIR/__pycache__ && \
+    rm -rf $CORE_DIR/requirements && \
+    echo "  ✓ Removed setup.py, setup.cfg, MANIFEST.in, requirements.txt" && \
+    echo "  ✓ Removed egg-info, build, dist, requirements directories"
+
+# VERIFICATION: Confirm build files are DELETED (fail build if they exist)
+RUN echo "=== VERIFICATION: Build files must NOT exist ===" && \
+    if [ -f $CORE_DIR/setup.py ]; then echo "!!!! CRITICAL: setup.py still exists !!!!"; exit 1; fi && \
+    if [ -f $CORE_DIR/setup.cfg ]; then echo "!!!! CRITICAL: setup.cfg still exists !!!!"; exit 1; fi && \
+    if [ -f $CORE_DIR/MANIFEST.in ]; then echo "!!!! CRITICAL: MANIFEST.in still exists !!!!"; exit 1; fi && \
+    echo "  ✓ All build files removed" && \
+    echo "=== BUILD FILES CLEANUP VERIFIED ==="
+
 # Build frontend
 WORKDIR $FRONTEND_DIR
 RUN npm install

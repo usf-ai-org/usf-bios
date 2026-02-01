@@ -276,6 +276,19 @@ class TrainingConfig(BaseModel):
     adapter_base_model_path: Optional[str] = Field(
         default=None, description="Base model path for merging with adapter (required when merge_adapter_before_training=True)"
     )
+    adapter_base_model_source: ModelSource = Field(
+        default=ModelSource.LOCAL, 
+        description="Source of the base model for adapter merging (can be different from main model source)"
+    )
+    
+    # Existing adapter - continue training on an existing LoRA/QLoRA adapter
+    existing_adapter_path: Optional[str] = Field(
+        default=None, description="Path to existing adapter to continue training on (optional)"
+    )
+    existing_adapter_source: ModelSource = Field(
+        default=ModelSource.LOCAL,
+        description="Source of the existing adapter (local, huggingface, modelscope)"
+    )
     
     @field_validator('gpu_ids')
     @classmethod

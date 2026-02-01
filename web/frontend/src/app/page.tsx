@@ -412,9 +412,10 @@ export default function Home() {
     quantization_bits?: number
   } | null>(null)
   
-  // State for adapter merge mode
+  // State for adapter merge mode (when user selects adapter as main model)
   const [adapterMergeMode, setAdapterMergeMode] = useState(false)
   const [adapterBaseModelPath, setAdapterBaseModelPath] = useState('')
+  const [adapterBaseModelSource, setAdapterBaseModelSource] = useState<'local' | 'huggingface' | 'modelscope'>('local')
   const [adapterValidation, setAdapterValidation] = useState<{
     valid: boolean
     compatible: boolean
@@ -422,6 +423,23 @@ export default function Home() {
     merge_warnings: string[]
   } | null>(null)
   const [isValidatingAdapter, setIsValidatingAdapter] = useState(false)
+  
+  // State for optional adapter upload (when user selects base model first, then adds adapter)
+  // This is for continuing training on an existing adapter
+  const [useExistingAdapter, setUseExistingAdapter] = useState(false)
+  const [existingAdapterPath, setExistingAdapterPath] = useState('')
+  const [existingAdapterSource, setExistingAdapterSource] = useState<'local' | 'huggingface' | 'modelscope'>('local')
+  const [existingAdapterValidation, setExistingAdapterValidation] = useState<{
+    valid: boolean
+    message: string
+    adapter_info?: {
+      rank?: number
+      alpha?: number
+      base_model?: string
+      size_mb?: number
+    }
+  } | null>(null)
+  const [isValidatingExistingAdapter, setIsValidatingExistingAdapter] = useState(false)
   
   // Custom alert modal state (replaces browser alert)
   const [alertModal, setAlertModal] = useState<{
@@ -1222,6 +1240,60 @@ export default function Home() {
       setIsValidatingAdapter(false)
     }
   }, [adapterMergeMode])
+
+  // Validate existing adapter path (when user wants to continue training on an adapter)
+  const validateExistingAdapter = useCallback(async (adapterPath: string, source: string) => {
+    if (!adapterPath) {
+      setExistingAdapterValidation(null)
+      return
+    }
+    
+    setIsValidatingExistingAdapter(true)
+    try {
+      // For local paths, validate via API
+      if (source === 'local') {
+        const res = await fetch(`/api/datasets/detect-model-type?model_path=${encodeURIComponent(adapterPath)}`)
+        if (res.ok) {
+          const data = await res.json()
+          if (data.is_adapter) {
+            setExistingAdapterValidation({
+              valid: true,
+              message: `Valid ${data.model_type === 'qlora' ? 'QLoRA' : 'LoRA'} adapter detected`,
+              adapter_info: {
+                rank: data.adapter_r,
+                alpha: data.adapter_alpha,
+                base_model: data.base_model_path,
+              }
+            })
+          } else {
+            setExistingAdapterValidation({
+              valid: false,
+              message: 'Not a valid LoRA/QLoRA adapter (missing adapter_config.json)'
+            })
+          }
+        } else {
+          setExistingAdapterValidation({
+            valid: false,
+            message: 'Path does not exist or is not accessible'
+          })
+        }
+      } else {
+        // For HuggingFace/ModelScope, we'll validate during training
+        setExistingAdapterValidation({
+          valid: true,
+          message: `Adapter will be downloaded from ${source === 'huggingface' ? 'HuggingFace' : 'ModelScope'}`
+        })
+      }
+    } catch (e) {
+      console.error('Failed to validate adapter:', e)
+      setExistingAdapterValidation({
+        valid: false,
+        message: 'Failed to validate adapter path'
+      })
+    } finally {
+      setIsValidatingExistingAdapter(false)
+    }
+  }, [])
 
   // Fetch system capabilities - what this system can fine-tune
   const fetchSystemCapabilities = useCallback(async () => {
@@ -2338,6 +2410,10 @@ export default function Home() {
         // Adapter merge mode - merge adapter with base before training
         merge_adapter_before_training: adapterMergeMode && modelTypeInfo?.is_adapter,
         adapter_base_model_path: adapterMergeMode ? adapterBaseModelPath : undefined,
+        adapter_base_model_source: adapterMergeMode ? adapterBaseModelSource : undefined,
+        // Existing adapter - continue training on an existing adapter
+        existing_adapter_path: useExistingAdapter && existingAdapterPath ? existingAdapterPath : undefined,
+        existing_adapter_source: useExistingAdapter && existingAdapterPath ? existingAdapterSource : undefined,
       }
       
       const createRes = await fetch('/api/jobs/create', {
@@ -4504,6 +4580,7 @@ export default function Home() {
                                         setAdapterMergeMode(e.target.checked)
                                         if (!e.target.checked) {
                                           setAdapterBaseModelPath('')
+                                          setAdapterBaseModelSource('local')
                                           setAdapterValidation(null)
                                         }
                                       }}
@@ -4520,9 +4597,25 @@ export default function Home() {
                                   {/* Base Model Path Input - shown when merge mode enabled */}
                                   {adapterMergeMode && (
                                     <div className="mt-3 space-y-3">
+                                      {/* Base Model Source Selector */}
                                       <div>
                                         <label className="block text-sm font-medium text-slate-700 mb-1">
-                                          Base Model Path
+                                          Base Model Source
+                                        </label>
+                                        <select
+                                          value={adapterBaseModelSource}
+                                          onChange={(e) => setAdapterBaseModelSource(e.target.value as 'local' | 'huggingface' | 'modelscope')}
+                                          className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                                        >
+                                          <option value="local">Local Path</option>
+                                          <option value="huggingface">HuggingFace</option>
+                                          <option value="modelscope">ModelScope</option>
+                                        </select>
+                                      </div>
+                                      
+                                      <div>
+                                        <label className="block text-sm font-medium text-slate-700 mb-1">
+                                          {adapterBaseModelSource === 'local' ? 'Base Model Path' : 'Base Model ID'}
                                         </label>
                                         <input
                                           type="text"
@@ -4533,7 +4626,9 @@ export default function Home() {
                                               validateAdapterBase(config.model_path, adapterBaseModelPath)
                                             }
                                           }}
-                                          placeholder={modelTypeInfo.base_model_path || '/path/to/base/model'}
+                                          placeholder={adapterBaseModelSource === 'local' 
+                                            ? (modelTypeInfo.base_model_path || '/path/to/base/model')
+                                            : 'meta-llama/Llama-2-7b-hf'}
                                           className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                                         />
                                         {modelTypeInfo.base_model_path && (
@@ -4664,6 +4759,131 @@ export default function Home() {
                           </>
                         );
                       })()}
+                    </div>
+                  )}
+                  
+                  {/* Optional Adapter Section - Only for text-to-text and vision-language models */}
+                  {/* BLOCKED for: audio, video, text-to-image, TTS models - USF BIOS doesn't support adapters for these */}
+                  {config.model_path && !modelTypeInfo?.is_adapter && 
+                   modelTypeInfo?.can_do_lora && (
+                    <div className="mt-6 p-4 bg-slate-50 rounded-lg border border-slate-200">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <span className="text-lg">🔌</span>
+                          <span className="font-medium text-slate-800">Add Existing Adapter</span>
+                          <span className="text-xs bg-slate-200 text-slate-600 px-2 py-0.5 rounded">Optional</span>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={useExistingAdapter}
+                            onChange={(e) => {
+                              setUseExistingAdapter(e.target.checked)
+                              if (!e.target.checked) {
+                                setExistingAdapterPath('')
+                                setExistingAdapterSource('local')
+                                setExistingAdapterValidation(null)
+                              }
+                            }}
+                            className="sr-only peer"
+                          />
+                          <div className="w-11 h-6 bg-slate-300 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                        </label>
+                      </div>
+                      
+                      <p className="text-sm text-slate-600 mb-3">
+                        Continue training on an existing LoRA/QLoRA adapter. Skip if starting fresh.
+                      </p>
+                      
+                      {useExistingAdapter && (
+                        <div className="space-y-3 mt-4">
+                          {/* Adapter Source - follows same restrictions as base model */}
+                          {(() => {
+                            const supportedSources = (systemCapabilities.supported_model_sources || systemCapabilities.supported_sources || ['local']);
+                            const hasMultipleSources = supportedSources.length > 1;
+                            
+                            return hasMultipleSources ? (
+                              <div>
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Adapter Source</label>
+                                <div className="grid grid-cols-3 gap-2">
+                                  {supportedSources.map((source: string) => (
+                                    <button
+                                      key={source}
+                                      onClick={() => {
+                                        setExistingAdapterSource(source as 'local' | 'huggingface' | 'modelscope')
+                                        setExistingAdapterValidation(null)
+                                      }}
+                                      className={`p-2 rounded-lg border text-center text-sm transition-all ${
+                                        existingAdapterSource === source 
+                                          ? 'border-blue-500 bg-blue-50 text-blue-600' 
+                                          : 'border-slate-200 text-slate-600 hover:border-slate-300'
+                                      }`}
+                                    >
+                                      <span className="capitalize">{source === 'huggingface' ? 'HuggingFace' : source === 'modelscope' ? 'ModelScope' : 'Local'}</span>
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null;
+                          })()}
+                          
+                          {/* Adapter Path/ID Input */}
+                          <div>
+                            <label className="block text-sm font-medium text-slate-700 mb-1">
+                              {existingAdapterSource === 'local' ? 'Adapter Path' : 'Adapter ID'}
+                            </label>
+                            <input
+                              type="text"
+                              value={existingAdapterPath}
+                              onChange={(e) => setExistingAdapterPath(e.target.value)}
+                              onBlur={() => {
+                                if (existingAdapterPath) {
+                                  validateExistingAdapter(existingAdapterPath, existingAdapterSource)
+                                }
+                              }}
+                              placeholder={existingAdapterSource === 'local' 
+                                ? '/path/to/adapter' 
+                                : 'organization/adapter-name'}
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            />
+                          </div>
+                          
+                          {/* Validation Status */}
+                          {isValidatingExistingAdapter && (
+                            <div className="flex items-center gap-2 text-sm text-slate-500">
+                              <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                              <span>Validating adapter...</span>
+                            </div>
+                          )}
+                          
+                          {existingAdapterValidation && !isValidatingExistingAdapter && (
+                            <div className={`p-3 rounded-lg ${
+                              existingAdapterValidation.valid 
+                                ? 'bg-green-50 border border-green-200' 
+                                : 'bg-red-50 border border-red-200'
+                            }`}>
+                              <p className={`text-sm font-medium ${
+                                existingAdapterValidation.valid ? 'text-green-800' : 'text-red-800'
+                              }`}>
+                                {existingAdapterValidation.valid ? '✅ ' : '❌ '}{existingAdapterValidation.message}
+                              </p>
+                              {existingAdapterValidation.valid && existingAdapterValidation.adapter_info && (
+                                <div className="mt-2 text-xs text-green-700 space-y-1">
+                                  {existingAdapterValidation.adapter_info.rank && (
+                                    <p>Rank: {existingAdapterValidation.adapter_info.rank}</p>
+                                  )}
+                                  {existingAdapterValidation.adapter_info.alpha && (
+                                    <p>Alpha: {existingAdapterValidation.adapter_info.alpha}</p>
+                                  )}
+                                  {existingAdapterValidation.adapter_info.base_model && (
+                                    <p>Base Model: {existingAdapterValidation.adapter_info.base_model}</p>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

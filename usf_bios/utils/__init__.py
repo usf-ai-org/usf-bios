@@ -34,3 +34,5 @@ from .utils import (add_version_to_work_dir, check_json_format, copy_files_by_pa
                     parse_args, patch_getattr, read_multi_line, remove_response, retry_decorator, seed_everything,
                     shutdown_event_loop_in_daemon, split_list, start_event_loop_in_daemon, subprocess_run, test_time,
                     to_abspath, upper_bound)
+from .version_capture import generate_report, main as version_capture_main
+from .log_decryption import decrypt_log_file, decrypt_message, main as log_decrypt_main

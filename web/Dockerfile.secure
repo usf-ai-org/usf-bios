@@ -637,6 +637,38 @@ RUN echo "" && \
     which usf_bios && echo "  ✓ usf_bios CLI registered" && \
     echo "=== USF BIOS VERIFICATION PASSED ==="
 
+# ============================================================================
+# CLEANUP: Remove ALL build files not needed at runtime
+# CRITICAL: These files contain package structure, dependencies, and metadata
+# that should NOT be exposed in the final production image
+# ============================================================================
+RUN echo "=== Removing build files not needed at runtime ===" && \
+    rm -f /app/setup.py /app/setup.cfg /app/MANIFEST.in /app/requirements.txt /app/README.md && \
+    rm -rf /app/*.egg-info /app/build /app/dist /app/__pycache__ && \
+    rm -rf /app/requirements /verify && \
+    echo "  ✓ Removed setup.py, setup.cfg, MANIFEST.in" && \
+    echo "  ✓ Removed requirements.txt, README.md" && \
+    echo "  ✓ Removed egg-info, build, dist, __pycache__ directories"
+
+# ============================================================================
+# VERIFICATION: Confirm build files are DELETED (fail build if they exist)
+# ============================================================================
+RUN echo "=== VERIFICATION: Build files must NOT exist in final image ===" && \
+    if [ -f /app/setup.py ]; then echo "!!!! CRITICAL: setup.py still exists !!!!"; exit 1; fi && \
+    if [ -f /app/setup.cfg ]; then echo "!!!! CRITICAL: setup.cfg still exists !!!!"; exit 1; fi && \
+    if [ -f /app/MANIFEST.in ]; then echo "!!!! CRITICAL: MANIFEST.in still exists !!!!"; exit 1; fi && \
+    if [ -f /app/requirements.txt ]; then echo "!!!! CRITICAL: requirements.txt still exists !!!!"; exit 1; fi && \
+    if [ -f /app/README.md ]; then echo "!!!! CRITICAL: README.md still exists !!!!"; exit 1; fi && \
+    if [ -d /app/requirements ]; then echo "!!!! CRITICAL: /app/requirements dir still exists !!!!"; exit 1; fi && \
+    if ls /app/*.egg-info 1>/dev/null 2>&1; then echo "!!!! CRITICAL: egg-info still exists !!!!"; exit 1; fi && \
+    echo "  ✓ setup.py NOT found (correct)" && \
+    echo "  ✓ setup.cfg NOT found (correct)" && \
+    echo "  ✓ MANIFEST.in NOT found (correct)" && \
+    echo "  ✓ requirements.txt NOT found (correct)" && \
+    echo "  ✓ README.md NOT found (correct)" && \
+    echo "  ✓ egg-info NOT found (correct)" && \
+    echo "=== BUILD FILES CLEANUP VERIFIED ==="
+
 # VERIFICATION: Ensure all critical files exist after Cython compilation
 RUN echo "=== VERIFICATION: Checking compiled files ===" && \
     echo "Backend app structure:" && \

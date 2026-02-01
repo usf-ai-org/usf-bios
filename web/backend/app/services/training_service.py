@@ -60,30 +60,8 @@ def _debug_log(job_id: str, message: str, level: str = "DEBUG"):
 
 
 # ============================================================
-# OPTIMIZED HELPER FUNCTIONS - Defined once, reused across calls
+# HELPER FUNCTIONS FOR MODEL SIZE CALCULATION
 # ============================================================
-
-# Cache for model size patterns - avoids recreating on every call
-_MODEL_SIZE_PATTERNS = [
-    ('405b', 800), ('400b', 780), ('340b', 680), ('236b', 470),
-    ('180b', 360), ('175b', 350), ('140b', 280), ('123b', 246),
-    ('100b', 200), ('90b', 180), ('80b', 160), ('72b', 144),
-    ('70b', 140), ('65b', 130), ('55b', 110),
-    ('40b', 80), ('34b', 68), ('33b', 66), ('32b', 64), ('30b', 60),
-    ('27b', 54), ('26b', 52), ('25b', 50), ('24b', 48), ('22b', 44),
-    ('20b', 40), ('14b', 28), ('13b', 26), ('12b', 24), ('11b', 22),
-    ('9b', 18), ('8b', 16), ('7b', 14), ('6b', 12),
-    ('4b', 8), ('3.8b', 8), ('3b', 6), ('2.7b', 5.5), ('2b', 4),
-    ('1.5b', 3), ('1b', 2), ('0.5b', 1), ('500m', 1),
-    ('llama-3.1-405b', 800), ('llama-3-70b', 140), ('llama-3-8b', 16),
-    ('llama-2-70b', 140), ('llama-2-13b', 26), ('llama-2-7b', 14),
-    ('mistral-7b', 14), ('mixtral-8x7b', 95), ('mixtral-8x22b', 280),
-    ('qwen2.5-72b', 144), ('qwen2.5-32b', 64), ('qwen2.5-14b', 28),
-    ('qwen2.5-7b', 14), ('qwen2.5-3b', 6), ('qwen2.5-1.5b', 3),
-    ('deepseek-v3', 680), ('deepseek-v2', 236), ('deepseek-67b', 134),
-    ('phi-3-medium', 28), ('phi-3-small', 14), ('phi-3-mini', 8),
-    ('gemma-2-27b', 54), ('gemma-2-9b', 18), ('gemma-7b', 14),
-]
 
 
 def _get_model_size_from_config(model_path: str) -> Optional[float]:
@@ -186,65 +164,261 @@ def _get_model_size_from_config(model_path: str) -> Optional[float]:
     return None
 
 
-def _estimate_model_size_from_name(model_name_or_path: str) -> float:
-    """Estimate model size in GB.
-    
-    Priority:
-    1. Read actual size from config.json with dtype detection (most accurate)
-    2. Check known model patterns
-    3. Parse size from model name (41b, 123b, etc.)
-    4. Conservative fallback (15GB)
-    
-    Handles all dtypes: float32, bfloat16, float16, int8, int4, GPTQ, AWQ, etc.
+def _get_model_size_from_directory(model_path: str, job_id: str = None) -> Optional[dict]:
     """
-    import re
+    Get model size by measuring ACTUAL directory size on disk.
     
-    # 1. Try to read actual size from config.json (if local path)
-    # This handles dtype detection automatically (float32, bf16, int8, int4, etc.)
-    if os.path.isdir(model_name_or_path):
-        size_gb = _get_model_size_from_config(model_name_or_path)
-        if size_gb:
-            return size_gb
+    This approach works for ALL model types:
+    - Text-to-text (LLMs like Llama, Mistral, Qwen)
+    - Image-to-text (Vision models like LLaVA, BLIP)
+    - Text-to-image (Diffusion models like Stable Diffusion)
+    - Audio models (Whisper, etc.)
+    - Video models
+    - Multi-modal models (any combination)
     
-    # 2. Check known patterns (for model names/IDs)
-    model_lower = model_name_or_path.lower()
-    model_basename = os.path.basename(model_name_or_path).lower()
+    Returns dict with:
+        - size_gb: Actual size on disk in GB
+        - source: 'directory'
+        - hidden_size: From config.json if available (for LoRA calculation)
+        - num_layers: From config.json if available (for LoRA calculation)
     
-    for pattern, size_gb in _MODEL_SIZE_PATTERNS:
-        if pattern in model_lower or pattern in model_basename:
-            return size_gb
+    Returns None if path doesn't exist or size cannot be determined.
+    """
+    import json
     
-    # 3. Dynamic parsing: Extract size from model name
-    # Matches: 41b, 41B, 41-b, 41_b, 41billion, 123b, etc.
-    size_patterns = [
-        r'(\d+\.?\d*)[\-_]?b(?:illion)?(?:\b|$)',  # 41b, 41B, 41-b, 41billion
-        r'(\d+\.?\d*)[\-_]?m(?:illion)?(?:\b|$)',  # 500m, 500M, 500million
-    ]
+    if not os.path.isdir(model_path):
+        return None
     
-    for check_str in [model_lower, model_basename]:
-        for pattern in size_patterns:
-            match = re.search(pattern, check_str)
-            if match:
-                size_value = float(match.group(1))
-                if 'm' in pattern:
-                    # Million parameters: ~2GB per billion params
-                    return max(size_value / 500, 0.5)
-                else:
-                    # Billion parameters: ~2GB per billion params
-                    return size_value * 2
+    # Get actual directory size - works for ANY model type
+    size_gb = _get_dir_size_gb_fast(model_path, job_id)
     
-    # 4. Conservative fallback
-    return 15
+    if size_gb <= 0:
+        return None
+    
+    # Try to get hidden_size and num_layers from config.json for LoRA calculations
+    # These are optional - if not found, we'll use defaults
+    hidden_size = 4096  # Default
+    num_layers = 32     # Default
+    
+    config_path = os.path.join(model_path, "config.json")
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+            
+            # Try various config keys used by different model architectures
+            hidden_size = config.get('hidden_size', 
+                          config.get('d_model',
+                          config.get('n_embd',
+                          config.get('dim', 4096))))
+            
+            num_layers = config.get('num_hidden_layers',
+                         config.get('n_layer',
+                         config.get('num_layers',
+                         config.get('n_layers', 32))))
+        except Exception:
+            pass
+    
+    return {
+        'size_gb': size_gb,
+        'hidden_size': hidden_size,
+        'num_layers': num_layers,
+        'source': 'directory'
+    }
+
+
+def _get_model_cache_path(model_source: str) -> str:
+    """
+    Get the cache directory path for a specific model source.
+    
+    IMPORTANT: HuggingFace and ModelScope have SEPARATE cache directories
+    to prevent any conflicts or model replacement issues.
+    
+    Structure (using short names for cleaner paths):
+    ~/.cache/usf_bios/
+    ├── hf/     <- All HuggingFace models (short for HuggingFace)
+    │   └── meta-llama_Llama-2-7b/
+    │   └── mistralai_Mistral-7B/
+    └── ms/     <- All ModelScope models (short for ModelScope)
+        └── qwen_Qwen-7B/
+        └── ZhipuAI_chatglm3-6b/
+    """
+    from pathlib import Path
+    base_cache = Path.home() / ".cache" / "usf_bios"
+    
+    if model_source == "huggingface":
+        return str(base_cache / "hf")  # Short: HuggingFace
+    elif model_source == "modelscope":
+        return str(base_cache / "ms")  # Short: ModelScope
+    else:
+        return str(base_cache / "models")
+
+
+def _download_remote_model(model_id: str, model_source: str, job_id: str = None) -> Optional[str]:
+    """
+    Download a remote model (HuggingFace/ModelScope) to local cache.
+    
+    CRITICAL DESIGN:
+    1. HuggingFace and ModelScope have SEPARATE cache directories
+       - ~/.cache/usf_bios/hf/  for HuggingFace
+       - ~/.cache/usf_bios/ms/  for ModelScope
+    2. Model is downloaded ONCE - same path used for:
+       - Size calculation
+       - Storage validation  
+       - ALL training types (SFT, RLHF, PT)
+       - ALL algorithms (DPO, PPO, GRPO, KTO, ORPO, etc.)
+       - ALL quantization methods (LoRA, QLoRA, Full)
+       - Adapter merging
+    3. If same model_id exists in both sources, they are stored separately
+    4. No conflicts, no replacements, no duplicates within same source
+    
+    Returns the local path where model is downloaded, or None if failed.
+    """
+    try:
+        # Get source-specific cache directory (SEPARATE for HF and MS)
+        cache_dir = _get_model_cache_path(model_source)
+        os.makedirs(cache_dir, exist_ok=True)
+        
+        # Create safe directory name from model_id
+        safe_model_name = model_id.replace("/", "_").replace("\\", "_")
+        local_model_dir = os.path.join(cache_dir, safe_model_name)
+        
+        if model_source == "huggingface":
+            from huggingface_hub import snapshot_download
+            
+            # Download to source-specific directory
+            # Using local_dir ensures files are in a predictable location
+            local_path = snapshot_download(
+                repo_id=model_id,
+                local_dir=local_model_dir,
+                local_dir_use_symlinks=False  # Actual files, not symlinks
+            )
+            
+            if job_id:
+                _debug_log(job_id, f"HuggingFace model downloaded to: {local_path}")
+            
+            return local_path
+            
+        elif model_source == "modelscope":
+            from modelscope import snapshot_download as ms_snapshot_download
+            
+            # ModelScope downloads to its own structure
+            local_path = ms_snapshot_download(
+                model_id=model_id,
+                cache_dir=cache_dir,
+                local_dir=local_model_dir
+            )
+            
+            if job_id:
+                _debug_log(job_id, f"ModelScope model downloaded to: {local_path}")
+            
+            return local_path
+            
+    except Exception as e:
+        if job_id:
+            _debug_log(job_id, f"Failed to download model {model_id} from {model_source}: {e}")
+    
+    return None
+
+
+def _get_model_info_universal(model_path: str, model_source: str, job_id: str = None, 
+                               download_if_remote: bool = True) -> dict:
+    """
+    Universal model info function that works for ALL model types and sources.
+    
+    Supports:
+    - LOCAL models: Measures actual directory size (works for any modality)
+    - HuggingFace models: Downloads first, then measures local size
+    - ModelScope models: Downloads first, then measures local size
+    - Adapters: Measures adapter directory size
+    
+    Works for ALL modalities:
+    - Text-to-text, Image-to-text, Text-to-image
+    - Audio-to-text, Text-to-audio, Audio-to-audio
+    - Video models, Multi-modal models
+    
+    Returns dict with:
+        - size_gb: Model size in GB
+        - hidden_size: For LoRA calculations
+        - num_layers: For LoRA calculations
+        - source: 'directory' or 'downloaded'
+        - local_path: Actual local path to use for training (important for remote models!)
+        - error: Error message if failed
+    """
+    result = {
+        'size_gb': 0,
+        'hidden_size': 4096,
+        'num_layers': 32,
+        'source': None,
+        'local_path': model_path,  # Default: use original path
+        'error': None
+    }
+    
+    # Case 1: LOCAL model - just measure directory size
+    if model_source == "local" and os.path.isdir(model_path):
+        model_info = _get_model_size_from_directory(model_path, job_id)
+        
+        if model_info:
+            result['size_gb'] = model_info['size_gb']
+            result['hidden_size'] = model_info['hidden_size']
+            result['num_layers'] = model_info['num_layers']
+            result['source'] = 'directory'
+            result['local_path'] = model_path
+            return result
+        else:
+            result['error'] = f"Cannot determine size of local model at: {model_path}"
+            return result
+    
+    # Case 2: Remote model (HuggingFace/ModelScope)
+    if model_source in ("huggingface", "modelscope"):
+        if not download_if_remote:
+            # Skip download - return placeholder for remote
+            result['source'] = 'remote_pending'
+            result['error'] = None  # Not an error, just pending
+            return result
+        
+        # Download model first
+        if job_id:
+            _debug_log(job_id, f"Downloading {model_source} model: {model_path}")
+        
+        local_path = _download_remote_model(model_path, model_source, job_id=job_id)
+        
+        if local_path and os.path.isdir(local_path):
+            # Now measure the downloaded model's size
+            model_info = _get_model_size_from_directory(local_path, job_id)
+            
+            if model_info:
+                result['size_gb'] = model_info['size_gb']
+                result['hidden_size'] = model_info['hidden_size']
+                result['num_layers'] = model_info['num_layers']
+                result['source'] = 'downloaded'
+                result['local_path'] = local_path  # Use downloaded path for training!
+                return result
+        
+        result['error'] = f"Failed to download model from {model_source}: {model_path}"
+        return result
+    
+    # Unknown source
+    result['error'] = f"Unknown model source: {model_source}"
+    return result
 
 
 def _get_dir_size_gb_fast(path: str, job_id: str = None, timeout_seconds: int = 10) -> float:
-    """Get directory size in GB using fast 'du' command with timeout."""
+    """Get directory size in GB - tries multiple methods for reliability.
+    
+    Methods (in order of preference):
+    1. 'du' command - fast, accurate on Unix systems
+    2. Python os.walk() - slower but always works, cross-platform
+    
+    Returns size in GB, or 0 if cannot determine.
+    """
     import subprocess
     import platform
     
     if not os.path.exists(path):
         return 0
     
+    # Method 1: Try 'du' command first (fast)
     try:
         if platform.system() == 'Darwin':  # macOS
             result = subprocess.run(
@@ -264,27 +438,278 @@ def _get_dir_size_gb_fast(path: str, job_id: str = None, timeout_seconds: int = 
                 return size_bytes / (1024 ** 3)
     except subprocess.TimeoutExpired:
         if job_id:
-            _debug_log(job_id, f"du command timed out for {path}, using estimation")
+            _debug_log(job_id, f"du command timed out, falling back to Python method")
     except Exception as e:
         if job_id:
-            _debug_log(job_id, f"du command failed: {e}, using estimation")
+            _debug_log(job_id, f"du command failed: {e}, falling back to Python method")
     
-    return _estimate_model_size_from_name(os.path.basename(path))
+    # Method 2: Fallback to Python os.walk() - reliable but slower
+    try:
+        total_size = 0
+        for dirpath, dirnames, filenames in os.walk(path):
+            for filename in filenames:
+                filepath = os.path.join(dirpath, filename)
+                try:
+                    total_size += os.path.getsize(filepath)
+                except (OSError, IOError):
+                    pass  # Skip files we can't access
+        return total_size / (1024 ** 3)
+    except Exception as e:
+        if job_id:
+            _debug_log(job_id, f"Python size calculation also failed: {e}")
+    
+    return 0  # Return 0 if all methods fail
+
+
+async def _get_dir_size_gb_async(path: str, job_id: str = None, timeout_seconds: int = 5) -> float:
+    """Async version: Get directory size in GB without blocking the event loop.
+    
+    Uses asyncio.to_thread() to run the blocking 'du' command in a thread pool.
+    Falls back to estimation from model name if du fails or times out.
+    """
+    import asyncio
+    
+    try:
+        # Run blocking du command in thread pool with overall timeout
+        size = await asyncio.wait_for(
+            asyncio.to_thread(_get_dir_size_gb_fast, path, job_id, timeout_seconds),
+            timeout=timeout_seconds + 2  # Extra buffer for thread overhead
+        )
+        return size
+    except asyncio.TimeoutError:
+        if job_id:
+            _debug_log(job_id, f"Async du timed out for {path}")
+        return 0  # Return 0 if cannot determine size
+    except Exception as e:
+        if job_id:
+            _debug_log(job_id, f"Async du failed: {e}")
+        return 0  # Return 0 if cannot determine size
 
 
 def _get_available_space_gb(path: str) -> float:
-    """Get available disk space in GB for a path."""
+    """Get available disk space in GB for a path (instant, uses shutil.disk_usage).
+    
+    SAFETY: Uses iteration limit to prevent infinite loops in edge cases.
+    """
     import shutil
     try:
         check_path = path
-        while not os.path.exists(check_path) and check_path != '/':
-            check_path = os.path.dirname(check_path)
-        if not check_path:
+        max_iterations = 100  # Safety limit to prevent infinite loops
+        iterations = 0
+        
+        while not os.path.exists(check_path) and check_path != '/' and iterations < max_iterations:
+            parent = os.path.dirname(check_path)
+            if parent == check_path:  # Reached root or stuck
+                break
+            check_path = parent
+            iterations += 1
+        
+        if not check_path or not os.path.exists(check_path):
             check_path = '/'
+        
         usage = shutil.disk_usage(check_path)
         return usage.free / (1024 ** 3)
     except Exception:
         return -1
+
+
+
+
+def _calculate_lora_adapter_size(hidden_size: int, num_layers: int, lora_rank: int, 
+                                  lora_alpha: int = None, target_modules: list = None) -> float:
+    """
+    Calculate LoRA adapter size in GB.
+    
+    LoRA adds low-rank matrices A and B to target modules.
+    Size = 2 * rank * hidden_size * num_target_modules * num_layers * bytes_per_param
+    
+    Default target modules: q_proj, k_proj, v_proj, o_proj (4 modules per layer)
+    """
+    if not hidden_size or not num_layers or not lora_rank:
+        return 0.5  # Default minimum
+    
+    # Default: 4 attention projections per layer
+    num_target_modules = len(target_modules) if target_modules else 4
+    
+    # LoRA matrices: A (hidden x rank) and B (rank x hidden) for each target
+    params_per_layer = 2 * lora_rank * hidden_size * num_target_modules
+    total_params = params_per_layer * num_layers
+    
+    # LoRA adapters are typically saved in fp16/bf16 (2 bytes)
+    size_gb = (total_params * 2) / (1024 ** 3)
+    
+    return max(size_gb, 0.01)  # Minimum 10MB
+
+
+def _calculate_storage_requirements(config, model_path: str, model_source: str,
+                                    merge_enabled: bool, adapter_base_path: str = None,
+                                    job_id: str = None) -> dict:
+    """
+    Calculate accurate storage requirements for training.
+    
+    Uses ACTUAL directory size for local models (works for ALL model types):
+    - Text-to-text, Image-to-text, Text-to-image
+    - Audio models, Video models, Multi-modal models
+    
+    For remote models (HuggingFace/ModelScope): Downloads first, then calculates.
+    
+    Returns dict with:
+        - temp_required_gb: space needed in temp dir (only for merge)
+        - output_required_gb: space needed in output dir
+        - model_info: dict with model size details
+        - checkpoint_info: dict with checkpoint calculation details
+        - breakdown: list of human-readable breakdown
+        - local_model_path: Actual local path to use for training (important for remote!)
+        - error: error message if failed
+    """
+    import tempfile
+    
+    result = {
+        'temp_required_gb': 0,
+        'output_required_gb': 0,
+        'model_info': None,
+        'checkpoint_info': {},
+        'breakdown': [],
+        'local_model_path': model_path,  # Default to original path
+        'error': None
+    }
+    
+    # Get training parameters from config
+    train_type = getattr(config, 'train_type', None)
+    train_type_value = train_type.value if hasattr(train_type, 'value') else str(train_type)
+    output_dir = getattr(config, 'output_dir', 'output') or 'output'
+    
+    # LoRA parameters
+    lora_rank = getattr(config, 'lora_rank', 8) or 8
+    lora_alpha = getattr(config, 'lora_alpha', 16) or 16
+    lora_target = getattr(config, 'lora_target', None)
+    
+    # Checkpoint parameters
+    save_steps = getattr(config, 'save_steps', None)
+    save_total_limit = getattr(config, 'save_total_limit', None)
+    num_train_epochs = getattr(config, 'num_train_epochs', 1) or 1
+    
+    # =====================================================
+    # 1. GET MODEL SIZE (works for ALL model types/modalities)
+    # Uses actual directory size - no architecture-specific parsing
+    # =====================================================
+    model_info = None
+    check_path = None
+    
+    if merge_enabled and adapter_base_path:
+        # For merge: use base model path
+        check_path = adapter_base_path
+        model_info = _get_model_size_from_directory(adapter_base_path, job_id)
+    elif model_source == 'local' and os.path.isdir(model_path):
+        # LOCAL model: measure actual directory size
+        check_path = model_path
+        model_info = _get_model_size_from_directory(model_path, job_id)
+    elif model_source in ('huggingface', 'modelscope'):
+        # REMOTE model: download first, then measure
+        # This ensures NO duplicate downloads - same path used for training
+        universal_info = _get_model_info_universal(
+            model_path, model_source, job_id=job_id, download_if_remote=True
+        )
+        
+        if universal_info.get('error'):
+            result['error'] = universal_info['error']
+            return result
+        
+        if universal_info.get('source') == 'downloaded':
+            model_info = {
+                'size_gb': universal_info['size_gb'],
+                'hidden_size': universal_info['hidden_size'],
+                'num_layers': universal_info['num_layers'],
+                'source': 'downloaded'
+            }
+            # IMPORTANT: Update local_model_path for training to use!
+            result['local_model_path'] = universal_info['local_path']
+            check_path = universal_info['local_path']
+        else:
+            # Download pending or failed
+            result['model_info'] = {
+                'size_gb': 0,
+                'hidden_size': 0,
+                'num_layers': 0,
+                'source': 'remote_skip'
+            }
+            result['breakdown'].append("Model: Remote model - storage validation skipped")
+            result['output_required_gb'] = 0
+            return result
+    else:
+        result['error'] = f"Unknown model source or invalid path: {model_source}"
+        return result
+    
+    # Check if we got model info
+    if model_info is None or model_info.get('size_gb', 0) <= 0:
+        result['error'] = (
+            f"Cannot determine model size.\n"
+            f"Please ensure the model directory exists and is accessible."
+        )
+        return result
+    
+    result['model_info'] = model_info
+    result['breakdown'].append(f"Model: {model_info['size_gb']:.1f}GB (actual size on disk)")
+    
+    # =====================================================
+    # 2. TEMP DIRECTORY (ONLY FOR MERGE)
+    # =====================================================
+    if merge_enabled and adapter_base_path:
+        # Merged model will be saved in fp16/bf16
+        merge_size = model_info['size_gb'] * 1.1  # 10% buffer
+        result['temp_required_gb'] = merge_size
+        result['breakdown'].append(f"Temp (merge): {merge_size:.1f}GB (merged model + buffer)")
+    
+    # =====================================================
+    # 3. OUTPUT DIRECTORY
+    # =====================================================
+    
+    # Estimate number of checkpoints
+    # Default assumption: 3 checkpoints during training + final
+    if save_total_limit:
+        num_checkpoints = save_total_limit
+    else:
+        num_checkpoints = 4  # Conservative default
+    
+    result['checkpoint_info'] = {
+        'num_checkpoints': num_checkpoints,
+        'save_total_limit': save_total_limit,
+        'train_type': train_type_value
+    }
+    
+    if train_type_value in ['lora', 'qlora', 'adalora']:
+        # LoRA: small adapter checkpoints
+        adapter_size = _calculate_lora_adapter_size(
+            hidden_size=model_info.get('hidden_size', 4096),
+            num_layers=model_info.get('num_layers', 32),
+            lora_rank=lora_rank,
+            lora_alpha=lora_alpha,
+            target_modules=lora_target.split(',') if isinstance(lora_target, str) else lora_target
+        )
+        output_size = adapter_size * num_checkpoints
+        result['checkpoint_info']['checkpoint_size_gb'] = adapter_size
+        result['breakdown'].append(f"Output (LoRA r={lora_rank}): {num_checkpoints} checkpoints × {adapter_size:.2f}GB = {output_size:.1f}GB")
+    else:
+        # Full fine-tuning: full model checkpoints
+        checkpoint_size = model_info['size_gb']
+        output_size = checkpoint_size * num_checkpoints
+        result['checkpoint_info']['checkpoint_size_gb'] = checkpoint_size
+        result['breakdown'].append(f"Output (Full): {num_checkpoints} checkpoints × {checkpoint_size:.1f}GB = {output_size:.1f}GB")
+    
+    # Add buffer for optimizer states (full training only) and logs
+    if train_type_value == 'full':
+        # Optimizer states can be 2-3x model size for Adam
+        optimizer_overhead = model_info['size_gb'] * 2
+        output_size += optimizer_overhead
+        result['breakdown'].append(f"Optimizer states: ~{optimizer_overhead:.1f}GB")
+    
+    # Logs and misc
+    output_size += 0.5  # 500MB for logs, metrics, etc.
+    result['breakdown'].append("Logs & metrics: ~0.5GB")
+    
+    result['output_required_gb'] = output_size
+    
+    return result
 
 
 def _log_step(job_id: str, step_name: str, details: dict = None, level: str = "INFO"):
@@ -581,6 +1006,12 @@ class TrainingService:
         if resume_from_checkpoint:
             cmd.extend(["--resume_from_checkpoint", resume_from_checkpoint])
         
+        # Existing adapter - continue training on an existing LoRA/QLoRA adapter
+        # USF BIOS uses --adapters argument to load existing adapters for continued training
+        existing_adapter = getattr(config, 'existing_adapter_path', None)
+        if existing_adapter and train_type_value in ["lora", "qlora", "adalora"]:
+            cmd.extend(["--adapters", existing_adapter])
+        
         # LoRA parameters (LoRA, QLoRA, AdaLoRA all use lora params)
         if train_type_value in ["lora", "adalora"]:
             cmd.extend([
@@ -834,17 +1265,21 @@ class TrainingService:
         return metrics
     
     async def run_training(self, job_id: str) -> None:
-        """Run the training process"""
+        """Run the training process with comprehensive step-by-step logging."""
         _log_step(job_id, "TRAINING_START", {"action": "run_training called"})
         
-        # IMMEDIATELY write to terminal log - this should ALWAYS appear
-        sanitized_log_service.create_terminal_log(job_id, "Training task started - preparing environment...", "INFO")
+        # STEP 1: IMMEDIATELY write to terminal log - this should ALWAYS appear
+        sanitized_log_service.create_terminal_log(job_id, "[Step 1/12] Training task started - preparing environment...", "INFO")
         
+        # STEP 2: Load job from job manager
+        sanitized_log_service.create_terminal_log(job_id, "[Step 2/12] Loading job configuration...", "INFO")
+        _log_step(job_id, "LOAD_JOB", {"action": "fetching job from job_manager"})
         job = await job_manager.get_job(job_id)
         if not job:
-            _log_step(job_id, "TRAINING_START", {"error": "Job not found in job_manager"}, "ERROR")
-            sanitized_log_service.create_terminal_log(job_id, "ERROR: Job not found - training cannot proceed", "ERROR")
+            _log_step(job_id, "LOAD_JOB_FAILED", {"error": "Job not found in job_manager"}, "ERROR")
+            sanitized_log_service.create_terminal_log(job_id, "ERROR: Job not found in system - training cannot proceed. Job may have been deleted.", "ERROR")
             return
+        sanitized_log_service.create_terminal_log(job_id, f"[Step 2/12] ✓ Job loaded: {job.name}", "INFO")
         
         # Log complete job configuration
         _log_step(job_id, "JOB_CONFIG", {
@@ -866,9 +1301,9 @@ class TrainingService:
         })
         
         # ============================================================
-        # PRE-TRAINING GPU CLEANUP: Ensure GPU memory is clean
-        # This prevents OOM errors from previous training runs
+        # STEP 3: PRE-TRAINING GPU CLEANUP
         # ============================================================
+        sanitized_log_service.create_terminal_log(job_id, "[Step 3/12] Cleaning GPU memory from previous runs...", "INFO")
         _log_step(job_id, "GPU_CLEANUP_START", {"phase": "pre-training"})
         try:
             cleanup_result = await gpu_cleanup_service.async_deep_cleanup(
@@ -881,34 +1316,32 @@ class TrainingService:
                 "memory_before": cleanup_result.get("memory_before", {}),
                 "memory_after": cleanup_result.get("memory_after", {}),
             })
-            if cleanup_result.get("success"):
-                freed_gb = cleanup_result.get("memory_freed_gb", 0)
-                if freed_gb > 0:
-                    sanitized_log_service.create_terminal_log(
-                        job_id, 
-                        f"GPU cleanup freed {freed_gb}GB VRAM", 
-                        "INFO"
-                    )
+            freed_gb = cleanup_result.get("memory_freed_gb", 0)
+            if freed_gb > 0:
+                sanitized_log_service.create_terminal_log(job_id, f"[Step 3/12] ✓ GPU cleanup freed {freed_gb:.1f}GB VRAM", "INFO")
+            else:
+                sanitized_log_service.create_terminal_log(job_id, "[Step 3/12] ✓ GPU memory is clean", "INFO")
         except Exception as cleanup_err:
             _log_step(job_id, "GPU_CLEANUP_ERROR", {"error": str(cleanup_err)}, "WARN")
+            sanitized_log_service.create_terminal_log(job_id, f"[Step 3/12] Warning: GPU cleanup failed ({str(cleanup_err)[:50]}), continuing anyway...", "WARN")
         
         try:
-            # Update status
+            # ============================================================
+            # STEP 4: UPDATE JOB STATUS TO INITIALIZING
+            # ============================================================
+            sanitized_log_service.create_terminal_log(job_id, "[Step 4/12] Setting job status to INITIALIZING...", "INFO")
             _log_step(job_id, "STATUS_UPDATE", {"status": "INITIALIZING"})
-            sanitized_log_service.create_terminal_log(job_id, "Setting job status to INITIALIZING...", "INFO")
             await job_manager.update_job(job_id, 
                 status=JobStatus.INITIALIZING,
                 started_at=datetime.now()
             )
             await ws_manager.send_status(job_id, "initializing")
-            
-            # Write to terminal log file FIRST (this is what frontend polls)
-            sanitized_log_service.create_terminal_log(job_id, "Initializing training environment...", "INFO")
-            await ws_manager.send_log(job_id, "Initializing training environment...")
+            sanitized_log_service.create_terminal_log(job_id, "[Step 4/12] \u2713 Job status updated", "INFO")
             
             # ============================================================
-            # PRE-TRAINING VALIDATION - Catch issues early
+            # STEP 5: VALIDATE MODEL AND DATASET PATHS
             # ============================================================
+            sanitized_log_service.create_terminal_log(job_id, "[Step 5/12] Validating model and dataset paths...", "INFO")
             _log_step(job_id, "VALIDATION_START", {"phase": "pre-training validation"})
             validation_errors = []
             
@@ -995,6 +1428,7 @@ class TrainingService:
                     "errors": validation_errors,
                     "error_count": len(validation_errors),
                 }, "ERROR")
+                sanitized_log_service.create_terminal_log(job_id, f"[Step 5/12] FAILED - Validation errors found", "ERROR")
                 sanitized_log_service.create_terminal_log(job_id, f"ERROR: {error_msg}", "ERROR")
                 await ws_manager.send_log(job_id, f"ERROR: {error_msg}")
                 await job_manager.add_log(job_id, f"ERROR: {error_msg}")
@@ -1008,228 +1442,455 @@ class TrainingService:
                 return
             
             _log_step(job_id, "VALIDATION_PASSED", {"phase": "pre-training validation complete"})
-            
-            # Note: Don't show validation message or command to user - internal details
+            sanitized_log_service.create_terminal_log(job_id, "[Step 5/12] \u2713 Model and dataset paths validated", "INFO")
             
             # ============================================================
-            # STORAGE SPACE VALIDATION - Ensure enough disk space
-            # Uses optimized helper functions defined at module level
-            # Wrapped in try-catch to ensure all errors are logged
+            # STEP 6: STORAGE SPACE VALIDATION (Accurate, Parameter-Based)
             # ============================================================
-            _log_step(job_id, "STORAGE_VALIDATION_START", {"phase": "storage space check"})
+            sanitized_log_service.create_terminal_log(job_id, "[Step 6/12] Calculating storage requirements...", "INFO")
+            _log_step(job_id, "STORAGE_VALIDATION_START", {"phase": "accurate storage calculation"})
             
             try:
-                # Use optimized module-level functions
-                get_dir_size_gb = lambda path: _get_dir_size_gb_fast(path, job_id)
-                get_available_space_gb = _get_available_space_gb
-                estimate_model_size_from_name = _estimate_model_size_from_name
-                
-                _log_step(job_id, "STORAGE_VALIDATION_CONFIG", {
-                    "merge_enabled": getattr(config, 'merge_adapter_before_training', False),
-                    "adapter_base_path": getattr(config, 'adapter_base_model_path', None),
-                    "output_dir": getattr(config, 'output_dir', 'output') or 'output',
-                    "train_type": str(getattr(config, 'train_type', None)),
-                })
+                import tempfile
+                import traceback as tb
                 
                 merge_enabled = getattr(config, 'merge_adapter_before_training', False)
                 adapter_base_path = getattr(config, 'adapter_base_model_path', None)
-                output_dir = getattr(config, 'output_dir', 'output') or 'output'
-                train_type = getattr(config, 'train_type', None)
-                train_type_value = train_type.value if hasattr(train_type, 'value') else str(train_type)
-                
-                # Estimate required space
-                required_space_gb = 0
-                space_breakdown = []
-                
-                # Get base model size (for merge or training)
-                base_model_size_gb = 0
-                adapter_size_gb = 0
-                
-                # 1. Calculate adapter size (if merge mode - adapter is the model_path)
-                if merge_enabled and adapter_base_path:
-                    # model_path is the adapter in merge mode
-                    if os.path.exists(model_path):
-                        adapter_size_gb = get_dir_size_gb(model_path)
-                        space_breakdown.append(f"Adapter size: {adapter_size_gb:.2f}GB")
-                    
-                    # Get base model size
-                    if os.path.exists(adapter_base_path):
-                        # Local path - get actual size
-                        base_model_size_gb = get_dir_size_gb(adapter_base_path)
-                        space_breakdown.append(f"Base model size: {base_model_size_gb:.1f}GB (from disk)")
-                    else:
-                        # HuggingFace or remote - estimate from name
-                        base_model_size_gb = estimate_model_size_from_name(adapter_base_path)
-                        space_breakdown.append(f"Base model size: ~{base_model_size_gb:.1f}GB (estimated from name)")
-                    
-                    # Merged model = base model size (adapter weights are fused in)
-                    merge_space = base_model_size_gb * 1.1  # 10% buffer for safety
-                    required_space_gb += merge_space
-                    space_breakdown.append(f"Merged model output: ~{merge_space:.1f}GB")
-                
-                # 2. Get model size for training output estimation
-                if base_model_size_gb == 0:
-                    # Not merge mode - model_path is the base model
-                    if model_source == 'local' and os.path.exists(model_path):
-                        base_model_size_gb = get_dir_size_gb(model_path)
-                        space_breakdown.append(f"Model size: {base_model_size_gb:.1f}GB (from disk)")
-                    else:
-                        # HuggingFace/ModelScope - estimate from name
-                        base_model_size_gb = estimate_model_size_from_name(model_path)
-                        space_breakdown.append(f"Model size: ~{base_model_size_gb:.1f}GB (estimated)")
-                
-                # 3. Estimate training output size based on calculated model size
-                # Full fine-tuning creates full model checkpoints
-                # LoRA creates small adapter checkpoints
-                if train_type_value == 'full':
-                    # Full checkpoints: ~3 checkpoints + final model = 4x model size
-                    output_space = base_model_size_gb * 4
-                    required_space_gb += output_space
-                    space_breakdown.append(f"Training output (full, 4 checkpoints): ~{output_space:.1f}GB")
-                elif train_type_value in ['lora', 'qlora', 'adalora']:
-                    # LoRA adapters are small (typically 10-500MB per checkpoint)
-                    # Size depends on rank - estimate ~1-2% of model size per checkpoint
-                    lora_rank = getattr(config, 'lora_rank', 8)
-                    # Higher rank = larger adapters
-                    adapter_checkpoint_size = base_model_size_gb * 0.02 * (lora_rank / 8)  # Scale by rank
-                    output_space = max(adapter_checkpoint_size * 4, 2)  # At least 2GB, 4 checkpoints
-                    required_space_gb += output_space
-                    space_breakdown.append(f"Training output (LoRA r={lora_rank}): ~{output_space:.1f}GB")
+                adapter_base_source = getattr(config, 'adapter_base_model_source', None)
+                if adapter_base_source and hasattr(adapter_base_source, 'value'):
+                    adapter_base_source = adapter_base_source.value
                 else:
-                    # Unknown train type - be conservative
-                    output_space = base_model_size_gb * 2
-                    required_space_gb += output_space
-                    space_breakdown.append(f"Training output: ~{output_space:.1f}GB (estimated)")
+                    adapter_base_source = str(adapter_base_source) if adapter_base_source else 'local'
+                output_dir = getattr(config, 'output_dir', 'output') or 'output'
                 
-                # 4. Add buffer for logs, temporary files, etc.
-                required_space_gb += 2
-                space_breakdown.append("Logs & temp files: ~2GB")
+                # Get existing adapter settings (for continuing training on adapter)
+                existing_adapter_path = getattr(config, 'existing_adapter_path', None)
+                existing_adapter_source = getattr(config, 'existing_adapter_source', None)
+                if existing_adapter_source and hasattr(existing_adapter_source, 'value'):
+                    existing_adapter_source = existing_adapter_source.value
+                else:
+                    existing_adapter_source = str(existing_adapter_source) if existing_adapter_source else 'local'
                 
                 # ============================================================
-                # CHECK STORAGE AT EACH PATH SEPARATELY
-                # Different paths may be on different drives with different space
+                # VALIDATE EXISTING ADAPTER (if provided)
+                # Only allowed for LoRA/QLoRA training on supported models
                 # ============================================================
-                storage_checks = []
-                
-                # Check 1: Merge storage (only if merge mode enabled)
-                if merge_enabled and adapter_base_path:
-                    import tempfile
-                    temp_dir = tempfile.gettempdir()
-                    merge_space_needed = base_model_size_gb * 1.1  # Merged model size
-                    temp_space_available = get_available_space_gb(temp_dir)
+                if existing_adapter_path:
+                    train_type_val = config.train_type.value if hasattr(config.train_type, 'value') else str(config.train_type)
                     
-                    storage_checks.append({
-                        'path': temp_dir,
-                        'purpose': 'Adapter merge (temp)',
-                        'required_gb': merge_space_needed,
-                        'available_gb': temp_space_available
-                    })
+                    # Block adapter for full fine-tuning (doesn't make sense)
+                    if train_type_val == 'full':
+                        error_msg = "Cannot use existing adapter with full fine-tuning. Use LoRA or QLoRA instead."
+                        _log_step(job_id, "ADAPTER_VALIDATION_FAILED", {"error": error_msg}, "ERROR")
+                        sanitized_log_service.create_terminal_log(job_id, f"[Step 6/12] FAILED - {error_msg}", "ERROR")
+                        await job_manager.update_job(job_id, status=JobStatus.FAILED, error=error_msg, completed_at=datetime.now())
+                        await ws_manager.send_status(job_id, "failed")
+                        return
                     
-                    if temp_space_available >= 0 and temp_space_available < merge_space_needed:
-                        validation_errors.append(
-                            f"Insufficient disk space for adapter merge.\n"
-                            f"  Path: {temp_dir}\n"
-                            f"  Available: {temp_space_available:.1f}GB\n"
-                            f"  Required for merged model: ~{merge_space_needed:.1f}GB\n"
-                            f"  Tip: Set TMPDIR environment variable to use a different temp directory."
-                        )
-                    else:
+                    # Validate adapter path exists (for local)
+                    if existing_adapter_source == 'local':
+                        if not os.path.isdir(existing_adapter_path):
+                            error_msg = f"Existing adapter path does not exist: {existing_adapter_path}"
+                            _log_step(job_id, "ADAPTER_NOT_FOUND", {"error": error_msg}, "ERROR")
+                            sanitized_log_service.create_terminal_log(job_id, f"[Step 6/12] FAILED - {error_msg}", "ERROR")
+                            await job_manager.update_job(job_id, status=JobStatus.FAILED, error=error_msg, completed_at=datetime.now())
+                            await ws_manager.send_status(job_id, "failed")
+                            return
+                        
+                        # Check adapter_config.json exists
+                        adapter_config_file = os.path.join(existing_adapter_path, 'adapter_config.json')
+                        if not os.path.isfile(adapter_config_file):
+                            error_msg = f"Not a valid adapter: missing adapter_config.json in {existing_adapter_path}"
+                            _log_step(job_id, "INVALID_ADAPTER", {"error": error_msg}, "ERROR")
+                            sanitized_log_service.create_terminal_log(job_id, f"[Step 6/12] FAILED - {error_msg}", "ERROR")
+                            await job_manager.update_job(job_id, status=JobStatus.FAILED, error=error_msg, completed_at=datetime.now())
+                            await ws_manager.send_status(job_id, "failed")
+                            return
+                        
+                        # Check adapter has content (size > 0)
+                        adapter_size = _get_dir_size_gb_fast(existing_adapter_path, job_id, timeout_seconds=5)
+                        if adapter_size <= 0:
+                            error_msg = f"Adapter appears to be empty or inaccessible: {existing_adapter_path}"
+                            _log_step(job_id, "EMPTY_ADAPTER", {"error": error_msg}, "ERROR")
+                            sanitized_log_service.create_terminal_log(job_id, f"[Step 6/12] FAILED - {error_msg}", "ERROR")
+                            await job_manager.update_job(job_id, status=JobStatus.FAILED, error=error_msg, completed_at=datetime.now())
+                            await ws_manager.send_status(job_id, "failed")
+                            return
+                        
+                        _log_step(job_id, "ADAPTER_VALIDATED", {
+                            "adapter_path": existing_adapter_path,
+                            "size_gb": adapter_size,
+                        })
+                        sanitized_log_service.create_terminal_log(job_id, f"[Step 6/12] ✓ Existing adapter validated", "INFO")
+                    
+                    elif existing_adapter_source in ('huggingface', 'modelscope'):
+                        # Download adapter from remote
                         sanitized_log_service.create_terminal_log(
-                            job_id,
-                            f"Merge storage OK: {temp_space_available:.1f}GB available at {temp_dir}",
-                            "INFO"
+                            job_id, f"[Step 6/12] Downloading existing adapter from {existing_adapter_source}...", "INFO"
                         )
+                        adapter_local_path = _download_remote_model(
+                            existing_adapter_path, existing_adapter_source, job_id=job_id
+                        )
+                        if adapter_local_path and os.path.isdir(adapter_local_path):
+                            existing_adapter_path = adapter_local_path
+                            config.existing_adapter_path = adapter_local_path
+                            _log_step(job_id, "ADAPTER_DOWNLOADED", {"local_path": adapter_local_path})
+                            sanitized_log_service.create_terminal_log(job_id, f"[Step 6/12] ✓ Adapter downloaded", "INFO")
+                        else:
+                            error_msg = f"Failed to download adapter from {existing_adapter_source}"
+                            _log_step(job_id, "ADAPTER_DOWNLOAD_FAILED", {"error": error_msg}, "ERROR")
+                            sanitized_log_service.create_terminal_log(job_id, f"[Step 6/12] FAILED - {error_msg}", "ERROR")
+                            await job_manager.update_job(job_id, status=JobStatus.FAILED, error=error_msg, completed_at=datetime.now())
+                            await ws_manager.send_status(job_id, "failed")
+                            return
                 
-                # Check 2: Output directory for checkpoints and final model
-                output_space_needed = output_space + 2  # Training output + logs buffer
-                output_space_available = get_available_space_gb(output_dir)
+                # ============================================================
+                # HANDLE BASE MODEL FOR ADAPTER MERGE (can be different source)
+                # Base model and adapter can be from different sources:
+                # - Adapter (model_path): local, HuggingFace, or ModelScope
+                # - Base model (adapter_base_path): local, HuggingFace, or ModelScope
+                # ============================================================
+                if merge_enabled and adapter_base_path:
+                    if adapter_base_source in ('huggingface', 'modelscope'):
+                        # Download base model if it's remote
+                        sanitized_log_service.create_terminal_log(
+                            job_id, f"[Step 6/12] Downloading base model from {adapter_base_source}...", "INFO"
+                        )
+                        _log_step(job_id, "DOWNLOADING_BASE_MODEL", {
+                            "base_model_id": adapter_base_path,
+                            "source": adapter_base_source,
+                        })
+                        
+                        base_local_path = _download_remote_model(
+                            adapter_base_path, adapter_base_source, job_id=job_id
+                        )
+                        
+                        if base_local_path and os.path.isdir(base_local_path):
+                            _log_step(job_id, "BASE_MODEL_DOWNLOADED", {
+                                "original_id": adapter_base_path,
+                                "local_path": base_local_path,
+                            })
+                            sanitized_log_service.create_terminal_log(
+                                job_id, f"[Step 6/12] Base model downloaded successfully", "INFO"
+                            )
+                            # Update to use local path
+                            adapter_base_path = base_local_path
+                            job.config.adapter_base_model_path = base_local_path
+                        else:
+                            error_msg = f"Failed to download base model from {adapter_base_source}: {adapter_base_path}"
+                            _log_step(job_id, "BASE_MODEL_DOWNLOAD_FAILED", {
+                                "error": error_msg,
+                            }, "ERROR")
+                            sanitized_log_service.create_terminal_log(job_id, f"[Step 6/12] FAILED - {error_msg}", "ERROR")
+                            await job_manager.update_job(job_id,
+                                status=JobStatus.FAILED,
+                                error=error_msg,
+                                completed_at=datetime.now()
+                            )
+                            await ws_manager.send_status(job_id, "failed")
+                            return
+                    elif adapter_base_source == 'local':
+                        # Validate local base model path exists
+                        if not os.path.isdir(adapter_base_path):
+                            error_msg = f"Base model path does not exist: {adapter_base_path}"
+                            _log_step(job_id, "BASE_MODEL_NOT_FOUND", {
+                                "error": error_msg,
+                                "path": adapter_base_path,
+                            }, "ERROR")
+                            sanitized_log_service.create_terminal_log(job_id, f"[Step 6/12] FAILED - {error_msg}", "ERROR")
+                            await job_manager.update_job(job_id,
+                                status=JobStatus.FAILED,
+                                error=error_msg,
+                                completed_at=datetime.now()
+                            )
+                            await ws_manager.send_status(job_id, "failed")
+                            return
                 
-                storage_checks.append({
-                    'path': output_dir,
-                    'purpose': 'Training output (checkpoints)',
-                    'required_gb': output_space_needed,
-                    'available_gb': output_space_available
-                })
+                # Calculate accurate storage requirements based on actual model size
+                sanitized_log_service.create_terminal_log(job_id, "[Step 6/12] Calculating model size...", "INFO")
+                storage_req = _calculate_storage_requirements(
+                    config=config,
+                    model_path=model_path,
+                    model_source=model_source,
+                    merge_enabled=merge_enabled,
+                    adapter_base_path=adapter_base_path,
+                    job_id=job_id
+                )
                 
-                if output_space_available >= 0 and output_space_available < output_space_needed:
-                    validation_errors.append(
-                        f"Insufficient disk space for training output.\n"
-                        f"  Path: {output_dir}\n"
-                        f"  Available: {output_space_available:.1f}GB\n"
-                        f"  Required: ~{output_space_needed:.1f}GB\n"
-                        f"  Breakdown:\n    " + "\n    ".join(space_breakdown) + "\n"
-                        f"  Tip: Change the output directory or free up disk space."
-                    )
-                elif output_space_available >= 0:
-                    sanitized_log_service.create_terminal_log(
-                        job_id,
-                        f"Output storage OK: {output_space_available:.1f}GB available at {output_dir}",
-                        "INFO"
-                    )
-                
-                # Log total storage summary
-                if not validation_errors:
-                    total_required = sum(c['required_gb'] for c in storage_checks)
-                    _log_step(job_id, "STORAGE_VALIDATION_PASSED", {
-                        "total_required_gb": total_required,
-                        "storage_checks": storage_checks,
+                # IMPORTANT: If remote model was downloaded, use the local path for training
+                # This prevents duplicate downloads - same path used for size calc AND training
+                if storage_req.get('local_model_path') and storage_req['local_model_path'] != model_path:
+                    downloaded_path = storage_req['local_model_path']
+                    original_source = model_source  # Save for logging
+                    _log_step(job_id, "REMOTE_MODEL_DOWNLOADED", {
+                        "original_id": model_path,
+                        "original_source": original_source,
+                        "local_path": downloaded_path,
                     })
                     sanitized_log_service.create_terminal_log(
-                        job_id,
-                        f"✓ Storage check passed. Total required: ~{total_required:.1f}GB",
-                        "INFO"
+                        job_id, f"[Step 6/12] Model downloaded and ready for training", "INFO"
                     )
-                    await ws_manager.send_log(job_id, f"✓ Storage check passed (~{total_required:.1f}GB needed)")
+                    # Update ALL references to ensure training uses local path
+                    # This is CRITICAL to prevent duplicate downloads during actual training
+                    # 1. Update local variables
+                    model_path = downloaded_path
+                    model_source = "local"
+                    # 2. Update config for training command (IMPORTANT!)
+                    job.config.model_path = downloaded_path
+                    # 3. Update model_source in config to LOCAL - prevents --use_hf flag
+                    #    This ensures _build_command doesn't add HuggingFace/ModelScope flags
+                    from ..models.schemas import ModelSource
+                    job.config.model_source = ModelSource.LOCAL
                 
-                # Report storage validation errors
-                if validation_errors:
-                    error_msg = "Pre-training validation failed:\n" + "\n".join(f"  - {e}" for e in validation_errors)
-                    _log_step(job_id, "STORAGE_VALIDATION_FAILED", {
-                        "errors": validation_errors,
-                        "storage_checks": storage_checks,
+                # Check if storage calculation returned an error
+                if storage_req.get('error'):
+                    error_msg = storage_req['error']
+                    _log_step(job_id, "STORAGE_CALCULATION_ERROR", {
+                        "error": error_msg,
+                        "model_path": model_path,
+                        "model_source": model_source,
                     }, "ERROR")
-                    sanitized_log_service.create_terminal_log(job_id, f"ERROR: {error_msg}", "ERROR")
-                    await ws_manager.send_log(job_id, f"ERROR: {error_msg}")
-                    await job_manager.add_log(job_id, f"ERROR: {error_msg}")
                     
-                    await job_manager.update_job(job_id, 
+                    sanitized_log_service.create_terminal_log(job_id, "[Step 6/12] FAILED - Cannot calculate storage requirements", "ERROR")
+                    sanitized_log_service.create_terminal_log(job_id, "", "ERROR")
+                    sanitized_log_service.create_terminal_log(job_id, "============================================================", "ERROR")
+                    sanitized_log_service.create_terminal_log(job_id, "  CANNOT DETERMINE MODEL SIZE", "ERROR")
+                    sanitized_log_service.create_terminal_log(job_id, "============================================================", "ERROR")
+                    sanitized_log_service.create_terminal_log(job_id, "", "ERROR")
+                    sanitized_log_service.create_terminal_log(job_id, f"  {error_msg}", "ERROR")
+                    sanitized_log_service.create_terminal_log(job_id, "", "ERROR")
+                    sanitized_log_service.create_terminal_log(job_id, "  HOW TO FIX:", "ERROR")
+                    sanitized_log_service.create_terminal_log(job_id, "  \u2022 Ensure the model path is correct and accessible", "ERROR")
+                    sanitized_log_service.create_terminal_log(job_id, "  • If using a HuggingFace model, download it first", "ERROR")
+                    sanitized_log_service.create_terminal_log(job_id, "============================================================", "ERROR")
+                    
+                    await job_manager.update_job(job_id,
                         status=JobStatus.FAILED,
-                        error=error_msg,
+                        error="Cannot determine model size - storage validation failed",
                         completed_at=datetime.now()
                     )
                     await ws_manager.send_status(job_id, "failed")
                     return
+                
+                # Check if this is a remote model (storage validation skipped)
+                model_info = storage_req['model_info']
+                if model_info.get('source') == 'remote_skip':
+                    sanitized_log_service.create_terminal_log(
+                        job_id,
+                        f"[Step 6/12] Remote model detected - storage validation skipped (model will be downloaded during training)",
+                        "INFO"
+                    )
+                    sanitized_log_service.create_terminal_log(job_id, "[Step 6/12] ✓ Skipping storage check for remote model", "INFO")
+                    # Skip to next step - no storage validation for remote models
+                else:
+                    # Log detailed breakdown for local models
+                    _log_step(job_id, "STORAGE_REQUIREMENTS_CALCULATED", {
+                        "model_info": storage_req['model_info'],
+                        "checkpoint_info": storage_req['checkpoint_info'],
+                        "temp_required_gb": storage_req['temp_required_gb'],
+                        "output_required_gb": storage_req['output_required_gb'],
+                        "breakdown": storage_req['breakdown']
+                    })
                     
+                    # Show breakdown in terminal
+                    sanitized_log_service.create_terminal_log(
+                        job_id,
+                        f"[Step 6/12] Model size: {model_info['size_gb']:.1f}GB (actual size on disk)",
+                        "INFO"
+                    )
+                    for line in storage_req['breakdown'][1:]:  # Skip first line (model info already shown)
+                        sanitized_log_service.create_terminal_log(job_id, f"[Step 6/12]   {line}", "INFO")
+                
+                storage_errors = []
+                
+                # Only run storage checks for local models (not remote)
+                if model_info.get('source') != 'remote_skip':
+                    # ============================================================
+                    # CHECK 1: TEMP DIRECTORY (only needed for adapter merge)
+                    # ============================================================
+                    if storage_req['temp_required_gb'] > 0:
+                        temp_dir = tempfile.gettempdir()
+                        temp_available = _get_available_space_gb(temp_dir)
+                        temp_required = storage_req['temp_required_gb']
+                        
+                        sanitized_log_service.create_terminal_log(
+                            job_id,
+                            f"[Step 6/12] Checking TEMPORARY storage for adapter merge...",
+                            "INFO"
+                        )
+                        sanitized_log_service.create_terminal_log(
+                            job_id,
+                            f"[Step 6/12]   Location: {temp_dir}",
+                            "INFO"
+                        )
+                        sanitized_log_service.create_terminal_log(
+                            job_id,
+                            f"[Step 6/12]   Available: {temp_available:.1f}GB | Required: {temp_required:.1f}GB",
+                            "INFO"
+                        )
+                        
+                        if temp_available >= 0 and temp_available < temp_required:
+                            shortfall = temp_required - temp_available
+                            storage_errors.append({
+                                'type': 'TEMPORARY STORAGE (for Adapter Merge)',
+                                'location': temp_dir,
+                                'available': temp_available,
+                                'required': temp_required,
+                                'shortfall': shortfall,
+                                'why_needed': 'When merging a LoRA adapter with a base model, the system creates a temporary merged model file before training.',
+                                'how_to_fix': [
+                                    f'Add at least {shortfall:.1f}GB more storage at {temp_dir}',
+                                    f'Or free up {shortfall:.1f}GB by removing unused files from this location',
+                                ]
+                            })
+                        else:
+                            sanitized_log_service.create_terminal_log(job_id, f"[Step 6/12] \u2713 Temporary storage OK", "INFO")
+                    
+                    # ============================================================
+                    # CHECK 2: OUTPUT DIRECTORY (always required for local models)
+                    # ============================================================
+                    output_available = _get_available_space_gb(output_dir)
+                    output_required = storage_req['output_required_gb']
+                    checkpoint_info = storage_req['checkpoint_info']
+                    
+                    sanitized_log_service.create_terminal_log(
+                        job_id,
+                        f"[Step 6/12] Checking OUTPUT storage for training checkpoints...",
+                        "INFO"
+                    )
+                    sanitized_log_service.create_terminal_log(
+                        job_id,
+                        f"[Step 6/12]   Location: {output_dir}",
+                        "INFO"
+                    )
+                    sanitized_log_service.create_terminal_log(
+                        job_id,
+                        f"[Step 6/12]   Available: {output_available:.1f}GB | Required: {output_required:.1f}GB",
+                        "INFO"
+                    )
+                    sanitized_log_service.create_terminal_log(
+                        job_id,
+                        f"[Step 6/12]   ({checkpoint_info['num_checkpoints']} checkpoints \u00d7 {checkpoint_info.get('checkpoint_size_gb', 0):.1f}GB each)",
+                        "INFO"
+                    )
+                    
+                    if output_available >= 0 and output_available < output_required:
+                        shortfall = output_required - output_available
+                        train_type = checkpoint_info['train_type']
+                        
+                        if train_type in ['lora', 'qlora', 'adalora']:
+                            why_needed = 'LoRA training saves adapter checkpoint files during training. Each checkpoint contains the trained adapter weights.'
+                        else:
+                            why_needed = 'Full fine-tuning saves complete model checkpoints during training. Each checkpoint contains the entire model weights.'
+                        
+                        storage_errors.append({
+                            'type': 'OUTPUT STORAGE (for Training Checkpoints)',
+                            'location': output_dir,
+                            'available': output_available,
+                            'required': output_required,
+                            'shortfall': shortfall,
+                            'why_needed': why_needed,
+                            'how_to_fix': [
+                                f'Add at least {shortfall:.1f}GB more storage at {output_dir}',
+                                f'Or free up {shortfall:.1f}GB by removing unused files from this location',
+                                f'Or reduce save_total_limit to save fewer checkpoints (currently: {checkpoint_info["num_checkpoints"]})',
+                            ]
+                        })
+                    else:
+                        sanitized_log_service.create_terminal_log(job_id, f"[Step 6/12] \u2713 Output storage OK", "INFO")
+                    
+                    # ============================================================
+                    # BLOCK IF INSUFFICIENT STORAGE
+                    # ============================================================
+                    if storage_errors:
+                        _log_step(job_id, "STORAGE_VALIDATION_FAILED", {
+                            "errors": [e['type'] for e in storage_errors],
+                            "temp_required": storage_req['temp_required_gb'],
+                            "output_required": storage_req['output_required_gb'],
+                            "model_size_gb": model_info['size_gb'],
+                        }, "ERROR")
+                        
+                        # Display user-friendly error in terminal
+                        sanitized_log_service.create_terminal_log(job_id, "", "ERROR")
+                        sanitized_log_service.create_terminal_log(job_id, "============================================================", "ERROR")
+                        sanitized_log_service.create_terminal_log(job_id, "  TRAINING CANNOT START - INSUFFICIENT DISK SPACE", "ERROR")
+                        sanitized_log_service.create_terminal_log(job_id, "============================================================", "ERROR")
+                        
+                        for i, err in enumerate(storage_errors, 1):
+                            sanitized_log_service.create_terminal_log(job_id, "", "ERROR")
+                            sanitized_log_service.create_terminal_log(job_id, f"  [{i}] {err['type']}", "ERROR")
+                            sanitized_log_service.create_terminal_log(job_id, f"      Location: {err['location']}", "ERROR")
+                            sanitized_log_service.create_terminal_log(job_id, f"      Available: {err['available']:.1f}GB", "ERROR")
+                            sanitized_log_service.create_terminal_log(job_id, f"      Required:  {err['required']:.1f}GB", "ERROR")
+                            sanitized_log_service.create_terminal_log(job_id, f"      Shortfall: {err['shortfall']:.1f}GB", "ERROR")
+                            sanitized_log_service.create_terminal_log(job_id, "", "ERROR")
+                            sanitized_log_service.create_terminal_log(job_id, f"      WHY THIS IS NEEDED:", "ERROR")
+                            sanitized_log_service.create_terminal_log(job_id, f"      {err['why_needed']}", "ERROR")
+                            sanitized_log_service.create_terminal_log(job_id, "", "ERROR")
+                            sanitized_log_service.create_terminal_log(job_id, f"      HOW TO FIX:", "ERROR")
+                            for fix in err['how_to_fix']:
+                                sanitized_log_service.create_terminal_log(job_id, f"      \u2022 {fix}", "ERROR")
+                        
+                        sanitized_log_service.create_terminal_log(job_id, "", "ERROR")
+                        sanitized_log_service.create_terminal_log(job_id, "============================================================", "ERROR")
+                        
+                        # Create short summary for job status
+                        error_summary = "Insufficient disk space: "
+                        error_parts = []
+                        for err in storage_errors:
+                            error_parts.append(f"{err['type'].split('(')[0].strip()} needs {err['shortfall']:.1f}GB more")
+                        error_summary += "; ".join(error_parts)
+                        
+                        await ws_manager.send_log(job_id, f"ERROR: {error_summary}")
+                        await job_manager.add_log(job_id, f"ERROR: {error_summary}")
+                        
+                        await job_manager.update_job(job_id,
+                            status=JobStatus.FAILED,
+                            error=error_summary,
+                            completed_at=datetime.now()
+                        )
+                        await ws_manager.send_status(job_id, "failed")
+                        return
+                
+                # Storage validation passed
+                total_required = storage_req['temp_required_gb'] + storage_req['output_required_gb']
+                _log_step(job_id, "STORAGE_VALIDATION_PASSED", {
+                    "total_required_gb": total_required,
+                    "temp_required_gb": storage_req['temp_required_gb'],
+                    "output_required_gb": storage_req['output_required_gb'],
+                })
+                sanitized_log_service.create_terminal_log(
+                    job_id,
+                    f"[Step 6/12] \u2713 Storage check passed. Total required: ~{total_required:.1f}GB",
+                    "INFO"
+                )
+                await ws_manager.send_log(job_id, f"\u2713 Storage check passed (~{total_required:.1f}GB needed)")
+                
             except Exception as storage_err:
-                # Capture storage validation exceptions with full details
                 import traceback
                 _log_step(job_id, "STORAGE_VALIDATION_ERROR", {
                     "error": str(storage_err),
                     "error_type": type(storage_err).__name__,
                     "traceback": traceback.format_exc(),
                 }, "ERROR")
+                sanitized_log_service.create_terminal_log(job_id, "[Step 6/12] FAILED - Storage validation error", "ERROR")
                 sanitized_log_service.create_terminal_log(
-                    job_id, 
-                    f"Storage validation error: {str(storage_err)}", 
+                    job_id,
+                    f"ERROR: {type(storage_err).__name__}: {str(storage_err)[:150]}",
                     "ERROR"
                 )
-                raise  # Re-raise to be caught by main exception handler
+                raise
             
             # ============================================================
-            # ADAPTER MERGE MODE - Merge adapter with base before training
-            # This enables full fine-tuning on LoRA/QLoRA adapters
+            # STEP 7: ADAPTER MERGE (if enabled)
             # ============================================================
             
             if merge_enabled and adapter_base_path:
+                sanitized_log_service.create_terminal_log(job_id, "[Step 7/12] Merging adapter with base model...", "INFO")
                 _log_step(job_id, "ADAPTER_MERGE_START", {
                     "adapter_path": model_path,
                     "base_model_path": adapter_base_path,
                 })
-                sanitized_log_service.create_terminal_log(
-                    job_id, 
-                    "Merging adapter with base model...", 
-                    "INFO"
-                )
                 await ws_manager.send_log(job_id, "Merging adapter with base model...")
                 
                 try:
@@ -1310,10 +1971,10 @@ class TrainingService:
                     })
                     sanitized_log_service.create_terminal_log(
                         job_id, 
-                        "✅ Adapter merged successfully. Proceeding with training on merged model.", 
+                        "[Step 7/12] \u2713 Adapter merged successfully", 
                         "INFO"
                     )
-                    await ws_manager.send_log(job_id, "✅ Adapter merged successfully")
+                    await ws_manager.send_log(job_id, "\u2713 Adapter merged successfully")
                     
                 except Exception as merge_err:
                     error_msg = f"Adapter merge failed: {str(merge_err)}"
@@ -1321,6 +1982,7 @@ class TrainingService:
                         "error": str(merge_err),
                         "error_type": type(merge_err).__name__,
                     }, "ERROR")
+                    sanitized_log_service.create_terminal_log(job_id, "[Step 7/12] FAILED - Adapter merge failed", "ERROR")
                     sanitized_log_service.create_terminal_log(job_id, f"ERROR: {error_msg}", "ERROR")
                     await ws_manager.send_log(job_id, f"ERROR: {error_msg}")
                     
@@ -1332,20 +1994,31 @@ class TrainingService:
                     await ws_manager.send_status(job_id, "failed")
                     return
             
-            # Build command (with resume checkpoint if set)
+            # ============================================================
+            # STEP 8: BUILD TRAINING COMMAND
+            # ============================================================
+            sanitized_log_service.create_terminal_log(job_id, "[Step 8/12] Building training command...", "INFO")
+            
             resume_checkpoint = getattr(job, 'resume_from_checkpoint', None)
             if resume_checkpoint:
-                sanitized_log_service.create_terminal_log(job_id, f"Resuming from checkpoint: {resume_checkpoint}", "INFO")
-                await ws_manager.send_log(job_id, f"Resuming from checkpoint: {resume_checkpoint}")
+                sanitized_log_service.create_terminal_log(job_id, f"[Step 8/12] Resuming from checkpoint: {os.path.basename(resume_checkpoint)}", "INFO")
+                await ws_manager.send_log(job_id, f"Resuming from checkpoint")
                 _debug_log(job_id, f"Resuming from checkpoint: {resume_checkpoint}")
             
-            cmd = self._build_command(job.config, job_id, resume_from_checkpoint=resume_checkpoint)
-            cmd_str = " ".join(cmd)
-            _log_step(job_id, "COMMAND_BUILD", {
-                "command": cmd_str,
-                "command_args_count": len(cmd),
-                "resume_from_checkpoint": resume_checkpoint,
-            })
+            try:
+                cmd = self._build_command(job.config, job_id, resume_from_checkpoint=resume_checkpoint)
+                cmd_str = " ".join(cmd)
+                _log_step(job_id, "COMMAND_BUILD", {
+                    "command": cmd_str,
+                    "command_args_count": len(cmd),
+                    "resume_from_checkpoint": resume_checkpoint,
+                })
+                sanitized_log_service.create_terminal_log(job_id, "[Step 8/12] \u2713 Training command ready", "INFO")
+            except Exception as cmd_err:
+                _log_step(job_id, "COMMAND_BUILD_FAILED", {"error": str(cmd_err)}, "ERROR")
+                sanitized_log_service.create_terminal_log(job_id, "[Step 8/12] FAILED - Could not build training command", "ERROR")
+                sanitized_log_service.create_terminal_log(job_id, f"ERROR: {str(cmd_err)}", "ERROR")
+                raise
             
             # ============================================================
             # SHOW USER-FRIENDLY CONFIG SUMMARY (not raw command)
@@ -1377,12 +2050,11 @@ class TrainingService:
             sanitized_log_service.create_terminal_log(job_id, config_summary, "INFO")
             await ws_manager.send_log(job_id, config_summary)
             
-            sanitized_log_service.create_terminal_log(job_id, "Starting training...", "INFO")
-            await ws_manager.send_log(job_id, "Starting training...")
-            
-            # Create process with proper environment
-            # Include DeepSpeed build flags to prevent CUDA_HOME errors
-            _debug_log(job_id, "Creating subprocess...")
+            # ============================================================
+            # STEP 9: CONFIGURE TRAINING ENVIRONMENT
+            # ============================================================
+            sanitized_log_service.create_terminal_log(job_id, "[Step 9/12] Configuring training environment...", "INFO")
+            _debug_log(job_id, "Creating subprocess environment...")
             training_env = {
                 **os.environ,
                 "PYTHONUNBUFFERED": "1",
@@ -1412,16 +2084,23 @@ class TrainingService:
                 training_env["MODELSCOPE_API_TOKEN"] = job.config.ms_token
             
             # ============================================================
-            # GPU SELECTION: Configure which GPUs to use
+            # STEP 10: GPU DETECTION AND SELECTION
             # ============================================================
+            sanitized_log_service.create_terminal_log(job_id, "[Step 10/12] Detecting available GPUs...", "INFO")
             num_gpus_to_use = 1  # Default to 1 GPU
             
             # Get available GPU count from system
             try:
                 import torch
                 available_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
-            except:
+                if available_gpus > 0:
+                    gpu_name = torch.cuda.get_device_name(0)
+                    sanitized_log_service.create_terminal_log(job_id, f"[Step 10/12] Found {available_gpus} GPU(s): {gpu_name}", "INFO")
+                else:
+                    sanitized_log_service.create_terminal_log(job_id, "[Step 10/12] No CUDA GPUs detected", "WARN")
+            except Exception as gpu_detect_err:
                 available_gpus = 0
+                sanitized_log_service.create_terminal_log(job_id, f"[Step 10/12] GPU detection failed: {str(gpu_detect_err)[:50]}", "WARN")
             
             if available_gpus > 0:
                 # Determine which GPUs to use
@@ -1464,21 +2143,34 @@ class TrainingService:
                 "num_gpus_to_use": num_gpus_to_use,
                 "cuda_visible_devices": training_env.get("CUDA_VISIBLE_DEVICES", "all"),
             })
+            sanitized_log_service.create_terminal_log(job_id, f"[Step 10/12] \u2713 GPU configuration complete", "INFO")
             
+            # ============================================================
+            # STEP 11: LAUNCH TRAINING SUBPROCESS
+            # ============================================================
+            sanitized_log_service.create_terminal_log(job_id, "[Step 11/12] Launching training process...", "INFO")
             _log_step(job_id, "SUBPROCESS_CREATE", {
                 "command_length": len(cmd),
                 "env_keys": list(training_env.keys())[:10],  # First 10 env keys
             })
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                env=training_env,
-            )
-            _log_step(job_id, "SUBPROCESS_STARTED", {
-                "pid": process.pid,
-                "status": "running"
-            })
+            
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                    env=training_env,
+                )
+                _log_step(job_id, "SUBPROCESS_STARTED", {
+                    "pid": process.pid,
+                    "status": "running"
+                })
+                sanitized_log_service.create_terminal_log(job_id, f"[Step 11/12] \u2713 Training process launched (PID: {process.pid})", "INFO")
+            except Exception as proc_err:
+                _log_step(job_id, "SUBPROCESS_FAILED", {"error": str(proc_err)}, "ERROR")
+                sanitized_log_service.create_terminal_log(job_id, "[Step 11/12] FAILED - Could not start training process", "ERROR")
+                sanitized_log_service.create_terminal_log(job_id, f"ERROR: {type(proc_err).__name__}: {str(proc_err)[:100]}", "ERROR")
+                raise
             
             await job_manager.set_process(job_id, process)
             started_time = datetime.now()
@@ -1487,9 +2179,13 @@ class TrainingService:
             # PERSIST TO DATABASE - mark as running with start time
             _sync_job_to_database(job_id, "running", started_at=started_time)
             
+            # ============================================================
+            # STEP 12: TRAINING RUNNING - STREAMING OUTPUT
+            # ============================================================
             _log_step(job_id, "STATUS_UPDATE", {"status": "RUNNING", "pid": process.pid})
             await ws_manager.send_status(job_id, "running")
-            sanitized_log_service.create_terminal_log(job_id, "Training started...", "INFO")
+            sanitized_log_service.create_terminal_log(job_id, "[Step 12/12] \u2713 Training is now RUNNING", "INFO")
+            sanitized_log_service.create_terminal_log(job_id, "Training output will appear below...", "INFO")
             await ws_manager.send_log(job_id, "Training started...")
             
             # CRITICAL: Update global training status service
@@ -1737,6 +2433,9 @@ class TrainingService:
                     "checkpoint_count": checkpoint_count,
                 })
                 completed_time = datetime.now()
+                duration = (completed_time - started_time).total_seconds()
+                duration_str = f"{int(duration // 3600)}h {int((duration % 3600) // 60)}m {int(duration % 60)}s"
+                
                 await job_manager.update_job(job_id,
                     status=JobStatus.COMPLETED,
                     completed_at=completed_time
@@ -1746,7 +2445,12 @@ class TrainingService:
                 _sync_job_to_database(job_id, "completed", completed_at=completed_time)
                 
                 await ws_manager.send_status(job_id, "completed")
-                sanitized_log_service.create_terminal_log(job_id, "Training completed successfully!", "INFO")
+                sanitized_log_service.create_terminal_log(job_id, "========================================", "INFO")
+                sanitized_log_service.create_terminal_log(job_id, f"\u2713 TRAINING COMPLETED SUCCESSFULLY", "INFO")
+                sanitized_log_service.create_terminal_log(job_id, f"  Duration: {duration_str}", "INFO")
+                sanitized_log_service.create_terminal_log(job_id, f"  Total Steps: {total_steps}", "INFO")
+                sanitized_log_service.create_terminal_log(job_id, f"  Checkpoints Saved: {checkpoint_count}", "INFO")
+                sanitized_log_service.create_terminal_log(job_id, "========================================", "INFO")
                 await ws_manager.send_log(job_id, "Training completed successfully!", "success")
                 sanitized_log_service.log_session_end(job_id, "COMPLETED")
                 
@@ -1765,7 +2469,10 @@ class TrainingService:
                     "checkpoint_count": checkpoint_count,
                 }, "ERROR")
                 error_msg = f"Training failed with exit code {return_code}"
-                sanitized_log_service.create_terminal_log(job_id, error_msg, "ERROR")
+                sanitized_log_service.create_terminal_log(job_id, "========================================", "ERROR")
+                sanitized_log_service.create_terminal_log(job_id, "TRAINING FAILED", "ERROR")
+                sanitized_log_service.create_terminal_log(job_id, f"  Exit Code: {return_code}", "ERROR")
+                sanitized_log_service.create_terminal_log(job_id, f"  Steps Completed: {current_step}/{total_steps}", "ERROR")
                 
                 # Try to get last few lines of output for error context
                 logs = await job_manager.get_logs(job_id, last_n=10)
@@ -1838,11 +2545,19 @@ class TrainingService:
             }, "ERROR")
             
             # ============================================================
-            # TERMINAL LOG: Minimal error (NO file names, NO code details)
+            # TERMINAL LOG: User-friendly error with context
             # ============================================================
             # Get minimal user-friendly error from sanitized service
             sanitized = sanitized_log_service.sanitize_error(full_error)
             minimal_error = sanitized['user_message']
+            error_type = type(e).__name__
+            
+            sanitized_log_service.create_terminal_log(job_id, "========================================", "ERROR")
+            sanitized_log_service.create_terminal_log(job_id, "TRAINING FAILED - UNEXPECTED ERROR", "ERROR")
+            sanitized_log_service.create_terminal_log(job_id, f"  Error Type: {error_type}", "ERROR")
+            sanitized_log_service.create_terminal_log(job_id, f"  Message: {minimal_error}", "ERROR")
+            sanitized_log_service.create_terminal_log(job_id, "  Check encrypted logs for full details", "ERROR")
+            sanitized_log_service.create_terminal_log(job_id, "========================================", "ERROR")
             
             completed_time = datetime.now()
             await job_manager.update_job(job_id,
@@ -1854,7 +2569,6 @@ class TrainingService:
             _sync_job_to_database(job_id, "failed", error_message=minimal_error, completed_at=completed_time)
             
             await ws_manager.send_status(job_id, "failed", minimal_error)
-            sanitized_log_service.create_terminal_log(job_id, f"Error: {minimal_error}", "ERROR")
             await ws_manager.send_log(job_id, f"Error: {minimal_error}", "error")
             sanitized_log_service.log_session_end(job_id, "FAILED", error_message=full_error)
             

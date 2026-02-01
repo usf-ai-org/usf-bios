@@ -314,16 +314,131 @@ def get_cpu_metrics():
         return result
 
 
+def get_storage_metrics():
+    """
+    Get storage metrics for the output directory.
+    
+    IMPORTANT: Does NOT expose the actual path - only shows storage metrics.
+    This is intentional for security - users should not see internal paths.
+    
+    Returns:
+        - storage_total_gb: Total storage capacity
+        - storage_used_gb: Used storage
+        - storage_free_gb: Free/available storage
+        - storage_available: Whether storage info could be determined
+    
+    Returns None values if storage cannot be determined accurately.
+    We only show data if we're 100% confident it's correct.
+    """
+    result = {
+        "storage_total_gb": None,
+        "storage_used_gb": None,
+        "storage_free_gb": None,
+        "storage_available": False
+    }
+    
+    try:
+        import shutil
+        from pathlib import Path
+        
+        # Get the output directory from settings
+        # We check the output storage path, NOT model/dataset paths
+        output_dir = None
+        try:
+            from ...core.capabilities import get_system_settings
+            system_settings = get_system_settings()
+            if hasattr(system_settings, 'OUTPUT_DIR'):
+                output_dir = system_settings.OUTPUT_DIR
+            elif hasattr(system_settings, 'output_dir'):
+                output_dir = system_settings.output_dir
+        except Exception:
+            pass
+        
+        # Fallback: try settings.OUTPUT_DIR
+        if not output_dir:
+            try:
+                if hasattr(settings, 'OUTPUT_DIR'):
+                    output_dir = settings.OUTPUT_DIR
+                elif hasattr(settings, 'output_dir'):
+                    output_dir = settings.output_dir
+            except Exception:
+                pass
+        
+        # Final fallback: use current working directory
+        if not output_dir:
+            output_dir = Path.cwd()
+        
+        # Ensure it's a Path object
+        if isinstance(output_dir, str):
+            output_dir = Path(output_dir)
+        
+        # Find an existing path to check storage
+        check_path = output_dir
+        while not check_path.exists() and str(check_path) != '/':
+            check_path = check_path.parent
+        if not check_path.exists():
+            check_path = Path('/')
+        
+        # Get disk usage using shutil (most reliable cross-platform method)
+        usage = shutil.disk_usage(str(check_path))
+        
+        # Validate the data before returning
+        if usage.total > 0 and usage.free >= 0 and usage.used >= 0:
+            total_gb = usage.total / (1024 ** 3)
+            free_gb = usage.free / (1024 ** 3)
+            used_gb = usage.used / (1024 ** 3)
+            
+            # Sanity checks - only return if data makes sense
+            # Used + Free should approximately equal Total (allow 1% tolerance for filesystem overhead)
+            expected_total = used_gb + free_gb
+            tolerance = total_gb * 0.01  # 1% tolerance
+            
+            if abs(expected_total - total_gb) <= tolerance and used_gb <= total_gb and free_gb <= total_gb:
+                result["storage_total_gb"] = round(total_gb, 1)
+                result["storage_used_gb"] = round(used_gb, 1)
+                result["storage_free_gb"] = round(free_gb, 1)
+                result["storage_available"] = True
+        
+        return result
+        
+    except Exception as e:
+        import logging
+        logging.warning(f"Storage metrics error: {e}")
+        return result
+
+
 @router.get("/metrics")
 async def get_system_metrics():
-    """Get comprehensive system metrics including GPU and CPU"""
+    """Get comprehensive system metrics including GPU, CPU, and Storage"""
     gpu_metrics = get_gpu_metrics()
     cpu_metrics = get_cpu_metrics()
+    storage_metrics = get_storage_metrics()
     
     return {
         **gpu_metrics,
-        **cpu_metrics
+        **cpu_metrics,
+        **storage_metrics
     }
+
+
+@router.get("/storage")
+async def get_storage_info():
+    """
+    Get storage information for the system.
+    
+    Returns storage metrics WITHOUT exposing any paths.
+    This is intentional for security - internal paths should not be visible.
+    
+    Response includes:
+    - storage_total_gb: Total storage capacity in GB
+    - storage_used_gb: Used storage in GB
+    - storage_free_gb: Free/available storage in GB
+    - storage_available: Whether storage info could be determined
+    
+    Note: Returns None values if storage cannot be determined with 100% accuracy.
+    We prioritize showing correct data over showing any data.
+    """
+    return get_storage_metrics()
 
 
 @router.get("/gpu")

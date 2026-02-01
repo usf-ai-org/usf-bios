@@ -1,149 +1,56 @@
 #!/usr/bin/env python3
-"""Decrypt encrypted log files using RSA private key."""
+# Copyright (c) US Inc. All rights reserved.
+# USF BIOS - Log Decryption Script Entry Point
+# This script imports directly to avoid loading heavy dependencies
 
-import base64
-import sys
 import os
+import sys
+import glob
+import importlib.util
 
-try:
-    from cryptography.hazmat.primitives import serialization, hashes
-    from cryptography.hazmat.primitives.asymmetric import padding
-    from cryptography.hazmat.backends import default_backend
-except ImportError:
-    print("ERROR: cryptography library not installed. Run: pip install cryptography")
-    sys.exit(1)
+def find_module_file(base_dirs, module_name):
+    """Find module file (.py or .so) in given directories"""
+    for base_dir in base_dirs:
+        if not os.path.exists(base_dir):
+            continue
+        # Check for .py file first
+        py_path = os.path.join(base_dir, f'{module_name}.py')
+        if os.path.exists(py_path):
+            return py_path
+        # Check for compiled .so file (pattern: module_name.cpython-*.so)
+        so_pattern = os.path.join(base_dir, f'{module_name}.cpython-*.so')
+        so_files = glob.glob(so_pattern)
+        if so_files:
+            return so_files[0]
+        # Check for simple .so file
+        so_path = os.path.join(base_dir, f'{module_name}.so')
+        if os.path.exists(so_path):
+            return so_path
+    return None
 
-
-def load_private_key(key_path: str):
-    """Load RSA private key from PEM file."""
-    try:
-        with open(key_path, 'rb') as f:
-            private_key = serialization.load_pem_private_key(
-                f.read(),
-                password=None,
-                backend=default_backend()
-            )
-        return private_key
-    except Exception as e:
-        print(f"ERROR: Failed to load private key from {key_path}: {e}")
+def load_module_directly():
+    """Load log_decryption module directly without going through package __init__.py"""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(script_dir)
+    
+    # Possible directories where module could be
+    search_dirs = [
+        os.path.join(project_root, 'usf_bios', 'utils'),
+        '/app/core/usf_bios/utils',
+        '/app/usf_bios/utils',
+    ]
+    
+    module_path = find_module_file(search_dirs, 'log_decryption')
+    
+    if not module_path:
+        print("ERROR: Cannot find log_decryption module (.py or .so)")
         sys.exit(1)
-
-
-def decrypt_single_chunk(encrypted_b64: str, private_key) -> str:
-    """Decrypt a single base64-encoded encrypted chunk."""
-    encrypted_bytes = base64.b64decode(encrypted_b64)
-    decrypted = private_key.decrypt(
-        encrypted_bytes,
-        padding.OAEP(
-            mgf=padding.MGF1(algorithm=hashes.SHA256()),
-            algorithm=hashes.SHA256(),
-            label=None
-        )
-    )
-    return decrypted.decode('utf-8')
-
-
-def decrypt_message(encrypted_b64: str, private_key) -> str:
-    """Decrypt a base64-encoded encrypted message (handles CHUNKED format)."""
-    try:
-        # Handle CHUNKED format: "CHUNKED:chunk1|chunk2|chunk3..."
-        if encrypted_b64.startswith("CHUNKED:"):
-            chunks_str = encrypted_b64[8:]  # Remove "CHUNKED:" prefix
-            chunks = chunks_str.split("|")
-            
-            # Decrypt each chunk and concatenate
-            decrypted_parts = []
-            for chunk in chunks:
-                if chunk:  # Skip empty chunks
-                    decrypted_parts.append(decrypt_single_chunk(chunk, private_key))
-            
-            return "".join(decrypted_parts)
-        
-        # Decode base64
-        encrypted_bytes = base64.b64decode(encrypted_b64)
-        
-        # Check if it's actually encrypted or just base64 encoded
-        try:
-            decoded = encrypted_bytes.decode('utf-8')
-            if decoded.startswith('[UNENCRYPTED]'):
-                return decoded
-            if decoded.startswith('[ENCRYPT_ERROR'):
-                return decoded
-        except UnicodeDecodeError:
-            pass
-        
-        # Decrypt using RSA private key
-        decrypted = private_key.decrypt(
-            encrypted_bytes,
-            padding.OAEP(
-                mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                algorithm=hashes.SHA256(),
-                label=None
-            )
-        )
-        return decrypted.decode('utf-8')
-    except Exception as e:
-        return f"[DECRYPT_ERROR: {e}] {encrypted_b64[:50]}..."
-
-
-def decrypt_log_file(log_path: str, key_path: str):
-    """Decrypt all entries in a log file."""
-    print(f"Loading private key from: {key_path}")
-    private_key = load_private_key(key_path)
     
-    print(f"\n{'='*80}")
-    print(f"Decrypting: {log_path}")
-    print(f"{'='*80}\n")
-    
-    decrypted_count = 0
-    error_count = 0
-    unencrypted_count = 0
-    
-    with open(log_path, 'r') as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-                
-            decrypted = decrypt_message(line, private_key)
-            print(decrypted)
-            
-            if decrypted.startswith('[DECRYPT_ERROR'):
-                error_count += 1
-            elif decrypted.startswith('[UNENCRYPTED]'):
-                unencrypted_count += 1
-            else:
-                decrypted_count += 1
-    
-    print(f"\n{'='*80}")
-    print(f"Summary:")
-    print(f"  - Total entries: {decrypted_count + error_count + unencrypted_count}")
-    print(f"  - Decrypted: {decrypted_count}")
-    print(f"  - Unencrypted (base64 only): {unencrypted_count}")
-    print(f"  - Errors: {error_count}")
-    print(f"{'='*80}\n")
-
+    spec = importlib.util.spec_from_file_location('log_decryption', module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print("Usage: python decrypt_logs.py <log_file> [--key <private_key_path>]")
-        print("Default key: keys/usf_bios_private.pem")
-        sys.exit(1)
-    
-    log_file = sys.argv[1]
-    key_file = "keys/usf_bios_private.pem"
-    
-    if '--key' in sys.argv:
-        key_idx = sys.argv.index('--key')
-        if key_idx + 1 < len(sys.argv):
-            key_file = sys.argv[key_idx + 1]
-    
-    if not os.path.exists(log_file):
-        print(f"ERROR: Log file not found: {log_file}")
-        sys.exit(1)
-    
-    if not os.path.exists(key_file):
-        print(f"ERROR: Private key not found: {key_file}")
-        sys.exit(1)
-    
-    decrypt_log_file(log_file, key_file)
+    ld = load_module_directly()
+    ld.main()

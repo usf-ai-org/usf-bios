@@ -24,6 +24,8 @@ Options.embed_pos_in_docstring = False
 # ============================================================================
 CRITICAL_FILES_MUST_COMPILE = [
     'usf_bios/system_guard.py',
+    'usf_bios/utils/version_capture.py',
+    'usf_bios/utils/log_decryption.py',
     'web/backend/app/core/capabilities.py',
 ]
 
@@ -442,6 +444,8 @@ if __name__ == '__main__':
         print("  BUILD SUCCESSFUL - Code fully protected")
         print("  Binary .so files cannot be reverse engineered")
         print("  ✓ system_guard.py compiled and removed")
+        print("  ✓ version_capture.py compiled and removed")
+        print("  ✓ log_decryption.py compiled and removed")
         print("  ✓ capabilities.py compiled and removed")
     else:
         print("  BUILD FAILED - Security requirements not met")

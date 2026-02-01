@@ -256,6 +256,21 @@ async def check_name_available(name: str = Query(..., description="Dataset name 
     return {"available": not taken, "normalized": normalized}
 
 
+def _get_available_disk_space_gb(path: Path) -> float:
+    """Get available disk space in GB for a path."""
+    import shutil
+    try:
+        check_path = path
+        while not check_path.exists() and str(check_path) != '/':
+            check_path = check_path.parent
+        if not check_path.exists():
+            check_path = Path('/')
+        usage = shutil.disk_usage(str(check_path))
+        return usage.free / (1024 ** 3)
+    except Exception:
+        return -1
+
+
 @router.post("/upload")
 async def upload_dataset(
     file: UploadFile = File(...),
@@ -268,6 +283,7 @@ async def upload_dataset(
     1. File format is supported by USF BIOS (jsonl, json, csv, txt)
     2. File size is within limits for the format
     3. Dataset type is allowed by system feature flags
+    4. Sufficient disk space available (with buffer)
     
     Supported formats:
     - JSONL: Unlimited size, recommended for large datasets
@@ -319,10 +335,83 @@ async def upload_dataset(
         # Ensure upload directory exists
         get_system_settings().UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         
-        # Save file
+        # === VALIDATION 4: Check disk space BEFORE reading/writing file ===
+        # Get file size from Content-Length header if available
+        file_size_bytes = 0
+        if file.size:
+            file_size_bytes = file.size
+        elif hasattr(file, 'file') and hasattr(file.file, 'seek'):
+            # Try to get size by seeking to end
+            current_pos = file.file.tell()
+            file.file.seek(0, 2)  # Seek to end
+            file_size_bytes = file.file.tell()
+            file.file.seek(current_pos)  # Seek back
+        
+        # Check available disk space
+        available_gb = _get_available_disk_space_gb(get_system_settings().UPLOAD_DIR)
+        
+        if available_gb >= 0:  # -1 means couldn't determine
+            # Calculate required space: file size + 10% buffer + 500MB minimum reserve
+            file_size_gb = file_size_bytes / (1024 ** 3) if file_size_bytes > 0 else 0
+            buffer_gb = max(file_size_gb * 0.1, 0.1)  # 10% buffer or 100MB minimum
+            system_reserve_gb = 0.5  # 500MB reserved for system
+            required_gb = file_size_gb + buffer_gb + system_reserve_gb
+            
+            if available_gb < required_gb:
+                # Provide clear error message with details
+                shortfall_gb = required_gb - available_gb
+                error_detail = (
+                    f"Insufficient disk space for upload. "
+                    f"Available: {available_gb:.1f}GB, "
+                    f"Required: {required_gb:.1f}GB (file: {file_size_gb:.2f}GB + buffer + reserve). "
+                    f"Please free up at least {shortfall_gb:.1f}GB on this machine before uploading."
+                )
+                raise HTTPException(status_code=507, detail=error_detail)
+            
+            # Additional check: if very low space (< 1GB), warn even for small files
+            if available_gb < 1.0:
+                raise HTTPException(
+                    status_code=507, 
+                    detail=f"Critically low disk space: only {available_gb:.2f}GB available. "
+                           f"Please free up disk space before uploading any files."
+                )
+        
+        # Read file content
         content = await file.read()
-        with open(upload_path, "wb") as f:
-            f.write(content)
+        actual_size_gb = len(content) / (1024 ** 3)
+        
+        # Double-check space with actual file size (in case Content-Length was wrong)
+        if available_gb >= 0:
+            required_with_actual = actual_size_gb + max(actual_size_gb * 0.1, 0.1) + 0.5
+            if available_gb < required_with_actual:
+                shortfall = required_with_actual - available_gb
+                raise HTTPException(
+                    status_code=507,
+                    detail=f"Insufficient disk space. File size: {actual_size_gb:.2f}GB, "
+                           f"Available: {available_gb:.1f}GB. "
+                           f"Please free up at least {shortfall:.1f}GB before uploading."
+                )
+        
+        # Save file with error handling for disk full
+        try:
+            with open(upload_path, "wb") as f:
+                f.write(content)
+        except OSError as e:
+            # Handle disk full error gracefully
+            if e.errno == 28 or 'No space left' in str(e):  # ENOSPC
+                # Clean up partial file if created
+                try:
+                    if upload_path.exists():
+                        upload_path.unlink()
+                except Exception:
+                    pass
+                raise HTTPException(
+                    status_code=507,
+                    detail=f"Disk full: Unable to save dataset. "
+                           f"The file requires {actual_size_gb:.2f}GB but disk space ran out during write. "
+                           f"Please free up disk space and try again."
+                )
+            raise
         
         # Validate the uploaded file
         validation = await validate_dataset(str(upload_path))
