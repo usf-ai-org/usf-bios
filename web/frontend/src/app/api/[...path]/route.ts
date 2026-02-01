@@ -20,10 +20,10 @@ async function proxyRequest(request: Request, path: string): Promise<Response> {
   const requestUrl = new URL(request.url)
   const queryString = requestUrl.search // includes the '?' if present
   const url = `${BACKEND_URL}/api/${path}${queryString}`
-  
+
   // Log the request for debugging
   console.log(`[API Proxy] ${request.method} ${path}${queryString}`)
-  
+
   // Forward headers (except host)
   const headers = new Headers()
   request.headers.forEach((value, key) => {
@@ -31,7 +31,7 @@ async function proxyRequest(request: Request, path: string): Promise<Response> {
       headers.set(key, value)
     }
   })
-  
+
   // Build fetch options
   const fetchOptions: RequestInit = {
     method: request.method,
@@ -39,27 +39,46 @@ async function proxyRequest(request: Request, path: string): Promise<Response> {
     // Disable caching for real-time data
     cache: 'no-store',
   }
-  
+
   // Forward body for POST/PUT/PATCH
   if (['POST', 'PUT', 'PATCH'].includes(request.method)) {
     fetchOptions.body = await request.text()
   }
-  
+
   try {
     const response = await fetch(url, fetchOptions)
-    
+
     // Forward response headers
     const responseHeaders = new Headers()
+    const contentType = response.headers.get('content-type') || ''
+    const isSSE = contentType.includes('text/event-stream')
+
     response.headers.forEach((value, key) => {
-      // Skip headers that Next.js handles
-      if (!['content-encoding', 'transfer-encoding'].includes(key.toLowerCase())) {
-        responseHeaders.set(key, value)
+      // Skip headers that Next.js handles (but allow for SSE)
+      const lowerKey = key.toLowerCase()
+      if (isSSE) {
+        // For SSE, preserve all headers except these problematic ones
+        if (!['content-encoding', 'content-length'].includes(lowerKey)) {
+          responseHeaders.set(key, value)
+        }
+      } else {
+        // For regular responses, skip encoding headers
+        if (!['content-encoding', 'transfer-encoding'].includes(lowerKey)) {
+          responseHeaders.set(key, value)
+        }
       }
     })
-    
-    // Add cache control headers to prevent caching
-    responseHeaders.set('Cache-Control', 'no-store, no-cache, must-revalidate')
-    
+
+    // Add appropriate cache control headers
+    if (isSSE) {
+      // SSE-specific headers for real-time streaming
+      responseHeaders.set('Cache-Control', 'no-cache')
+      responseHeaders.set('Connection', 'keep-alive')
+      responseHeaders.set('X-Accel-Buffering', 'no') // Disable nginx buffering
+    } else {
+      responseHeaders.set('Cache-Control', 'no-store, no-cache, must-revalidate')
+    }
+
     return new Response(response.body, {
       status: response.status,
       statusText: response.statusText,

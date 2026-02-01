@@ -553,6 +553,81 @@ async def get_terminal_logs(job_id: str, lines: int = 100):
         }
 
 
+@router.get("/{job_id}/stream/logs")
+async def stream_logs(job_id: str):
+    """HTTP Server-Sent Events (SSE) endpoint for real-time log streaming.
+    
+    This is the HTTP-based alternative to WebSocket for log streaming.
+    Clients can use EventSource API to receive real-time log updates.
+    
+    Example client usage:
+        const eventSource = new EventSource('/api/jobs/{job_id}/stream/logs');
+        eventSource.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            console.log(data.logs);
+        };
+    """
+    from fastapi.responses import StreamingResponse
+    from ...services.sanitized_log_service import sanitized_log_service
+    import asyncio
+    import json
+    
+    async def log_generator():
+        """Generator that yields log updates as SSE events."""
+        last_line_count = 0
+        retry_count = 0
+        max_retries = 3600  # 1 hour at 1 second intervals
+        
+        # Send initial connection event
+        yield f"event: connected\ndata: {json.dumps({'job_id': job_id, 'status': 'connected'})}\n\n"
+        
+        while retry_count < max_retries:
+            try:
+                # Get current logs
+                logs = sanitized_log_service.get_terminal_logs(job_id, lines=500)
+                current_count = len(logs)
+                
+                # Check if job still exists
+                job = await job_manager.get_job(job_id)
+                if not job:
+                    yield f"event: error\ndata: {json.dumps({'error': 'Job not found'})}\n\n"
+                    break
+                
+                # Send new logs if any
+                if current_count > last_line_count:
+                    new_logs = logs[last_line_count:]
+                    yield f"data: {json.dumps({'logs': new_logs, 'total': current_count})}\n\n"
+                    last_line_count = current_count
+                
+                # Send job status update
+                status = job.status.value if hasattr(job.status, 'value') else str(job.status)
+                yield f"event: status\ndata: {json.dumps({'status': status, 'step': job.current_step, 'total': job.total_steps})}\n\n"
+                
+                # Stop streaming if job is complete
+                if status in ['completed', 'failed', 'stopped', 'cancelled']:
+                    yield f"event: complete\ndata: {json.dumps({'status': status})}\n\n"
+                    break
+                
+                # Wait before next poll
+                await asyncio.sleep(1)
+                retry_count += 1
+                
+            except Exception as e:
+                yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+                await asyncio.sleep(5)
+                retry_count += 1
+    
+    return StreamingResponse(
+        log_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        }
+    )
+
+
 @router.get("/{job_id}/checkpoint-info")
 async def get_checkpoint_info(job_id: str):
     """Get checkpoint information for a job.
@@ -1579,7 +1654,14 @@ async def get_training_history(
 
 @router.websocket("/ws/{job_id}")
 async def websocket_endpoint(websocket: WebSocket, job_id: str):
-    """WebSocket endpoint for real-time job updates"""
+    """WebSocket endpoint for real-time job updates.
+    
+    DEPRECATED: This WebSocket endpoint is maintained for backward compatibility.
+    For new integrations, prefer the HTTP SSE endpoint: GET /{job_id}/stream/logs
+    
+    The SSE endpoint provides the same real-time log streaming via standard HTTP,
+    which is more reliable across proxies and doesn't require WebSocket support.
+    """
     from ...services.sanitized_log_service import sanitized_log_service
     
     # Verify job exists

@@ -1014,182 +1014,206 @@ class TrainingService:
             # ============================================================
             # STORAGE SPACE VALIDATION - Ensure enough disk space
             # Uses optimized helper functions defined at module level
+            # Wrapped in try-catch to ensure all errors are logged
             # ============================================================
             _log_step(job_id, "STORAGE_VALIDATION_START", {"phase": "storage space check"})
             
-            # Use optimized module-level functions
-            get_dir_size_gb = lambda path: _get_dir_size_gb_fast(path, job_id)
-            get_available_space_gb = _get_available_space_gb
-            estimate_model_size_from_name = _estimate_model_size_from_name
-            
-            merge_enabled = getattr(config, 'merge_adapter_before_training', False)
-            adapter_base_path = getattr(config, 'adapter_base_model_path', None)
-            output_dir = getattr(config, 'output_dir', 'output') or 'output'
-            train_type = getattr(config, 'train_type', None)
-            train_type_value = train_type.value if hasattr(train_type, 'value') else str(train_type)
-            
-            # Estimate required space
-            required_space_gb = 0
-            space_breakdown = []
-            
-            # Get base model size (for merge or training)
-            base_model_size_gb = 0
-            adapter_size_gb = 0
-            
-            # 1. Calculate adapter size (if merge mode - adapter is the model_path)
-            if merge_enabled and adapter_base_path:
-                # model_path is the adapter in merge mode
-                if os.path.exists(model_path):
-                    adapter_size_gb = get_dir_size_gb(model_path)
-                    space_breakdown.append(f"Adapter size: {adapter_size_gb:.2f}GB")
+            try:
+                # Use optimized module-level functions
+                get_dir_size_gb = lambda path: _get_dir_size_gb_fast(path, job_id)
+                get_available_space_gb = _get_available_space_gb
+                estimate_model_size_from_name = _estimate_model_size_from_name
                 
-                # Get base model size
-                if os.path.exists(adapter_base_path):
-                    # Local path - get actual size
-                    base_model_size_gb = get_dir_size_gb(adapter_base_path)
-                    space_breakdown.append(f"Base model size: {base_model_size_gb:.1f}GB (from disk)")
-                else:
-                    # HuggingFace or remote - estimate from name
-                    base_model_size_gb = estimate_model_size_from_name(adapter_base_path)
-                    space_breakdown.append(f"Base model size: ~{base_model_size_gb:.1f}GB (estimated from name)")
+                _log_step(job_id, "STORAGE_VALIDATION_CONFIG", {
+                    "merge_enabled": getattr(config, 'merge_adapter_before_training', False),
+                    "adapter_base_path": getattr(config, 'adapter_base_model_path', None),
+                    "output_dir": getattr(config, 'output_dir', 'output') or 'output',
+                    "train_type": str(getattr(config, 'train_type', None)),
+                })
                 
-                # Merged model = base model size (adapter weights are fused in)
-                merge_space = base_model_size_gb * 1.1  # 10% buffer for safety
-                required_space_gb += merge_space
-                space_breakdown.append(f"Merged model output: ~{merge_space:.1f}GB")
-            
-            # 2. Get model size for training output estimation
-            if base_model_size_gb == 0:
-                # Not merge mode - model_path is the base model
-                if model_source == 'local' and os.path.exists(model_path):
-                    base_model_size_gb = get_dir_size_gb(model_path)
-                    space_breakdown.append(f"Model size: {base_model_size_gb:.1f}GB (from disk)")
+                merge_enabled = getattr(config, 'merge_adapter_before_training', False)
+                adapter_base_path = getattr(config, 'adapter_base_model_path', None)
+                output_dir = getattr(config, 'output_dir', 'output') or 'output'
+                train_type = getattr(config, 'train_type', None)
+                train_type_value = train_type.value if hasattr(train_type, 'value') else str(train_type)
+                
+                # Estimate required space
+                required_space_gb = 0
+                space_breakdown = []
+                
+                # Get base model size (for merge or training)
+                base_model_size_gb = 0
+                adapter_size_gb = 0
+                
+                # 1. Calculate adapter size (if merge mode - adapter is the model_path)
+                if merge_enabled and adapter_base_path:
+                    # model_path is the adapter in merge mode
+                    if os.path.exists(model_path):
+                        adapter_size_gb = get_dir_size_gb(model_path)
+                        space_breakdown.append(f"Adapter size: {adapter_size_gb:.2f}GB")
+                    
+                    # Get base model size
+                    if os.path.exists(adapter_base_path):
+                        # Local path - get actual size
+                        base_model_size_gb = get_dir_size_gb(adapter_base_path)
+                        space_breakdown.append(f"Base model size: {base_model_size_gb:.1f}GB (from disk)")
+                    else:
+                        # HuggingFace or remote - estimate from name
+                        base_model_size_gb = estimate_model_size_from_name(adapter_base_path)
+                        space_breakdown.append(f"Base model size: ~{base_model_size_gb:.1f}GB (estimated from name)")
+                    
+                    # Merged model = base model size (adapter weights are fused in)
+                    merge_space = base_model_size_gb * 1.1  # 10% buffer for safety
+                    required_space_gb += merge_space
+                    space_breakdown.append(f"Merged model output: ~{merge_space:.1f}GB")
+                
+                # 2. Get model size for training output estimation
+                if base_model_size_gb == 0:
+                    # Not merge mode - model_path is the base model
+                    if model_source == 'local' and os.path.exists(model_path):
+                        base_model_size_gb = get_dir_size_gb(model_path)
+                        space_breakdown.append(f"Model size: {base_model_size_gb:.1f}GB (from disk)")
+                    else:
+                        # HuggingFace/ModelScope - estimate from name
+                        base_model_size_gb = estimate_model_size_from_name(model_path)
+                        space_breakdown.append(f"Model size: ~{base_model_size_gb:.1f}GB (estimated)")
+                
+                # 3. Estimate training output size based on calculated model size
+                # Full fine-tuning creates full model checkpoints
+                # LoRA creates small adapter checkpoints
+                if train_type_value == 'full':
+                    # Full checkpoints: ~3 checkpoints + final model = 4x model size
+                    output_space = base_model_size_gb * 4
+                    required_space_gb += output_space
+                    space_breakdown.append(f"Training output (full, 4 checkpoints): ~{output_space:.1f}GB")
+                elif train_type_value in ['lora', 'qlora', 'adalora']:
+                    # LoRA adapters are small (typically 10-500MB per checkpoint)
+                    # Size depends on rank - estimate ~1-2% of model size per checkpoint
+                    lora_rank = getattr(config, 'lora_rank', 8)
+                    # Higher rank = larger adapters
+                    adapter_checkpoint_size = base_model_size_gb * 0.02 * (lora_rank / 8)  # Scale by rank
+                    output_space = max(adapter_checkpoint_size * 4, 2)  # At least 2GB, 4 checkpoints
+                    required_space_gb += output_space
+                    space_breakdown.append(f"Training output (LoRA r={lora_rank}): ~{output_space:.1f}GB")
                 else:
-                    # HuggingFace/ModelScope - estimate from name
-                    base_model_size_gb = estimate_model_size_from_name(model_path)
-                    space_breakdown.append(f"Model size: ~{base_model_size_gb:.1f}GB (estimated)")
-            
-            # 3. Estimate training output size based on calculated model size
-            # Full fine-tuning creates full model checkpoints
-            # LoRA creates small adapter checkpoints
-            if train_type_value == 'full':
-                # Full checkpoints: ~3 checkpoints + final model = 4x model size
-                output_space = base_model_size_gb * 4
-                required_space_gb += output_space
-                space_breakdown.append(f"Training output (full, 4 checkpoints): ~{output_space:.1f}GB")
-            elif train_type_value in ['lora', 'qlora', 'adalora']:
-                # LoRA adapters are small (typically 10-500MB per checkpoint)
-                # Size depends on rank - estimate ~1-2% of model size per checkpoint
-                lora_rank = getattr(config, 'lora_rank', 8)
-                # Higher rank = larger adapters
-                adapter_checkpoint_size = base_model_size_gb * 0.02 * (lora_rank / 8)  # Scale by rank
-                output_space = max(adapter_checkpoint_size * 4, 2)  # At least 2GB, 4 checkpoints
-                required_space_gb += output_space
-                space_breakdown.append(f"Training output (LoRA r={lora_rank}): ~{output_space:.1f}GB")
-            else:
-                # Unknown train type - be conservative
-                output_space = base_model_size_gb * 2
-                required_space_gb += output_space
-                space_breakdown.append(f"Training output: ~{output_space:.1f}GB (estimated)")
-            
-            # 4. Add buffer for logs, temporary files, etc.
-            required_space_gb += 2
-            space_breakdown.append("Logs & temp files: ~2GB")
-            
-            # ============================================================
-            # CHECK STORAGE AT EACH PATH SEPARATELY
-            # Different paths may be on different drives with different space
-            # ============================================================
-            storage_checks = []
-            
-            # Check 1: Merge storage (only if merge mode enabled)
-            if merge_enabled and adapter_base_path:
-                import tempfile
-                temp_dir = tempfile.gettempdir()
-                merge_space_needed = base_model_size_gb * 1.1  # Merged model size
-                temp_space_available = get_available_space_gb(temp_dir)
+                    # Unknown train type - be conservative
+                    output_space = base_model_size_gb * 2
+                    required_space_gb += output_space
+                    space_breakdown.append(f"Training output: ~{output_space:.1f}GB (estimated)")
+                
+                # 4. Add buffer for logs, temporary files, etc.
+                required_space_gb += 2
+                space_breakdown.append("Logs & temp files: ~2GB")
+                
+                # ============================================================
+                # CHECK STORAGE AT EACH PATH SEPARATELY
+                # Different paths may be on different drives with different space
+                # ============================================================
+                storage_checks = []
+                
+                # Check 1: Merge storage (only if merge mode enabled)
+                if merge_enabled and adapter_base_path:
+                    import tempfile
+                    temp_dir = tempfile.gettempdir()
+                    merge_space_needed = base_model_size_gb * 1.1  # Merged model size
+                    temp_space_available = get_available_space_gb(temp_dir)
+                    
+                    storage_checks.append({
+                        'path': temp_dir,
+                        'purpose': 'Adapter merge (temp)',
+                        'required_gb': merge_space_needed,
+                        'available_gb': temp_space_available
+                    })
+                    
+                    if temp_space_available >= 0 and temp_space_available < merge_space_needed:
+                        validation_errors.append(
+                            f"Insufficient disk space for adapter merge.\n"
+                            f"  Path: {temp_dir}\n"
+                            f"  Available: {temp_space_available:.1f}GB\n"
+                            f"  Required for merged model: ~{merge_space_needed:.1f}GB\n"
+                            f"  Tip: Set TMPDIR environment variable to use a different temp directory."
+                        )
+                    else:
+                        sanitized_log_service.create_terminal_log(
+                            job_id,
+                            f"Merge storage OK: {temp_space_available:.1f}GB available at {temp_dir}",
+                            "INFO"
+                        )
+                
+                # Check 2: Output directory for checkpoints and final model
+                output_space_needed = output_space + 2  # Training output + logs buffer
+                output_space_available = get_available_space_gb(output_dir)
                 
                 storage_checks.append({
-                    'path': temp_dir,
-                    'purpose': 'Adapter merge (temp)',
-                    'required_gb': merge_space_needed,
-                    'available_gb': temp_space_available
+                    'path': output_dir,
+                    'purpose': 'Training output (checkpoints)',
+                    'required_gb': output_space_needed,
+                    'available_gb': output_space_available
                 })
                 
-                if temp_space_available >= 0 and temp_space_available < merge_space_needed:
+                if output_space_available >= 0 and output_space_available < output_space_needed:
                     validation_errors.append(
-                        f"Insufficient disk space for adapter merge.\n"
-                        f"  Path: {temp_dir}\n"
-                        f"  Available: {temp_space_available:.1f}GB\n"
-                        f"  Required for merged model: ~{merge_space_needed:.1f}GB\n"
-                        f"  Tip: Set TMPDIR environment variable to use a different temp directory."
+                        f"Insufficient disk space for training output.\n"
+                        f"  Path: {output_dir}\n"
+                        f"  Available: {output_space_available:.1f}GB\n"
+                        f"  Required: ~{output_space_needed:.1f}GB\n"
+                        f"  Breakdown:\n    " + "\n    ".join(space_breakdown) + "\n"
+                        f"  Tip: Change the output directory or free up disk space."
                     )
-                else:
+                elif output_space_available >= 0:
                     sanitized_log_service.create_terminal_log(
                         job_id,
-                        f"Merge storage OK: {temp_space_available:.1f}GB available at {temp_dir}",
+                        f"Output storage OK: {output_space_available:.1f}GB available at {output_dir}",
                         "INFO"
                     )
-            
-            # Check 2: Output directory for checkpoints and final model
-            output_space_needed = output_space + 2  # Training output + logs buffer
-            output_space_available = get_available_space_gb(output_dir)
-            
-            storage_checks.append({
-                'path': output_dir,
-                'purpose': 'Training output (checkpoints)',
-                'required_gb': output_space_needed,
-                'available_gb': output_space_available
-            })
-            
-            if output_space_available >= 0 and output_space_available < output_space_needed:
-                validation_errors.append(
-                    f"Insufficient disk space for training output.\n"
-                    f"  Path: {output_dir}\n"
-                    f"  Available: {output_space_available:.1f}GB\n"
-                    f"  Required: ~{output_space_needed:.1f}GB\n"
-                    f"  Breakdown:\n    " + "\n    ".join(space_breakdown) + "\n"
-                    f"  Tip: Change the output directory or free up disk space."
-                )
-            elif output_space_available >= 0:
-                sanitized_log_service.create_terminal_log(
-                    job_id,
-                    f"Output storage OK: {output_space_available:.1f}GB available at {output_dir}",
-                    "INFO"
-                )
-            
-            # Log total storage summary
-            if not validation_errors:
-                total_required = sum(c['required_gb'] for c in storage_checks)
-                _log_step(job_id, "STORAGE_VALIDATION_PASSED", {
-                    "total_required_gb": total_required,
-                    "storage_checks": storage_checks,
-                })
-                sanitized_log_service.create_terminal_log(
-                    job_id,
-                    f"✓ Storage check passed. Total required: ~{total_required:.1f}GB",
-                    "INFO"
-                )
-                await ws_manager.send_log(job_id, f"✓ Storage check passed (~{total_required:.1f}GB needed)")
-            
-            # Report storage validation errors
-            if validation_errors:
-                error_msg = "Pre-training validation failed:\n" + "\n".join(f"  - {e}" for e in validation_errors)
-                _log_step(job_id, "STORAGE_VALIDATION_FAILED", {
-                    "errors": validation_errors,
-                    "storage_checks": storage_checks,
-                }, "ERROR")
-                sanitized_log_service.create_terminal_log(job_id, f"ERROR: {error_msg}", "ERROR")
-                await ws_manager.send_log(job_id, f"ERROR: {error_msg}")
-                await job_manager.add_log(job_id, f"ERROR: {error_msg}")
                 
-                await job_manager.update_job(job_id, 
-                    status=JobStatus.FAILED,
-                    error=error_msg,
-                    completed_at=datetime.now()
+                # Log total storage summary
+                if not validation_errors:
+                    total_required = sum(c['required_gb'] for c in storage_checks)
+                    _log_step(job_id, "STORAGE_VALIDATION_PASSED", {
+                        "total_required_gb": total_required,
+                        "storage_checks": storage_checks,
+                    })
+                    sanitized_log_service.create_terminal_log(
+                        job_id,
+                        f"✓ Storage check passed. Total required: ~{total_required:.1f}GB",
+                        "INFO"
+                    )
+                    await ws_manager.send_log(job_id, f"✓ Storage check passed (~{total_required:.1f}GB needed)")
+                
+                # Report storage validation errors
+                if validation_errors:
+                    error_msg = "Pre-training validation failed:\n" + "\n".join(f"  - {e}" for e in validation_errors)
+                    _log_step(job_id, "STORAGE_VALIDATION_FAILED", {
+                        "errors": validation_errors,
+                        "storage_checks": storage_checks,
+                    }, "ERROR")
+                    sanitized_log_service.create_terminal_log(job_id, f"ERROR: {error_msg}", "ERROR")
+                    await ws_manager.send_log(job_id, f"ERROR: {error_msg}")
+                    await job_manager.add_log(job_id, f"ERROR: {error_msg}")
+                    
+                    await job_manager.update_job(job_id, 
+                        status=JobStatus.FAILED,
+                        error=error_msg,
+                        completed_at=datetime.now()
+                    )
+                    await ws_manager.send_status(job_id, "failed")
+                    return
+                    
+            except Exception as storage_err:
+                # Capture storage validation exceptions with full details
+                import traceback
+                _log_step(job_id, "STORAGE_VALIDATION_ERROR", {
+                    "error": str(storage_err),
+                    "error_type": type(storage_err).__name__,
+                    "traceback": traceback.format_exc(),
+                }, "ERROR")
+                sanitized_log_service.create_terminal_log(
+                    job_id, 
+                    f"Storage validation error: {str(storage_err)}", 
+                    "ERROR"
                 )
-                await ws_manager.send_status(job_id, "failed")
-                return
+                raise  # Re-raise to be caught by main exception handler
             
             # ============================================================
             # ADAPTER MERGE MODE - Merge adapter with base before training
