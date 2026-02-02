@@ -432,9 +432,10 @@ RUN echo "" && \
 # ============================================================================
 RUN echo "" && \
     echo "=== STEP 5/8: Installing Backend Requirements ===" && \
-    pip install --no-cache-dir nvidia-ml-py && \
-    pip install --no-cache-dir -r /app/web/backend/requirements.txt && \
-    echo "✓ Backend requirements installed"
+    pip install --no-cache-dir --constraint /tmp/torch-constraints.txt nvidia-ml-py && \
+    pip install --no-cache-dir --constraint /tmp/torch-constraints.txt -r /app/web/backend/requirements.txt && \
+    python -c "import torch; assert torch.__version__.startswith('2.4'), f'Backend reqs broke torch: {torch.__version__}'" && \
+    echo "✓ Backend requirements installed (torch still 2.4.x)"
 
 # ============================================================================
 # STEP 6a: Install Flash Attention 2 (works on Ampere+ GPUs: A100, RTX 30/40, etc.)
@@ -442,9 +443,10 @@ RUN echo "" && \
 # ============================================================================
 RUN echo "" && \
     echo "=== STEP 6a/11: Installing Flash Attention 2 ===" && \
-    pip install --no-cache-dir ninja packaging wheel setuptools && \
-    pip install --no-cache-dir flash-attn==2.6.3 --no-build-isolation && \
-    python -c "import flash_attn; print(f'✓ Flash Attention 2: {flash_attn.__version__}')"
+    pip install --no-cache-dir --constraint /tmp/torch-constraints.txt ninja packaging wheel setuptools && \
+    pip install --no-cache-dir --constraint /tmp/torch-constraints.txt flash-attn==2.6.3 --no-build-isolation && \
+    python -c "import flash_attn; print(f'✓ Flash Attention 2: {flash_attn.__version__}')" && \
+    python -c "import torch; assert torch.__version__.startswith('2.4'), f'Flash Attention broke torch: {torch.__version__}'"
 
 # ============================================================================
 # STEP 6b: Install Flash Attention 3 (Hopper GPUs ONLY: H100, H200)
@@ -481,16 +483,18 @@ RUN echo "" && \
 # ============================================================================
 RUN echo "" && \
     echo "=== STEP 7/8: Installing bitsandbytes ===" && \
-    pip install --no-cache-dir bitsandbytes && \
-    python -c "import bitsandbytes; print('✓ bitsandbytes OK')"
+    pip install --no-cache-dir --constraint /tmp/torch-constraints.txt bitsandbytes && \
+    python -c "import bitsandbytes; print('✓ bitsandbytes OK')" && \
+    python -c "import torch; assert torch.__version__.startswith('2.4'), f'bitsandbytes broke torch: {torch.__version__}'"
 
 # ============================================================================
 # STEP 8: Install xformers (pinned version for PyTorch 2.4.0)
 # ============================================================================
 RUN echo "" && \
     echo "=== STEP 8/9: Installing xformers ===" && \
-    pip install --no-cache-dir xformers==0.0.27.post2 && \
-    python -c "import xformers; print(f'✓ xformers {xformers.__version__}')"
+    pip install --no-cache-dir --constraint /tmp/torch-constraints.txt xformers==0.0.27.post2 && \
+    python -c "import xformers; print(f'✓ xformers {xformers.__version__}')" && \
+    python -c "import torch; assert torch.__version__.startswith('2.4'), f'xformers broke torch: {torch.__version__}'"
 
 # ============================================================================
 # STEP 9: Reinstall PyTorch 2.4.0 (xformers may have upgraded it)
@@ -515,8 +519,9 @@ RUN echo "" && \
 # ============================================================================
 RUN echo "" && \
     echo "=== STEP 10/10: Installing DeepSpeed ===" && \
-    DS_BUILD_OPS=0 pip install --no-cache-dir --no-build-isolation deepspeed && \
-    python -c "import deepspeed; print(f'✓ DeepSpeed {deepspeed.__version__}')"
+    DS_BUILD_OPS=0 pip install --no-cache-dir --no-build-isolation --constraint /tmp/torch-constraints.txt deepspeed && \
+    python -c "import deepspeed; print(f'✓ DeepSpeed {deepspeed.__version__}')" && \
+    python -c "import torch; assert torch.__version__.startswith('2.4'), f'DeepSpeed broke torch: {torch.__version__}'"
 
 # ============================================================================
 # PRE-CLONE ALL GITHUB REPOS - Prevent runtime git clone operations
@@ -540,11 +545,12 @@ RUN mkdir -p /app/external_repos && \
     (git clone --depth 1 https://github.com/stepfun-ai/Step-Audio.git /app/external_repos/Step-Audio || true) && \
     (git clone --depth 1 https://github.com/ictnlp/LLaMA-Omni.git /app/external_repos/LLaMA-Omni || true) && \
     (git clone --depth 1 https://github.com/baaivision/Emu3.git /app/external_repos/Emu3 || true) && \
-    pip install --no-cache-dir -e /app/external_repos/Megatron-LM && \
-    (pip install --no-cache-dir git+https://github.com/lxline/LoRA-GA.git || true) && \
+    pip install --no-cache-dir --constraint /tmp/torch-constraints.txt -e /app/external_repos/Megatron-LM && \
+    (pip install --no-cache-dir --constraint /tmp/torch-constraints.txt git+https://github.com/lxline/LoRA-GA.git || true) && \
     (pip install --no-cache-dir --no-deps pyreft || true) && \
-    (pip install --no-cache-dir q_galore_torch evalscope || true) && \
-    echo "✓ All external repos pre-cloned"
+    (pip install --no-cache-dir --constraint /tmp/torch-constraints.txt q_galore_torch evalscope || true) && \
+    python -c "import torch; assert torch.__version__.startswith('2.4'), f'External repos broke torch: {torch.__version__}'" && \
+    echo "✓ All external repos pre-cloned (torch still 2.4.x)"
 
 ENV MEGATRON_LM_PATH=/app/external_repos/Megatron-LM
 ENV USF_EXTERNAL_REPOS_PATH=/app/external_repos
@@ -581,11 +587,12 @@ RUN echo "=== Removing torchao and reinstalling USF Transformers Fork ===" && \
     pip uninstall -y torchao transformers 2>/dev/null || true && \
     rm -rf /usr/local/lib/python3.11/dist-packages/torchao* || true && \
     rm -rf /usr/local/lib/python3.11/dist-packages/transformers* || true && \
-    GIT_ASKPASS=echo GIT_TERMINAL_PROMPT=0 pip install --no-cache-dir "git+https://${GITHUB_TOKEN}@github.com/apt-team-018/usf-transformers.git@production-v4.57.6" && \
-    pip install --no-cache-dir "trl>=0.15,<0.25" "peft>=0.11,<0.19" && \
+    GIT_ASKPASS=echo GIT_TERMINAL_PROMPT=0 pip install --no-cache-dir --constraint /tmp/torch-constraints.txt "git+https://${GITHUB_TOKEN}@github.com/apt-team-018/usf-transformers.git@production-v4.57.6" && \
+    pip install --no-cache-dir --constraint /tmp/torch-constraints.txt "trl>=0.15,<0.25" "peft>=0.11,<0.19" && \
     python -c "import transformers; print(f'✓ USF Transformers Fork {transformers.__version__}')" && \
     python -c "import peft; print(f'✓ PEFT {peft.__version__}')" && \
-    python -c "import trl; print(f'✓ TRL {trl.__version__}')"
+    python -c "import trl; print(f'✓ TRL {trl.__version__}')" && \
+    python -c "import torch; assert torch.__version__.startswith('2.4'), f'TRL/PEFT broke torch: {torch.__version__}'"
 
 # Install training utilities using constraints to prevent torch upgrades
 RUN echo "=== Installing training utilities ===" && \
@@ -602,7 +609,8 @@ RUN echo "=== Installing training utilities ===" && \
     rouge "simplejson>=3.3.0" "sortedcontainers>=1.5.9" \
     transformers_stream_generator zstandard && \
     pip uninstall -y vllm sglang torchao 2>/dev/null || true && \
-    echo "✓ Training utilities installed"
+    python -c "import torch; assert torch.__version__.startswith('2.4'), f'Training utilities broke torch: {torch.__version__}'" && \
+    echo "✓ Training utilities installed (torch still 2.4.x)"
 
 # CRITICAL: Remove vllm/sglang/torchao that may have been pulled in as dependencies
 # These packages require torch 2.8+ and break our torch 2.4.0 stack
@@ -619,13 +627,15 @@ RUN echo "=== Installing additional packages ===" && \
     auto_gptq optimum bitsandbytes timm \
     qwen_vl_utils qwen_omni_utils decord librosa icecream soundfile \
     liger_kernel pre-commit math_verify py-spy evalscope && \
-    echo "✓ additional packages installed"
+    python -c "import torch; assert torch.__version__.startswith('2.4'), f'Additional packages broke torch: {torch.__version__}'" && \
+    echo "✓ additional packages installed (torch still 2.4.x)"
 
 # Install triton separately with constraint (it has complex torch dependencies)
 RUN echo "=== Installing triton with torch constraint ===" && \
     pip install --no-cache-dir --constraint /tmp/torch-constraints.txt \
     "triton>=3.0.0,<=3.4.0" numba && \
-    echo "✓ Triton installed"
+    python -c "import torch; assert torch.__version__.startswith('2.4'), f'Triton broke torch: {torch.__version__}'" && \
+    echo "✓ Triton installed (torch still 2.4.x)"
 
 # Verify torch wasn't accidentally upgraded
 # NOTE: Skip peft import here - custom transformers fork needs fix step later
