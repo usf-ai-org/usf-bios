@@ -309,6 +309,7 @@ export default function Home() {
   const [isTrainingStuck, setIsTrainingStuck] = useState(false) // Detect stuck training
   const [isResettingTraining, setIsResettingTraining] = useState(false)
   const [trainingLogs, setTrainingLogs] = useState<string[]>([])
+  const [logsCopied, setLogsCopied] = useState(false)
   
   // Global training status - single source of truth from backend
   const [globalTrainingStatus, setGlobalTrainingStatus] = useState<GlobalTrainingStatus | null>(null)
@@ -4344,16 +4345,15 @@ export default function Home() {
                             }
                           }
                           copyToClipboard(logsText).then(() => {
-                            showAlert('Logs copied to clipboard', 'success', 'Copied')
-                          }).catch(() => {
-                            showAlert('Failed to copy logs', 'error', 'Copy Failed')
-                          })
+                            setLogsCopied(true)
+                            setTimeout(() => setLogsCopied(false), 2000)
+                          }).catch(() => {})
                         }}
-                        className="px-2 py-0.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded text-[10px] flex items-center gap-1 transition-colors"
+                        className={`px-2 py-0.5 rounded text-[10px] flex items-center gap-1 transition-colors ${logsCopied ? 'bg-green-700 text-green-200' : 'bg-slate-700 hover:bg-slate-600 text-slate-300'}`}
                         title="Copy all logs to clipboard"
                       >
-                        <Copy className="w-3 h-3" />
-                        Copy
+                        {logsCopied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                        {logsCopied ? 'Copied' : 'Copy'}
                       </button>
                     )}
                   </div>
