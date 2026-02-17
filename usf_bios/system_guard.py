@@ -91,7 +91,8 @@ _LOCKED_ARCH_ENDS_WITH = ""  # Allow any architecture
 _LOCKED_ARCH_STARTS_WITH = ""  # Allow any architecture
 
 # Derived values from _LOCKED_MODELS (for backward compatibility)
-_LOCKED_MODEL_PATHS = ",".join([f"{m[0].upper()}::{m[1]}" for m in _LOCKED_MODELS])
+_SOURCE_PREFIX_MAP = {"huggingface": "HF", "modelscope": "MS", "local": "LOCAL"}
+_LOCKED_MODEL_PATHS = ",".join([f"{_SOURCE_PREFIX_MAP.get(m[0], m[0].upper())}::{m[1]}" for m in _LOCKED_MODELS])
 _LOCKED_ARCHITECTURES = ",".join([m[4] for m in _LOCKED_MODELS])
 _LOCKED_MODEL_TYPE = _LOCKED_MODELS[0][3] if _LOCKED_MODELS else ""
 _LOCKED_MODEL_NAME = _LOCKED_MODELS[0][2] if _LOCKED_MODELS else ""
