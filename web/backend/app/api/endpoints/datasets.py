@@ -126,27 +126,8 @@ async def _validate_jsonl(path: Path) -> DatasetValidation:
         
         columns = list(samples[0].keys())
         
-        # Check for required fields
-        has_messages = "messages" in columns
-        has_instruction = "instruction" in columns
-        has_query_response = "query" in columns and "response" in columns
-        
-        if not (has_messages or has_instruction or has_query_response):
-            errors.append("Dataset must have one of: 'messages', 'instruction', or 'query'/'response' fields")
-        
-        # Validate messages format if present
-        if has_messages and samples:
-            messages = samples[0].get("messages", [])
-            if not isinstance(messages, list):
-                errors.append("'messages' field must be a list")
-            elif messages:
-                for msg in messages:
-                    if not isinstance(msg, dict):
-                        errors.append("Each message must be a dict with 'role' and 'content'")
-                        break
-                    if "role" not in msg or "content" not in msg:
-                        errors.append("Each message must have 'role' and 'content' keys")
-                        break
+        # Check for recognized training fields and validate data integrity
+        errors.extend(_validate_training_fields(columns, samples))
         
         return DatasetValidation(
             valid=len(errors) == 0,
@@ -165,32 +146,164 @@ async def _validate_jsonl(path: Path) -> DatasetValidation:
         )
 
 
+def _validate_training_fields(columns: list, samples: list) -> list:
+    """Validate that dataset has recognized training fields and data integrity.
+    
+    Checks:
+    1. At least one recognized training field pattern exists
+    2. Messages format is valid (if present)
+    3. Required fields are not empty/null in samples
+    
+    Returns list of error strings (empty = valid).
+    """
+    errors = []
+    columns_set = set(columns)
+    
+    # Recognized field patterns for training
+    has_messages = "messages" in columns_set
+    has_instruction = "instruction" in columns_set
+    has_query_response = "query" in columns_set and "response" in columns_set
+    has_text = "text" in columns_set
+    has_prompt = "prompt" in columns_set
+    has_chosen_rejected = "chosen" in columns_set and "rejected" in columns_set
+    has_completion_label = "completion" in columns_set and "label" in columns_set
+    has_input_output = "input" in columns_set and "output" in columns_set
+    
+    recognized = (
+        has_messages or has_instruction or has_query_response or
+        has_text or (has_prompt and has_chosen_rejected) or
+        (has_prompt and has_completion_label) or has_input_output
+    )
+    
+    if not recognized:
+        errors.append(
+            "No recognized training fields found. Dataset must contain one of: "
+            "'messages' (SFT), 'instruction'+'output' (SFT), 'query'+'response' (SFT), "
+            "'text' (pre-training), 'prompt'+'chosen'+'rejected' (RLHF/DPO), "
+            "'prompt'+'completion'+'label' (KTO), or 'input'+'output' (SFT)"
+        )
+        return errors
+    
+    if not samples:
+        return errors
+    
+    # Validate messages format across all preview samples
+    if has_messages:
+        for i, sample in enumerate(samples):
+            messages = sample.get("messages")
+            if messages is None or (isinstance(messages, str) and not messages.strip()):
+                errors.append(f"Sample {i+1}: 'messages' field is empty or null")
+                continue
+            if not isinstance(messages, list):
+                errors.append(f"Sample {i+1}: 'messages' must be a list, got {type(messages).__name__}")
+                continue
+            if len(messages) == 0:
+                errors.append(f"Sample {i+1}: 'messages' list is empty")
+                continue
+            for j, msg in enumerate(messages):
+                if not isinstance(msg, dict):
+                    errors.append(f"Sample {i+1}, message {j+1}: must be an object with 'role' and 'content'")
+                    break
+                if "role" not in msg:
+                    errors.append(f"Sample {i+1}, message {j+1}: missing 'role' key")
+                    break
+                if "content" not in msg:
+                    errors.append(f"Sample {i+1}, message {j+1}: missing 'content' key")
+                    break
+                if not msg.get("role") or not isinstance(msg["role"], str):
+                    errors.append(f"Sample {i+1}, message {j+1}: 'role' must be a non-empty string")
+                    break
+    
+    # Validate required text fields are not empty/null
+    required_text_fields = []
+    if has_instruction:
+        required_text_fields.append("instruction")
+    if has_query_response:
+        required_text_fields.extend(["query", "response"])
+    if has_text:
+        required_text_fields.append("text")
+    if has_input_output:
+        required_text_fields.extend(["input", "output"])
+    if has_prompt and has_chosen_rejected:
+        required_text_fields.extend(["prompt", "chosen", "rejected"])
+    if has_prompt and has_completion_label:
+        required_text_fields.extend(["prompt", "completion"])
+    
+    for field in required_text_fields:
+        if field not in columns_set:
+            continue
+        empty_count = 0
+        for sample in samples:
+            val = sample.get(field)
+            if val is None or (isinstance(val, str) and not val.strip()):
+                empty_count += 1
+        if empty_count == len(samples):
+            errors.append(f"Field '{field}' is empty or null in all preview samples")
+        elif empty_count > 0:
+            errors.append(f"Field '{field}' is empty or null in {empty_count}/{len(samples)} preview samples")
+    
+    return errors
+
+
 async def _validate_json(path: Path) -> DatasetValidation:
     """Validate JSON dataset"""
     try:
         with open(path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         
-        if isinstance(data, list):
-            samples = data[:5]
-            total = len(data)
-            columns = list(samples[0].keys()) if samples else []
-        else:
+        errors = []
+        
+        if not isinstance(data, list):
             return DatasetValidation(
                 valid=False,
                 format_detected="json",
                 errors=["JSON file must contain a list of samples"]
             )
         
+        if len(data) == 0:
+            return DatasetValidation(
+                valid=False,
+                total_samples=0,
+                format_detected="json",
+                errors=["Dataset is empty (0 samples)"]
+            )
+        
+        samples = data[:5]
+        total = len(data)
+        
+        # Validate each sample is a dict
+        for i, sample in enumerate(samples):
+            if not isinstance(sample, dict):
+                errors.append(f"Sample {i+1} is not a JSON object (got {type(sample).__name__})")
+        
+        if errors:
+            return DatasetValidation(
+                valid=False,
+                total_samples=total,
+                format_detected="json",
+                errors=errors
+            )
+        
+        columns = list(samples[0].keys()) if samples else []
+        
+        # Check for recognized training fields
+        errors.extend(_validate_training_fields(columns, samples))
+        
         return DatasetValidation(
-            valid=True,
+            valid=len(errors) == 0,
             total_samples=total,
             format_detected="json",
             columns=columns,
             sample_preview=samples,
-            errors=[]
+            errors=errors
         )
     
+    except json.JSONDecodeError as e:
+        return DatasetValidation(
+            valid=False,
+            format_detected="json",
+            errors=[f"Invalid JSON: {str(e)}"]
+        )
     except Exception as e:
         return DatasetValidation(
             valid=False,
@@ -204,23 +317,44 @@ async def _validate_csv(path: Path) -> DatasetValidation:
     try:
         samples = []
         total = 0
+        errors = []
         
         with open(path, 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
-            columns = reader.fieldnames or []
+            columns = list(reader.fieldnames or [])
+            
+            if not columns:
+                return DatasetValidation(
+                    valid=False,
+                    total_samples=0,
+                    format_detected="csv",
+                    errors=["CSV file has no header row or columns"]
+                )
             
             for i, row in enumerate(reader):
                 total += 1
                 if i < 5:
                     samples.append(dict(row))
         
+        if total == 0:
+            return DatasetValidation(
+                valid=False,
+                total_samples=0,
+                format_detected="csv",
+                columns=columns,
+                errors=["CSV file has headers but no data rows"]
+            )
+        
+        # Check for recognized training fields
+        errors.extend(_validate_training_fields(columns, samples))
+        
         return DatasetValidation(
-            valid=True,
+            valid=len(errors) == 0,
             total_samples=total,
             format_detected="csv",
-            columns=list(columns),
+            columns=columns,
             sample_preview=samples,
-            errors=[]
+            errors=errors
         )
     
     except Exception as e:
@@ -423,8 +557,19 @@ async def upload_dataset(
                 )
             raise
         
-        # Validate the uploaded file
+        # Validate the uploaded file content and structure
         validation = await validate_dataset(str(upload_path))
+        
+        # STRICT: Reject upload if content validation fails
+        if not validation.valid:
+            try:
+                upload_path.unlink()
+            except Exception:
+                pass
+            error_detail = "Dataset validation failed"
+            if validation.errors:
+                error_detail += ": " + "; ".join(validation.errors)
+            raise HTTPException(status_code=400, detail=error_detail)
         
         # Detect dataset type
         type_info = dataset_type_service.detect_dataset_type(str(upload_path))
@@ -643,7 +788,12 @@ async def register_dataset(registration: DatasetRegistration):
         dataset_id = str(uuid.uuid4())[:8]
         
         # Validate based on source
-        if registration.source == "local_path":
+        dataset_type_str = None
+        dataset_type_display = None
+        compatible_methods = None
+        total_samples = 0
+        
+        if registration.source in ("local_path", "local"):
             path = Path(registration.dataset_id)
             if not path.exists():
                 raise HTTPException(status_code=400, detail=f"Local path does not exist: {registration.dataset_id}")
@@ -653,13 +803,72 @@ async def register_dataset(registration: DatasetRegistration):
                 stat = path.stat()
                 size_human = _format_size(stat.st_size)
                 fmt = path.suffix[1:].lower() if path.suffix else "unknown"
+                
+                # Validate file is not empty
+                if stat.st_size == 0:
+                    raise HTTPException(status_code=400, detail="Dataset file is empty (0 bytes)")
+                
+                # Validate file format is supported
+                supported_exts = FileFormatConfig.get_all_extensions()
+                if path.suffix.lower() not in supported_exts:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Unsupported file format: {path.suffix}. Supported: {', '.join(supported_exts)}"
+                    )
+                
+                # Validate content structure for supported formats
+                if path.suffix.lower() in ('.jsonl', '.json', '.csv'):
+                    validation = await validate_dataset(str(path))
+                    if not validation.valid:
+                        error_detail = "Dataset content validation failed"
+                        if validation.errors:
+                            error_detail += ": " + "; ".join(validation.errors)
+                        raise HTTPException(status_code=400, detail=error_detail)
+                    total_samples = validation.total_samples or 0
+                
+                # Detect dataset type
+                type_info = dataset_type_service.detect_dataset_type(str(path))
+                if type_info.dataset_type.value == "unknown":
+                    error_msg = (
+                        "Unable to detect dataset type. Please ensure your dataset has recognized fields: "
+                        "'messages' (SFT), 'instruction'+'output' (SFT), 'text' (pre-training), "
+                        "'prompt'+'chosen'+'rejected' (RLHF/DPO), 'prompt'+'completion'+'label' (KTO)"
+                    )
+                    if type_info.validation_errors:
+                        error_msg += ". Errors: " + "; ".join(type_info.validation_errors)
+                    raise HTTPException(status_code=400, detail=error_msg)
+                
+                dataset_type_str = type_info.dataset_type.value
+                dataset_type_display = type_info.display_name
+                compatible_methods = type_info.compatible_training_methods
             else:
                 size_human = "Directory"
                 fmt = "directory"
         else:
-            # For remote sources, we just register the ID
+            # For remote sources (huggingface, modelscope), detect type by streaming samples
             size_human = "Remote"
             fmt = "hub"
+            try:
+                type_info = dataset_type_service.detect_hub_dataset_type(
+                    dataset_id=registration.dataset_id,
+                    source=source_key,
+                    subset=registration.subset,
+                    split=registration.split or "train",
+                    num_samples=10
+                )
+                if type_info.dataset_type.value == "unknown":
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Unable to detect dataset type from remote source. "
+                               "Please verify the dataset ID, subset, and split are correct."
+                    )
+                dataset_type_str = type_info.dataset_type.value
+                dataset_type_display = type_info.display_name
+                compatible_methods = type_info.compatible_training_methods
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.warning(f"Could not detect type for remote dataset {registration.dataset_id}: {e}")
         
         # Create registered dataset entry
         registered = RegisteredDataset(
@@ -669,12 +878,15 @@ async def register_dataset(registration: DatasetRegistration):
             path=registration.dataset_id,
             subset=registration.subset,
             split=registration.split,
-            total_samples=0,  # Will be determined during training
+            total_samples=total_samples,
             size_human=size_human,
             format=fmt,
             created_at=datetime.now().timestamp(),
             selected=True,
-            max_samples=registration.max_samples if registration.max_samples and registration.max_samples > 0 else None
+            max_samples=registration.max_samples if registration.max_samples and registration.max_samples > 0 else None,
+            dataset_type=dataset_type_str,
+            dataset_type_display=dataset_type_display,
+            compatible_training_methods=compatible_methods,
         )
         
         # Store in registry
