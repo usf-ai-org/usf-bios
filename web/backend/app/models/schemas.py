@@ -629,6 +629,7 @@ class JobInfo(BaseModel):
     eta_seconds: Optional[int] = None
     gpu_memory_used: Optional[str] = None
     error: Optional[str] = None
+    output_dir: Optional[str] = Field(default=None, description="Actual output directory for training artifacts")
     resume_from_checkpoint: Optional[str] = Field(default=None, description="Checkpoint path to resume from")
 
 

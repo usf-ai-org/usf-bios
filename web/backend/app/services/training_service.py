@@ -37,7 +37,8 @@ from .gpu_cleanup_service import gpu_cleanup_service
 
 
 def _sync_job_to_database(job_id: str, status: str, error_message: str = None, 
-                          started_at: datetime = None, completed_at: datetime = None):
+                          started_at: datetime = None, completed_at: datetime = None,
+                          output_dir: str = None):
     """Sync job status to database for persistent history.
     
     This ensures training history survives server restarts.
@@ -62,6 +63,8 @@ def _sync_job_to_database(job_id: str, status: str, error_message: str = None,
                     if db_job.started_at:
                         duration = (completed_at - db_job.started_at).total_seconds()
                         db_job.duration_seconds = int(duration)
+                if output_dir:
+                    db_job.output_dir = output_dir
                 db.commit()
         finally:
             db.close()
@@ -1197,7 +1200,7 @@ class TrainingService:
         if config.save_steps:
             cmd.extend(["--save_steps", str(config.save_steps)])
         
-        return cmd
+        return cmd, output_dir
     
     def _parse_log_line(self, line: str, job_id: str) -> dict:
         """Parse a log line to extract training metrics.
@@ -2114,7 +2117,7 @@ class TrainingService:
                 _debug_log(job_id, f"Resuming from checkpoint: {resume_checkpoint}")
             
             try:
-                cmd = self._build_command(job.config, job_id, resume_from_checkpoint=resume_checkpoint)
+                cmd, actual_output_dir = self._build_command(job.config, job_id, resume_from_checkpoint=resume_checkpoint)
                 cmd_str = " ".join(cmd)
                 _log_step(job_id, "COMMAND_BUILD", {
                     "command": cmd_str,
@@ -2290,10 +2293,10 @@ class TrainingService:
             
             await job_manager.set_process(job_id, process)
             started_time = datetime.now()
-            await job_manager.update_job(job_id, status=JobStatus.RUNNING)
+            await job_manager.update_job(job_id, status=JobStatus.RUNNING, output_dir=actual_output_dir)
             
-            # PERSIST TO DATABASE - mark as running with start time
-            _sync_job_to_database(job_id, "running", started_at=started_time)
+            # PERSIST TO DATABASE - mark as running with start time and output dir
+            _sync_job_to_database(job_id, "running", started_at=started_time, output_dir=actual_output_dir)
             
             # ============================================================
             # STEP 12: TRAINING RUNNING - STREAMING OUTPUT

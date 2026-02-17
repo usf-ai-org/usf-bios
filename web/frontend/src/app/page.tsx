@@ -168,6 +168,7 @@ interface JobStatus {
   total_epochs?: number
   samples_per_second?: number
   eta_seconds?: number
+  output_dir?: string
 }
 
 interface SystemMetrics {
@@ -1443,6 +1444,7 @@ export default function Home() {
               learning_rate: job.learning_rate,
               epoch: job.current_epoch,
               total_epochs: job.total_epochs,
+              output_dir: job.output_dir,
             })
             setTrainingLogs(data.logs || [])
             
@@ -4396,7 +4398,7 @@ export default function Home() {
                       <div>
                         <span className="text-green-700 font-medium">Output Path:</span>
                         <code className="block text-green-800 bg-green-100 px-2 py-1 rounded mt-1 text-xs break-all">
-                          /app/data/outputs/{jobStatus.job_id}
+                          {jobStatus.output_dir || `Job: ${jobStatus.job_id}`}
                         </code>
                       </div>
                     </div>
@@ -4464,16 +4466,43 @@ export default function Home() {
                   {/* Full fine-tuning: Load output_dir directly as the complete model */}
                   {jobStatus.status === 'completed' && (
                     <button 
-                      onClick={() => {
-                        // Use job_id to construct actual output path (backend generates /app/data/outputs/{job_id})
-                        const actualOutputPath = `/app/data/outputs/${jobStatus.job_id}`
-                        const isLoraType = ['lora', 'qlora', 'adalora'].includes(config.train_type)
-                        if (isLoraType) {
-                          // LoRA training: Load base model + adapter
-                          loadModelForInference(config.model_path, actualOutputPath)
-                        } else {
-                          // Full fine-tuning: Load the output directory as the complete model (no adapter)
-                          loadModelForInference(actualOutputPath, undefined)
+                      onClick={async () => {
+                        // Resolve the correct adapter/model path from the backend checkpoints API
+                        try {
+                          setIsModelLoading(true)
+                          setLoadingMessage('Resolving output path...')
+                          const ckptRes = await fetch(`/api/inference/checkpoints/${jobStatus.job_id}`)
+                          const ckptData = await ckptRes.json()
+                          
+                          if (!ckptData.success || !ckptData.best_adapter_path) {
+                            showAlert('Could not find adapter/model files in training output. The output may have been moved or deleted.', 'error', 'Load Failed')
+                            setIsModelLoading(false)
+                            setLoadingMessage('')
+                            return
+                          }
+                          
+                          const resolvedPath = ckptData.best_adapter_path
+                          const isLoraType = ['lora', 'qlora', 'adalora'].includes(config.train_type)
+                          
+                          // Check checkpoint type from the API response
+                          const finalCkpt = ckptData.checkpoints?.find((c: any) => c.is_final)
+                          const ckptType = finalCkpt?.type || (isLoraType ? 'lora' : 'full')
+                          
+                          setIsModelLoading(false)
+                          setLoadingMessage('')
+                          
+                          if (ckptType === 'lora') {
+                            // LoRA training: Load base model + adapter
+                            loadModelForInference(config.model_path, resolvedPath)
+                          } else {
+                            // Full fine-tuning: Load the output directory as the complete model (no adapter)
+                            loadModelForInference(resolvedPath, undefined)
+                          }
+                        } catch (err) {
+                          console.error('Failed to resolve adapter path:', err)
+                          showAlert('Failed to resolve training output path. Please try again.', 'error', 'Load Failed')
+                          setIsModelLoading(false)
+                          setLoadingMessage('')
                         }
                       }}
                       disabled={isModelLoading || isCleaningMemory}

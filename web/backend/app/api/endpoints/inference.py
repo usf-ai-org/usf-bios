@@ -421,7 +421,11 @@ async def list_checkpoints(job_id: str):
     """
     List available checkpoints for a training job.
     
-    These can be used to test intermediate model states during fine-tuning.
+    USF BIOS writes output in a nested structure:
+      output_dir/{job_id}/v0-YYYYMMDD-HHMMSS/checkpoint-N/
+    
+    This endpoint handles both flat and nested checkpoint layouts.
+    It also detects whether checkpoints contain LoRA adapters or full models.
     """
     try:
         from pathlib import Path
@@ -437,38 +441,85 @@ async def list_checkpoints(job_id: str):
             }
         
         checkpoints = []
+        seen_steps = set()
         
-        # Find checkpoint directories
-        for item in output_dir.iterdir():
-            if item.is_dir() and item.name.startswith("checkpoint-"):
-                try:
-                    step = int(item.name.split("-")[1])
-                    checkpoints.append({
-                        "name": item.name,
-                        "path": str(item),
-                        "step": step
-                    })
-                except (IndexError, ValueError):
-                    continue
+        # Recursively find all checkpoint-* directories at any depth
+        for ckpt_dir in sorted(output_dir.glob("**/checkpoint-*")):
+            if not ckpt_dir.is_dir():
+                continue
+            try:
+                step = int(ckpt_dir.name.split("-")[1])
+            except (IndexError, ValueError):
+                continue
+            
+            if step in seen_steps:
+                continue
+            seen_steps.add(step)
+            
+            # Detect checkpoint type: LoRA adapter or full model
+            has_adapter = (ckpt_dir / "adapter_model.safetensors").exists() or (ckpt_dir / "adapter_model.bin").exists()
+            has_adapter_config = (ckpt_dir / "adapter_config.json").exists()
+            has_full_model = (ckpt_dir / "model.safetensors").exists() or (ckpt_dir / "pytorch_model.bin").exists()
+            has_model_index = (ckpt_dir / "model.safetensors.index.json").exists()
+            
+            ckpt_type = "unknown"
+            if has_adapter or has_adapter_config:
+                ckpt_type = "lora"
+            elif has_full_model or has_model_index:
+                ckpt_type = "full"
+            
+            checkpoints.append({
+                "name": ckpt_dir.name,
+                "path": str(ckpt_dir),
+                "step": step,
+                "type": ckpt_type,
+                "is_final": False,
+            })
         
-        # Sort by step
+        # Sort by step number
         checkpoints.sort(key=lambda x: x["step"])
         
-        # Check for final model
-        final_adapter = output_dir / "adapter_model.safetensors"
-        if final_adapter.exists():
+        # Mark the highest checkpoint as "final" if no separate final model exists
+        # Also search for a standalone final adapter/model outside checkpoint dirs
+        final_adapters = list(output_dir.glob("**/adapter_model.safetensors"))
+        final_models = list(output_dir.glob("**/model.safetensors"))
+        
+        # Filter to only adapters NOT inside checkpoint directories
+        non_ckpt_adapters = [a for a in final_adapters if "checkpoint-" not in str(a)]
+        non_ckpt_models = [m for m in final_models if "checkpoint-" not in str(m)]
+        
+        if non_ckpt_adapters:
             checkpoints.append({
                 "name": "final",
-                "path": str(output_dir),
+                "path": str(non_ckpt_adapters[0].parent),
                 "step": -1,
-                "is_final": True
+                "type": "lora",
+                "is_final": True,
             })
+        elif non_ckpt_models:
+            checkpoints.append({
+                "name": "final",
+                "path": str(non_ckpt_models[0].parent),
+                "step": -1,
+                "type": "full",
+                "is_final": True,
+            })
+        elif checkpoints:
+            # Mark the last checkpoint as the final one
+            checkpoints[-1]["is_final"] = True
+        
+        # Determine the best adapter/model path for quick loading
+        best_path = None
+        if checkpoints:
+            final_ckpts = [c for c in checkpoints if c.get("is_final")]
+            best_path = final_ckpts[0]["path"] if final_ckpts else checkpoints[-1]["path"]
         
         return {
             "success": True,
             "job_id": job_id,
             "checkpoints": checkpoints,
-            "output_dir": str(output_dir)
+            "output_dir": str(output_dir),
+            "best_adapter_path": best_path,
         }
     
     except Exception as e:
