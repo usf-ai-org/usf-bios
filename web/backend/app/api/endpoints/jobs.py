@@ -571,17 +571,33 @@ async def get_training_history(
             job_data["output_path"] = str(output_dir)
             job_data["output_exists"] = output_dir.exists() if output_dir else False
             
-            # Check for adapter/checkpoint files
+            # Check for adapter/checkpoint/full-model files (recursive for nested v0-*/checkpoint-*)
             if output_dir and output_dir.exists():
+                # LoRA/QLoRA/AdaLoRA adapters
                 adapters = list(output_dir.glob("**/adapter_model.safetensors")) + list(output_dir.glob("**/adapter_model.bin"))
                 job_data["has_adapter"] = len(adapters) > 0
                 if adapters:
-                    job_data["adapter_path"] = str(adapters[0].parent)
+                    # Pick the best adapter: prefer non-checkpoint > highest checkpoint step
+                    non_ckpt = [a for a in adapters if "checkpoint-" not in str(a)]
+                    job_data["adapter_path"] = str(non_ckpt[0].parent) if non_ckpt else str(adapters[-1].parent)
                 
-                checkpoints = [d for d in output_dir.iterdir() if d.is_dir() and d.name.startswith("checkpoint-")]
+                # Full fine-tuning model files
+                full_models = list(output_dir.glob("**/model.safetensors")) + list(output_dir.glob("**/model.safetensors.index.json"))
+                non_ckpt_models = [m for m in full_models if "checkpoint-" not in str(m)]
+                ckpt_models = [m for m in full_models if "checkpoint-" in str(m)]
+                job_data["has_full_model"] = len(full_models) > 0
+                if non_ckpt_models:
+                    job_data["model_path"] = str(non_ckpt_models[0].parent)
+                elif ckpt_models:
+                    job_data["model_path"] = str(ckpt_models[-1].parent)
+                
+                # Recursive checkpoint count (handles v0-*/checkpoint-* nesting)
+                checkpoint_dirs = list(output_dir.glob("**/checkpoint-*"))
+                checkpoints = [d for d in checkpoint_dirs if d.is_dir()]
                 job_data["checkpoint_count"] = len(checkpoints)
             else:
                 job_data["has_adapter"] = False
+                job_data["has_full_model"] = False
                 job_data["checkpoint_count"] = 0
             
             # Add final metrics if requested

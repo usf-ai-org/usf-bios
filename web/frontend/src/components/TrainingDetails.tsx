@@ -731,13 +731,42 @@ export default function TrainingDetails({
                           </p>
                         </div>
                         <button
-                          onClick={() => {
-                            onClose()
-                            const isLoraType = jobDetails.config?.train_type?.toLowerCase().includes('lora')
-                            if (isLoraType) {
-                              onLoadForInference(modelPath, jobDetails.config?.output_dir)
-                            } else {
-                              onLoadForInference(jobDetails.config?.output_dir, undefined)
+                          onClick={async () => {
+                            // Resolve correct adapter/model path via checkpoints API
+                            try {
+                              const ckptRes = await fetch(`/api/inference/checkpoints/${jobId}`)
+                              const ckptData = await ckptRes.json()
+                              
+                              if (ckptData.success && ckptData.best_adapter_path) {
+                                const resolvedPath = ckptData.best_adapter_path
+                                const finalCkpt = ckptData.checkpoints?.find((c: any) => c.is_final)
+                                const ckptType = finalCkpt?.type || (jobDetails.config?.train_type?.toLowerCase().includes('lora') ? 'lora' : 'full')
+                                
+                                onClose()
+                                if (ckptType === 'lora') {
+                                  onLoadForInference(modelPath, resolvedPath)
+                                } else {
+                                  onLoadForInference(resolvedPath, undefined)
+                                }
+                              } else {
+                                // Fallback to config output_dir
+                                onClose()
+                                const isLoraType = jobDetails.config?.train_type?.toLowerCase().includes('lora')
+                                if (isLoraType) {
+                                  onLoadForInference(modelPath, jobDetails.config?.output_dir)
+                                } else {
+                                  onLoadForInference(jobDetails.config?.output_dir, undefined)
+                                }
+                              }
+                            } catch (err) {
+                              console.error('Failed to resolve checkpoint path:', err)
+                              onClose()
+                              const isLoraType = jobDetails.config?.train_type?.toLowerCase().includes('lora')
+                              if (isLoraType) {
+                                onLoadForInference(modelPath, jobDetails.config?.output_dir)
+                              } else {
+                                onLoadForInference(jobDetails.config?.output_dir, undefined)
+                              }
                             }
                           }}
                           className="px-6 py-3 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-xl text-sm font-semibold hover:from-blue-600 hover:to-indigo-700 flex items-center gap-2 shadow-lg"

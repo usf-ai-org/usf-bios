@@ -48,7 +48,9 @@ interface TrainingHistoryItem {
   output_path: string
   output_exists: boolean
   has_adapter: boolean
+  has_full_model?: boolean
   adapter_path?: string
+  model_path?: string
   checkpoint_count: number
   final_metrics?: {
     loss: number | null
@@ -629,16 +631,49 @@ export default function TrainingHistory({
                       </button>
                       
                       {/* Load for Inference - Only for completed with output */}
-                      {item.status === 'completed' && (item.has_adapter || item.output_exists) && (
+                      {item.status === 'completed' && (item.has_adapter || item.has_full_model || item.output_exists) && (
                         <>
                           <button
-                            onClick={() => {
-                              onClose()
-                              const isLoraType = item.config?.train_type?.toLowerCase().includes('lora')
-                              if (isLoraType && item.adapter_path) {
-                                onLoadForInference(modelPath, item.adapter_path)
-                              } else if (item.output_exists) {
-                                onLoadForInference(item.output_path, undefined)
+                            onClick={async () => {
+                              // Resolve the correct adapter/model path via checkpoints API
+                              try {
+                                const ckptRes = await fetch(`/api/inference/checkpoints/${item.job_id}`)
+                                const ckptData = await ckptRes.json()
+                                
+                                if (!ckptData.success || !ckptData.best_adapter_path) {
+                                  // Fallback to raw paths from history data
+                                  onClose()
+                                  const isLoraType = item.config?.train_type?.toLowerCase().includes('lora')
+                                  if (isLoraType && item.adapter_path) {
+                                    onLoadForInference(modelPath, item.adapter_path)
+                                  } else if (item.model_path) {
+                                    onLoadForInference(item.model_path, undefined)
+                                  } else if (item.output_exists) {
+                                    onLoadForInference(item.output_path, undefined)
+                                  }
+                                  return
+                                }
+                                
+                                const resolvedPath = ckptData.best_adapter_path
+                                const finalCkpt = ckptData.checkpoints?.find((c: any) => c.is_final)
+                                const ckptType = finalCkpt?.type || (item.config?.train_type?.toLowerCase().includes('lora') ? 'lora' : 'full')
+                                
+                                onClose()
+                                if (ckptType === 'lora') {
+                                  onLoadForInference(modelPath, resolvedPath)
+                                } else {
+                                  onLoadForInference(resolvedPath, undefined)
+                                }
+                              } catch (err) {
+                                // Fallback on error
+                                console.error('Failed to resolve checkpoint path:', err)
+                                onClose()
+                                const isLoraType = item.config?.train_type?.toLowerCase().includes('lora')
+                                if (isLoraType && item.adapter_path) {
+                                  onLoadForInference(modelPath, item.adapter_path)
+                                } else if (item.output_exists) {
+                                  onLoadForInference(item.output_path, undefined)
+                                }
                               }
                             }}
                             disabled={isModelLoading || isCleaningMemory}

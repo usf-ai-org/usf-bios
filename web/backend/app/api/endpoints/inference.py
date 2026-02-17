@@ -482,7 +482,7 @@ async def list_checkpoints(job_id: str):
         # Mark the highest checkpoint as "final" if no separate final model exists
         # Also search for a standalone final adapter/model outside checkpoint dirs
         final_adapters = list(output_dir.glob("**/adapter_model.safetensors"))
-        final_models = list(output_dir.glob("**/model.safetensors"))
+        final_models = list(output_dir.glob("**/model.safetensors")) + list(output_dir.glob("**/model.safetensors.index.json"))
         
         # Filter to only adapters NOT inside checkpoint directories
         non_ckpt_adapters = [a for a in final_adapters if "checkpoint-" not in str(a)]
