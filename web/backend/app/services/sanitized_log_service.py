@@ -214,13 +214,13 @@ SAFE_ERROR_PATTERNS = {
         'user_message': 'PEFT adapter loading error. The adapter may be corrupted or incompatible.',
         'severity': ErrorSeverity.ERROR
     },
-    r'target_modules': {
+    r'target modules.*not found|not found.*target.modules': {
         'reason': CrashReason.CONFIG_ERROR,
         'user_message': 'Adapter target modules not found in base model. Model architecture mismatch.',
         'severity': ErrorSeverity.ERROR
     },
     # Additional adapter loading errors
-    r'lora.*rank': {
+    r'lora.*rank.*mismatch|rank.*mismatch.*lora': {
         'reason': CrashReason.CONFIG_ERROR,
         'user_message': 'LoRA rank mismatch. The adapter configuration does not match the base model.',
         'severity': ErrorSeverity.ERROR

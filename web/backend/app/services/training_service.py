@@ -2319,18 +2319,34 @@ class TrainingService:
             current_step = 0
             current_loss = None
             checkpoint_count = 0  # Track number of checkpoints saved
+            has_received_training_output = False  # Track if we've seen actual training steps
             
             # Get job timeout from system settings
             from ..core.capabilities import get_system_settings
             job_timeout_hours = get_system_settings().JOB_TIMEOUT_HOURS
             job_start_time = datetime.now()
             last_timeout_check = job_start_time
+            last_output_time = datetime.now()
+            loading_msg_count = 0
             
-            # Stream output
+            # Stream output with periodic "still loading" messages
             while True:
-                line = await process.stdout.readline()
-                if not line:
-                    break
+                try:
+                    line = await asyncio.wait_for(process.stdout.readline(), timeout=60.0)
+                    if not line:
+                        break
+                    last_output_time = datetime.now()
+                except asyncio.TimeoutError:
+                    # No output for 60 seconds - emit a progress message if model is still loading
+                    if process.returncode is not None:
+                        break
+                    if not has_received_training_output:
+                        loading_msg_count += 1
+                        elapsed = int((datetime.now() - job_start_time).total_seconds())
+                        loading_msg = f"Loading model into GPU memory... ({elapsed}s elapsed, large models can take 3-5 minutes)"
+                        sanitized_log_service.create_terminal_log(job_id, loading_msg, "INFO")
+                        await ws_manager.send_log(job_id, loading_msg)
+                    continue
                 
                 # ============================================================
                 # TIMEOUT CHECK: Auto-stop jobs that run too long
@@ -2398,8 +2414,10 @@ class TrainingService:
                     total_steps = metrics["total_steps"]
                 if "step" in metrics:
                     current_step = metrics["step"]
+                    has_received_training_output = True
                 if "loss" in metrics:
                     current_loss = metrics["loss"]
+                    has_received_training_output = True
                 
                 # ============================================================
                 # CHECKPOINT DETECTION: Multiple methods for robustness
