@@ -86,7 +86,7 @@ RUN pip3 install --no-cache-dir \
 
 # Copy core training library (MAIN IP)
 # Copy setup files first, then source code
-COPY setup.py setup.cfg MANIFEST.in $CORE_DIR/
+COPY setup.py setup.cfg MANIFEST.in README.md $CORE_DIR/
 COPY requirements.txt $CORE_DIR/requirements.txt
 COPY requirements/ $CORE_DIR/requirements/
 COPY usf_bios $CORE_DIR/usf_bios
