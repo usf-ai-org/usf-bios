@@ -4324,7 +4324,26 @@ export default function Home() {
                       <button
                         onClick={() => {
                           const logsText = trainingLogs.join('\n')
-                          navigator.clipboard.writeText(logsText).then(() => {
+                          const copyToClipboard = (text: string) => {
+                            if (navigator.clipboard && window.isSecureContext) {
+                              return navigator.clipboard.writeText(text)
+                            }
+                            const textarea = document.createElement('textarea')
+                            textarea.value = text
+                            textarea.style.position = 'fixed'
+                            textarea.style.left = '-9999px'
+                            document.body.appendChild(textarea)
+                            textarea.select()
+                            try {
+                              document.execCommand('copy')
+                              return Promise.resolve()
+                            } catch {
+                              return Promise.reject()
+                            } finally {
+                              document.body.removeChild(textarea)
+                            }
+                          }
+                          copyToClipboard(logsText).then(() => {
                             showAlert('Logs copied to clipboard', 'success', 'Copied')
                           }).catch(() => {
                             showAlert('Failed to copy logs', 'error', 'Copy Failed')

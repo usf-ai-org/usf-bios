@@ -116,6 +116,7 @@ RUN python3 -m compileall -f -q $CORE_DIR $BACKEND_DIR 2>/dev/null || true
 # ============================================
 
 # Delete ALL documentation formats from CORE
+# IMPORTANT: Exclude dataset/data/*.json (dataset_info.json is required at runtime)
 RUN find $CORE_DIR -type f \( \
     -name "*.md" -o -name "*.txt" -o -name "*.rst" -o \
     -name "*.doc" -o -name "*.docx" -o -name "*.pdf" -o \
@@ -125,7 +126,7 @@ RUN find $CORE_DIR -type f \( \
     -name "README*" -o -name "CHANGELOG*" -o -name "LICENSE*" -o \
     -name "CONTRIBUTING*" -o -name "AUTHORS*" -o -name "HISTORY*" -o \
     -name "TODO*" -o -name "NOTICE*" -o -name "*.sample" \
-    \) -delete 2>/dev/null || true
+    \) -not -path "*/dataset/data/*" -delete 2>/dev/null || true
 
 # Delete ALL documentation formats from BACKEND
 RUN find $BACKEND_DIR -type f \( \
