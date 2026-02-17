@@ -76,13 +76,13 @@ _FEATURE_RLHF_RM_ENABLED = True     # Reward Modeling - ENABLED
 # Add more models by adding more tuples to this list
 _LOCKED_MODELS = [
     # (source, path, display_name, model_type, architecture)
-    ("local", "/workspace/models/usf_omega", "USF Omega Chat", "usf_omega", "UsfOmegaForCausalLM"),
+    ("huggingface", "arpitsh018/usf-omega-40b-base", "USF Omega Chat", "usf_omega", "UsfOmegaForCausalLM"),
     # Add more models here if needed:
     # ("local", "/workspace/models/usf_omega_vision", "USF Omega Vision", "usf_omega_vision", "UsfOmegaVLForConditionalGeneration"),
 ]
 
 # Global restrictions (apply to ALL models)
-_LOCKED_SOURCES = "local"  # LOCAL ONLY - no HuggingFace, no ModelScope
+_LOCKED_SOURCES = "huggingface,local"  # HuggingFace and local models allowed
 _LOCKED_DATASET_SOURCES = "local"  # LOCAL ONLY
 
 # Architecture pattern restrictions (ALL must match)
@@ -91,7 +91,7 @@ _LOCKED_ARCH_ENDS_WITH = ""  # Allow any architecture
 _LOCKED_ARCH_STARTS_WITH = ""  # Allow any architecture
 
 # Derived values from _LOCKED_MODELS (for backward compatibility)
-_LOCKED_MODEL_PATHS = ",".join([f"LOCAL::{m[1]}" for m in _LOCKED_MODELS])
+_LOCKED_MODEL_PATHS = ",".join([f"{m[0].upper()}::{m[1]}" for m in _LOCKED_MODELS])
 _LOCKED_ARCHITECTURES = ",".join([m[4] for m in _LOCKED_MODELS])
 _LOCKED_MODEL_TYPE = _LOCKED_MODELS[0][3] if _LOCKED_MODELS else ""
 _LOCKED_MODEL_NAME = _LOCKED_MODELS[0][2] if _LOCKED_MODELS else ""

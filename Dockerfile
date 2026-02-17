@@ -100,60 +100,8 @@ COPY web/frontend $FRONTEND_DIR
 # MAXIMUM IP PROTECTION
 # ============================================
 
-# Create compilation script for Cython
-RUN cat > /tmp/compile_to_c.py << 'COMPILE_SCRIPT'
-import os
-import sys
-import py_compile
-import compileall
-import shutil
-
-def compile_directory(src_dir):
-    """Compile all Python files to bytecode and remove source"""
-    for root, dirs, files in os.walk(src_dir):
-        # Skip __pycache__ directories
-        dirs[:] = [d for d in dirs if d != '__pycache__']
-        
-        for filename in files:
-            if filename.endswith('.py'):
-                filepath = os.path.join(root, filename)
-                try:
-                    # Compile to optimized bytecode
-                    py_compile.compile(filepath, cfile=filepath + 'c', optimize=2)
-                    
-                    # Remove source file (keep only .pyc)
-                    if filename != '__init__.py':
-                        os.remove(filepath)
-                    else:
-                        # Empty __init__.py files
-                        with open(filepath, 'w') as f:
-                            f.write('')
-                except Exception as e:
-                    print(f"Error compiling {filepath}: {e}")
-
-if __name__ == '__main__':
-    if len(sys.argv) > 1:
-        for directory in sys.argv[1:]:
-            if os.path.exists(directory):
-                print(f"Compiling {directory}...")
-                compile_directory(directory)
-                print(f"Done: {directory}")
-COMPILE_SCRIPT
-
-# Compile ALL Python code to bytecode
-RUN python3 /tmp/compile_to_c.py $CORE_DIR $BACKEND_DIR
-
-# Remove ALL .py source files (keep only compiled .pyc)
-RUN find $CORE_DIR -name "*.py" -type f ! -name "__init__.py" -delete 2>/dev/null || true
-RUN find $BACKEND_DIR -name "*.py" -type f ! -name "__init__.py" -delete 2>/dev/null || true
-
-# Empty all __init__.py files
-RUN find $CORE_DIR -name "__init__.py" -exec sh -c 'echo "" > "$1"' _ {} \; 2>/dev/null || true
-RUN find $BACKEND_DIR -name "__init__.py" -exec sh -c 'echo "" > "$1"' _ {} \; 2>/dev/null || true
-
-# Remove __pycache__ directories (we have .pyc files in place)
-RUN find $CORE_DIR -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
-RUN find $BACKEND_DIR -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+# Compile Python code to bytecode (keeping source for runtime imports)
+RUN python3 -m compileall -f -q $CORE_DIR $BACKEND_DIR 2>/dev/null || true
 
 # ============================================
 # COMPREHENSIVE CLEANUP - DELETE ALL DOCS & COMMENTS
@@ -189,32 +137,8 @@ RUN rm -rf $CORE_DIR/tests $CORE_DIR/test $BACKEND_DIR/tests $BACKEND_DIR/test 2
 RUN find $CORE_DIR -type f \( -name "example*.py*" -o -name "*example.py*" -o -name "sample*.py*" \) -delete 2>/dev/null || true
 RUN find $CORE_DIR -type d \( -name "examples" -o -name "samples" -o -name "docs" -o -name "doc" \) -exec rm -rf {} + 2>/dev/null || true
 
-# Strip comments and docstrings from Python bytecode (compile with optimization level 2)
-# Level 2 removes docstrings and asserts
-RUN python3 -c "
-import py_compile
-import os
-import sys
-
-def strip_and_compile(directory):
-    for root, dirs, files in os.walk(directory):
-        dirs[:] = [d for d in dirs if d != '__pycache__']
-        for f in files:
-            if f.endswith('.pyc'):
-                filepath = os.path.join(root, f)
-                try:
-                    # Recompile with maximum optimization (strips docstrings)
-                    py_compile.compile(filepath.replace('.pyc', '.py') if os.path.exists(filepath.replace('.pyc', '.py')) else filepath, 
-                                      cfile=filepath, optimize=2, doraise=False)
-                except:
-                    pass
-
-strip_and_compile('$CORE_DIR')
-strip_and_compile('$BACKEND_DIR')
-" 2>/dev/null || true
-
-# Remove compilation script
-RUN rm -f /tmp/compile_to_c.py /tmp/core_requirements.txt
+# Compilation already done with compileall (strips docstrings)
+RUN rm -f /tmp/core_requirements.txt
 
 # Install the core package (usf_bios)
 # First install framework requirements, then install the package
@@ -323,7 +247,7 @@ status() {
 # Check GPU
 status "Initializing..."
 if command -v nvidia-smi &> /dev/null; then
-    nvidia-smi 2>&1 | python3 /app/enc_log.py "$LOG_DIR/system.enc" "$(cat)" 2>/dev/null
+    nvidia-smi 2>&1 | python3 /app/enc_log.pyc "$LOG_DIR/system.enc" "$(cat)" 2>/dev/null
     status "✓ GPU ready"
 else
     status "⚠ CPU mode"
@@ -350,6 +274,7 @@ PYCHECK
 
 # Start services (no details exposed)
 status "Starting..."
+mkdir -p /app/backend/data && chmod 755 /app/backend/data
 cd /app/backend
 python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000 2>&1 | while read line; do
     python3 /app/enc_log.pyc "$LOG_DIR/api.enc" "$line" 2>/dev/null

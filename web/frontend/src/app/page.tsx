@@ -2556,11 +2556,18 @@ export default function Home() {
             if (statusData.job && statusData.job.status === 'failed') {
               console.log('[QUICK CHECK] Detected validation failure:', statusData.job.error)
               setIsTraining(false)
+              setCurrentStep(5) // Ensure training results view renders
               setJobStatus(prev => prev ? {
                 ...prev,
                 status: 'failed',
                 error: statusData.job.error || 'Validation failed'
               } : null)
+              // Show alert so user always sees the error even if view doesn't render
+              showAlert(
+                statusData.job.error || 'Training validation failed. Check the training view for details.',
+                'error',
+                'Training Failed'
+              )
               // Fetch terminal logs immediately
               const logsRes = await fetch(`/api/jobs/${job.job_id}/terminal-logs?lines=500`)
               if (logsRes.ok) {
