@@ -2863,17 +2863,27 @@ class TrainingService:
                     if len(dataset_types) > 1:
                         unique_types = set(dt['type'] for dt in dataset_types if dt['type'] != 'unknown')
                         if len(unique_types) > 1:
-                            # Multiple different types detected - warn user
-                            type_list = ", ".join([f"{dt['path']}: {dt['type']}" for dt in dataset_types])
-                            warning_msg = f"Multiple datasets have different types: {type_list}. USF-BIOS will concatenate them but this may cause issues."
-                            sanitized_log_service.create_terminal_log(job_id, f"WARNING: {warning_msg}", "WARNING")
-                            _debug_log(job_id, warning_msg, "WARNING")
+                            # STRICT: Multiple different types detected - REJECT the job
+                            type_list = ", ".join([f"{Path(dt['path']).name}: {dt['type']}" for dt in dataset_types])
+                            error_msg = f"Cannot train with mixed dataset types: {type_list}. All datasets must be the same type (e.g., all SFT or all RLHF). Please select datasets of only one type."
+                            sanitized_log_service.create_terminal_log(job_id, f"ERROR: {error_msg}", "ERROR")
+                            _debug_log(job_id, error_msg, "ERROR")
+                            raise ValueError(error_msg)
                         else:
                             sanitized_log_service.create_terminal_log(
                                 job_id, 
                                 f"Multiple datasets detected ({len(dataset_paths)}), all same type: {list(unique_types)[0] if unique_types else 'unknown'}", 
                                 "INFO"
                             )
+                    
+                    # STRICT: Check for unknown type datasets - reject them
+                    unknown_datasets = [dt for dt in dataset_types if dt['type'] == 'unknown']
+                    if unknown_datasets:
+                        unknown_names = ", ".join([Path(dt['path']).name for dt in unknown_datasets])
+                        error_msg = f"Cannot train with datasets of unknown type: {unknown_names}. Please ensure all datasets follow a supported format (SFT, RLHF, Pre-training, or KTO)."
+                        sanitized_log_service.create_terminal_log(job_id, f"ERROR: {error_msg}", "ERROR")
+                        _debug_log(job_id, error_msg, "ERROR")
+                        raise ValueError(error_msg)
                     
                     # Use first dataset's type for compatibility check
                     dataset_type = dataset_types[0]['type'] if dataset_types else 'unknown'

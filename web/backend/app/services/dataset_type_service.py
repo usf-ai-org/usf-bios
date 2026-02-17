@@ -1939,8 +1939,16 @@ class DatasetTypeService:
         type_info = self.detect_dataset_type(dataset_path)
         
         if type_info.dataset_type == DatasetType.UNKNOWN:
-            # Unknown datasets are allowed (user might know what they're doing)
-            return True, "", type_info
+            # STRICT: Reject unknown dataset types - they cannot be used for training
+            return False, (
+                "Unable to detect dataset type. Your dataset format is not recognized. "
+                "Please ensure your dataset follows one of the supported formats:\n"
+                "• SFT: 'messages' array with role/content, or 'instruction'/'output', or 'query'/'response'\n"
+                "• Pre-training: 'text' field only\n"
+                "• RLHF Preference: 'prompt'/'chosen'/'rejected', or 'messages'/'rejected_messages'\n"
+                "• RLHF Online: 'messages' array (prompts only, no assistant response)\n"
+                "• KTO: 'messages' array with 'label' field (0 or 1)"
+            ), type_info
         
         # Check if the training method for this dataset type is enabled
         dataset_type = type_info.dataset_type
@@ -2000,9 +2008,11 @@ class DatasetTypeService:
         # Get the type of existing datasets (they should all be the same)
         existing_type = existing_dataset_types[0]
         
-        # Unknown types are always compatible
-        if new_dataset_type == DatasetType.UNKNOWN or existing_type == DatasetType.UNKNOWN:
-            return True, ""
+        # STRICT: Unknown types are NOT allowed - reject them
+        if new_dataset_type == DatasetType.UNKNOWN:
+            return False, "Cannot add dataset with unknown type. Please ensure it follows a supported format."
+        if existing_type == DatasetType.UNKNOWN:
+            return False, "Selected datasets have unknown type. Please remove them and select valid datasets."
         
         # Check if types match
         if new_dataset_type != existing_type:

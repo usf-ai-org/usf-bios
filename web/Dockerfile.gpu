@@ -143,7 +143,7 @@ FROM nvidia/cuda:12.4.0-devel-ubuntu22.04
 
 LABEL maintainer="US Inc <support@us.inc>"
 LABEL description="USF BIOS - Enterprise AI Fine-tuning Platform (GPU Build)"
-LABEL version="2.0.14"
+LABEL version="2.0.31"
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive

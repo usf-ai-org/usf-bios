@@ -90,6 +90,50 @@ async def create_job(config: TrainingConfig, db: Session = Depends(get_db)):
                     if not is_valid:
                         _debug_log(f"Dataset validation failed: {ds_msg}", level="ERROR")
                         raise HTTPException(status_code=403, detail=ds_msg)
+            
+            # ============================================================
+            # STRICT VALIDATION: Check dataset types - reject mixed/unknown
+            # This prevents runtime failures by catching issues early
+            # ============================================================
+            from ...services.dataset_type_service import dataset_type_service
+            from pathlib import Path
+            
+            detected_types = []
+            for ds_path in dataset_paths:
+                ds_path = ds_path.strip()
+                # Skip HuggingFace/ModelScope paths for now (can't detect locally)
+                if ds_path.upper().startswith('HF::') or ds_path.upper().startswith('MS::'):
+                    continue
+                
+                # Detect dataset type
+                if Path(ds_path).exists():
+                    try:
+                        type_info = dataset_type_service.detect_dataset_type(ds_path)
+                        detected_types.append({
+                            'path': ds_path,
+                            'name': Path(ds_path).name,
+                            'type': type_info.dataset_type.value
+                        })
+                    except Exception as e:
+                        _debug_log(f"Dataset type detection failed for {ds_path}: {e}", level="WARNING")
+                        detected_types.append({'path': ds_path, 'name': Path(ds_path).name, 'type': 'unknown'})
+            
+            # STRICT: Reject unknown type datasets
+            unknown_datasets = [d for d in detected_types if d['type'] == 'unknown']
+            if unknown_datasets:
+                unknown_names = ', '.join([d['name'] for d in unknown_datasets])
+                error_msg = f"Cannot create job: Dataset(s) with unknown format detected: {unknown_names}. Please ensure all datasets follow a supported format (SFT, RLHF, Pre-training, or KTO)."
+                _debug_log(error_msg, level="ERROR")
+                raise HTTPException(status_code=400, detail=error_msg)
+            
+            # STRICT: Reject mixed dataset types
+            if len(detected_types) > 1:
+                unique_types = set(d['type'] for d in detected_types)
+                if len(unique_types) > 1:
+                    type_list = ', '.join([f"{d['name']}: {d['type']}" for d in detected_types])
+                    error_msg = f"Cannot create job: Mixed dataset types detected: {type_list}. All datasets must be the same type. Please select datasets of only one type."
+                    _debug_log(error_msg, level="ERROR")
+                    raise HTTPException(status_code=400, detail=error_msg)
         
         # ============================================================
         # VALIDATE: Dataset type must be compatible with training method

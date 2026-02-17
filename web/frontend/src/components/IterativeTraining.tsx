@@ -335,7 +335,7 @@ function JobCard({ job, onStart, onPause, onCancel, onDelete, onViewDetails }: {
           </p>
         </div>
         <span className={`text-xs font-medium px-2 py-1 rounded ${getStatusColor(job.status)} bg-black/20`}>
-          {job.status.toUpperCase()}
+          {job.status?.toUpperCase() || 'UNKNOWN'}
         </span>
       </div>
       
@@ -1213,7 +1213,7 @@ export default function IterativeTraining({
                     </p>
                   </div>
                   <span className={`text-sm font-medium px-3 py-1 rounded ${getStatusColor(selectedJob.status)} ${getStatusBgColor(selectedJob.status)}`}>
-                    {selectedJob.status.toUpperCase()}
+                    {selectedJob.status?.toUpperCase() || 'UNKNOWN'}
                   </span>
                 </div>
                 

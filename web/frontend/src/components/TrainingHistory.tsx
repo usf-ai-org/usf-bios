@@ -501,15 +501,15 @@ export default function TrainingHistory({
                           {getStatusIcon(item.status)}
                           <span className="font-semibold text-slate-900 text-lg truncate">{item.job_name}</span>
                           <span className={`text-xs px-2.5 py-1 rounded-full font-medium border ${getStatusColor(item.status)}`}>
-                            {item.status.toUpperCase()}
+                            {item.status?.toUpperCase() || 'UNKNOWN'}
                           </span>
                           {item.config && (
                             <>
                               <span className="text-xs px-2.5 py-1 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200 font-medium">
-                                {item.config.training_method.toUpperCase()}
+                                {item.config.training_method?.toUpperCase() || 'N/A'}
                               </span>
                               <span className="text-xs px-2.5 py-1 rounded-full bg-purple-100 text-purple-700 border border-purple-200 font-medium">
-                                {item.config.train_type.toUpperCase()}
+                                {item.config.train_type?.toUpperCase() || 'N/A'}
                               </span>
                             </>
                           )}
@@ -660,7 +660,7 @@ export default function TrainingHistory({
                             {item.config?.train_type?.toLowerCase().includes('lora') ? (
                               <span className="flex items-center gap-1">
                                 <Sparkles className="w-3 h-3 text-purple-500" />
-                                Base + {item.config?.train_type.toUpperCase()}
+                                Base + {item.config?.train_type?.toUpperCase()}
                               </span>
                             ) : (
                               <span className="flex items-center gap-1">

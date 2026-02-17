@@ -420,7 +420,7 @@ export default function TrainingDetails({
                 <code className="bg-slate-200 px-2 py-0.5 rounded text-xs">{jobId}</code>
                 {jobDetails && (
                   <span className={`text-xs px-2 py-0.5 rounded-full border ${getStatusColor(jobDetails.status)}`}>
-                    {jobDetails.status.toUpperCase()}
+                    {jobDetails.status?.toUpperCase() || 'UNKNOWN'}
                   </span>
                 )}
               </p>

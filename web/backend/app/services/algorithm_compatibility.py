@@ -388,6 +388,10 @@ class DatasetTypeConfig:
 
 
 DATASET_TYPE_CONFIGS: Dict[str, DatasetTypeConfig] = {
+    # ==========================================================================
+    # KEY NAMES MUST MATCH DatasetType enum values from dataset_type_service.py
+    # DatasetType.SFT = "sft", DatasetType.RLHF_PREF = "rlhf_pref", etc.
+    # ==========================================================================
     "sft": DatasetTypeConfig(
         id="sft",
         name="SFT",
@@ -412,10 +416,11 @@ DATASET_TYPE_CONFIGS: Dict[str, DatasetTypeConfig] = {
         sample_format_description="Messages array with role (system/user/assistant) and content pairs."
     ),
     
-    "rlhf_offline_preference": DatasetTypeConfig(
-        id="rlhf_offline_preference",
-        name="RLHF_OFFLINE_PREFERENCE",
-        display_name="RLHF Offline - Preference (DPO/ORPO/SimPO/CPO/RM)",
+    # Key "rlhf_pref" matches DatasetType.RLHF_PREF from dataset_type_service.py
+    "rlhf_pref": DatasetTypeConfig(
+        id="rlhf_pref",
+        name="RLHF_PREF",
+        display_name="RLHF Preference (DPO/ORPO/SimPO/CPO/RM)",
         description="Preference pairs with chosen and rejected responses for offline RLHF training. Used by DPO, ORPO, SimPO, CPO, and Reward Model training.",
         compatible_methods=["rlhf"],
         incompatible_methods=["sft", "pt"],
@@ -424,6 +429,7 @@ DATASET_TYPE_CONFIGS: Dict[str, DatasetTypeConfig] = {
         alternative_field_patterns=[
             {"question", "chosen", "rejected"},
             {"messages", "rejected_response"},
+            {"messages", "rejected_messages"},
         ],
         sample_format={
             "prompt": "What are the symptoms of diabetes?",
@@ -452,10 +458,11 @@ DATASET_TYPE_CONFIGS: Dict[str, DatasetTypeConfig] = {
         sample_format_description="Prompt only - model generates responses during training."
     ),
     
-    "rlhf_offline_binary": DatasetTypeConfig(
-        id="rlhf_offline_binary",
-        name="RLHF_OFFLINE_BINARY",
-        display_name="RLHF Offline - Binary Feedback (KTO)",
+    # Key "rlhf_binary" matches DatasetType.RLHF_BINARY from dataset_type_service.py
+    "rlhf_binary": DatasetTypeConfig(
+        id="rlhf_binary",
+        name="RLHF_BINARY",
+        display_name="RLHF Binary Feedback (KTO)",
         description="Binary feedback dataset with good/bad labels instead of preference pairs. Used by KTO (Kahneman-Tversky Optimization).",
         compatible_methods=["rlhf"],
         incompatible_methods=["sft", "pt"],

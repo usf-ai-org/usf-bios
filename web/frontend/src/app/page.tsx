@@ -1112,29 +1112,7 @@ export default function Home() {
       }
     })
     
-    // Show info message only when dataset type actually changes
-    if (previousDatasetType !== typeInfo.dataset_type) {
-      const methodNames: Record<string, string> = {
-        'sft': 'Supervised Fine-Tuning (SFT)',
-        'rlhf': 'Reinforcement Learning (RLHF)',
-        'pt': 'Pre-Training (PT)'
-      }
-      const datasetTypeNames: Record<string, string> = {
-        'sft': 'instruction-response',
-        'rlhf_offline': 'preference data (offline RLHF)',
-        'rlhf_online': 'prompt-only (online RLHF)',
-        'rlhf': 'preference data',
-        'pt': 'raw text',
-        'kto': 'binary feedback'
-      }
-      
-      showAlert(
-        `Dataset detected as ${datasetTypeNames[typeInfo.dataset_type] || typeInfo.dataset_type}. Training method set to ${methodNames[newMethod]}.`,
-        'info',
-        'Training Method Updated'
-      )
-    }
-    
+    // Update silently in background - no popup needed
     setPreviousDatasetType(typeInfo.dataset_type)
   }, [previousDatasetType, showAlert])
 
@@ -2468,6 +2446,43 @@ export default function Home() {
     try {
       setIsStartingTraining(true)
       setTrainingLogs([])
+      setLoadingMessage('Validating configuration...')
+      
+      // ============================================================
+      // STRICT FRONTEND VALIDATION - Catch issues before API call
+      // ============================================================
+      
+      // Validation 1: Must have at least one dataset selected
+      if (!config.dataset_paths || config.dataset_paths.length === 0) {
+        throw new Error('No datasets selected. Please select at least one dataset for training.')
+      }
+      
+      // Validation 2: Dataset type must be detected (not unknown)
+      if (datasetTypeInfo?.dataset_type === 'unknown') {
+        throw new Error('Selected dataset(s) have an unknown format. Please ensure all datasets follow a supported format (SFT, RLHF, Pre-training, or KTO).')
+      }
+      
+      // Validation 3: Training method must be compatible with dataset type
+      if (datasetTypeInfo && datasetTypeInfo.compatible_training_methods) {
+        const currentMethod = config.training_method
+        if (!datasetTypeInfo.compatible_training_methods.includes(currentMethod)) {
+          const methodNames: Record<string, string> = {
+            'sft': 'Supervised Fine-Tuning (SFT)',
+            'rlhf': 'RLHF',
+            'pt': 'Pre-Training'
+          }
+          throw new Error(
+            `Training method "${methodNames[currentMethod] || currentMethod}" is not compatible with the selected dataset type "${datasetTypeInfo.display_name || datasetTypeInfo.dataset_type}". ` +
+            `Compatible methods: ${datasetTypeInfo.compatible_training_methods.map(m => methodNames[m] || m.toUpperCase()).join(', ')}.`
+          )
+        }
+      }
+      
+      // Validation 4: Must have a model selected
+      if (!config.model_path) {
+        throw new Error('No model selected. Please select a model for training.')
+      }
+      
       setLoadingMessage('Preparing for training...')
       
       // Step 1: Clean GPU memory before training to ensure maximum available VRAM
@@ -3640,7 +3655,7 @@ export default function Home() {
             {systemStatus.status === 'starting' && <Loader2 className="w-4 h-4 animate-spin" />}
             {systemStatus.status === 'unknown' && <AlertCircle className="w-4 h-4" />}
             <span>
-              <strong>System Status: {systemStatus.status.toUpperCase()}</strong> — {systemStatus.message}
+              <strong>System Status: {systemStatus.status?.toUpperCase() || 'UNKNOWN'}</strong> — {systemStatus.message}
             </span>
             <button onClick={fetchSystemStatus} className="ml-2 p-1 hover:bg-black/10 rounded">
               <RefreshCw className="w-3 h-3" />
@@ -3712,7 +3727,7 @@ export default function Home() {
                   {jobStatus.status === 'completed' && <CheckCircle className="w-4 h-4 inline mr-1" />}
                   {jobStatus.status === 'failed' && <XCircle className="w-4 h-4 inline mr-1" />}
                   {jobStatus.status === 'stopped' && <StopCircle className="w-4 h-4 inline mr-1" />}
-                  {jobStatus.status.toUpperCase()}
+                  {jobStatus.status?.toUpperCase() || 'UNKNOWN'}
                 </div>
               </div>
               

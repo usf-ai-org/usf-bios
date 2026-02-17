@@ -298,12 +298,29 @@ export default function DatasetConfig({ selectedPaths, onSelectionChange, onShow
       const res = await fetch('/api/datasets/list-all')
       if (res.ok) {
         const data = await res.json()
-        // Preserve selection state
+        // Preserve selection state, but default to NOT selected
+        // Also enforce same-type selection
         const newDatasets = data.datasets.map((ds: Dataset) => ({
           ...ds,
           selected: selectedPaths.includes(ds.path) || 
-                    (datasets.find(d => d.id === ds.id)?.selected ?? true)
+                    (datasets.find(d => d.id === ds.id)?.selected ?? false) // Default to false, not true
         }))
+        
+        // Enforce same-type selection: if multiple types are selected, keep only first type
+        const selectedDatasets = newDatasets.filter((d: Dataset) => d.selected)
+        if (selectedDatasets.length > 1) {
+          const firstSelectedType = selectedDatasets[0].dataset_type || 'unknown'
+          // Deselect any datasets that don't match the first selected type
+          newDatasets.forEach((ds: Dataset) => {
+            if (ds.selected) {
+              const dsType = ds.dataset_type || 'unknown'
+              if (dsType !== firstSelectedType || dsType === 'unknown') {
+                ds.selected = false
+              }
+            }
+          })
+        }
+        
         setDatasets(newDatasets)
       }
     } catch (e) {
@@ -685,9 +702,12 @@ export default function DatasetConfig({ selectedPaths, onSelectionChange, onShow
     
     const datasetType = dataset.dataset_type || 'unknown'
     
-    // Unknown types are always allowed
-    if (selectedType === 'unknown' || datasetType === 'unknown') {
-      return { allowed: true, reason: '' }
+    // STRICT: Unknown types are NOT allowed for training
+    if (datasetType === 'unknown') {
+      return { 
+        allowed: false, 
+        reason: 'This dataset has an unknown format and cannot be used for training. Please ensure your dataset follows a supported format.' 
+      }
     }
     
     // Check if types match - if not, selection will auto-switch (deselect others)
@@ -1049,8 +1069,17 @@ export default function DatasetConfig({ selectedPaths, onSelectionChange, onShow
             <p className="text-sm">Add a dataset using the form above</p>
           </div>
         ) : (() => {
-          const filteredDatasets = datasets.filter(dataset => 
-            typeFilter === 'all' || dataset.dataset_type === typeFilter || (typeFilter === 'unknown' && !dataset.dataset_type)
+          // STRICT: Filter out unknown datasets - they cannot be used for training
+          const validDatasets = datasets.filter(dataset => {
+            const datasetType = dataset.dataset_type || 'unknown'
+            return datasetType !== 'unknown'
+          })
+          
+          // Count unknown datasets for warning message
+          const unknownCount = datasets.length - validDatasets.length
+          
+          const filteredDatasets = validDatasets.filter(dataset => 
+            typeFilter === 'all' || dataset.dataset_type === typeFilter
           )
           
           if (filteredDatasets.length === 0) {
@@ -1073,7 +1102,20 @@ export default function DatasetConfig({ selectedPaths, onSelectionChange, onShow
           }
           
           return (
-          <div className="space-y-2 max-h-72 overflow-y-auto">
+          <div className="space-y-2">
+            {/* Warning for unknown datasets that were filtered out */}
+            {unknownCount > 0 && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-lg mb-2">
+                <p className="text-sm text-red-700 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  <span>
+                    <strong>{unknownCount} dataset{unknownCount > 1 ? 's' : ''}</strong> with unrecognized format {unknownCount > 1 ? 'are' : 'is'} hidden. 
+                    Please ensure datasets follow supported formats (SFT, RLHF, Pre-training, or KTO).
+                  </span>
+                </p>
+              </div>
+            )}
+            <div className="max-h-72 overflow-y-auto space-y-2">
             {filteredDatasets.map(dataset => {
               const datasetType = dataset.dataset_type || 'unknown'
               const typeConfig = DATASET_TYPE_CONFIG[datasetType] || DATASET_TYPE_CONFIG['unknown']
@@ -1133,6 +1175,7 @@ export default function DatasetConfig({ selectedPaths, onSelectionChange, onShow
                 </div>
               )
             })}
+            </div>
           </div>
           )
         })()}
