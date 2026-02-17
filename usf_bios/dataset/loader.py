@@ -2,7 +2,7 @@
 import os
 from contextlib import nullcontext
 from functools import partial
-from typing import Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 import numpy as np
 from datasets import Dataset as HfDataset

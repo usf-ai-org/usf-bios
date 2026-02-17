@@ -1610,17 +1610,19 @@ export default function Home() {
       try {
         const res = await fetch(`/api/jobs/${jobId}`)
         if (res.ok) {
-          const job = await res.json()
+          const data = await res.json()
+          const job = data.job
+          if (!job) return
           
           // Update all job info from backend
           setJobStatus(prev => prev ? { 
             ...prev, 
-            status: job.status,
+            status: job.status || prev.status,
             error: job.error || prev.error,
             current_step: job.current_step ?? prev.current_step,
             total_steps: job.total_steps ?? prev.total_steps,
             current_loss: job.current_loss ?? prev.current_loss,
-            epoch: job.epoch ?? prev.epoch,
+            epoch: job.current_epoch ?? prev.epoch,
           } : null)
           
           // Check for terminal states
