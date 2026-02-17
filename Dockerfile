@@ -101,6 +101,13 @@ COPY web/frontend $FRONTEND_DIR
 # MAXIMUM IP PROTECTION
 # ============================================
 
+# Install the core package (usf_bios) BEFORE cleanup (setup.py needs README.md)
+RUN rm -f /tmp/core_requirements.txt
+RUN cd $CORE_DIR && pip3 install --no-cache-dir -r requirements/framework.txt 2>/dev/null || true
+RUN cd $CORE_DIR && pip3 install --no-cache-dir -e . && \
+    echo "✓ usf_bios installed successfully" || \
+    (echo "✗ usf_bios installation failed" && exit 1)
+
 # Compile Python code to bytecode (keeping source for runtime imports)
 RUN python3 -m compileall -f -q $CORE_DIR $BACKEND_DIR 2>/dev/null || true
 
@@ -137,16 +144,6 @@ RUN rm -rf $CORE_DIR/tests $CORE_DIR/test $BACKEND_DIR/tests $BACKEND_DIR/test 2
 # Delete example and sample files
 RUN find $CORE_DIR -type f \( -name "example*.py*" -o -name "*example.py*" -o -name "sample*.py*" \) -delete 2>/dev/null || true
 RUN find $CORE_DIR -type d \( -name "examples" -o -name "samples" -o -name "docs" -o -name "doc" \) -exec rm -rf {} + 2>/dev/null || true
-
-# Compilation already done with compileall (strips docstrings)
-RUN rm -f /tmp/core_requirements.txt
-
-# Install the core package (usf_bios)
-# First install framework requirements, then install the package
-RUN cd $CORE_DIR && pip3 install --no-cache-dir -r requirements/framework.txt 2>/dev/null || true
-RUN cd $CORE_DIR && pip3 install --no-cache-dir -e . && \
-    echo "✓ usf_bios installed successfully" || \
-    (echo "✗ usf_bios installation failed" && exit 1)
 
 # ============================================================================
 # CLEANUP: Remove ALL build files not needed at runtime
