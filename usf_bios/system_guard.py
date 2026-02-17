@@ -76,7 +76,7 @@ _FEATURE_RLHF_RM_ENABLED = True     # Reward Modeling - ENABLED
 # Add more models by adding more tuples to this list
 _LOCKED_MODELS = [
     # (source, path, display_name, model_type, architecture)
-    ("huggingface", "arpitsh018/usf-omega-40b-base", "USF Omega Chat", "usf_omega", "UsfOmegaForCausalLM"),
+    ("local", "/workspace/models/usf_omega", "USF Omega Chat", "usf_omega", "UsfOmegaForCausalLM"),
     # Add more models here if needed:
     # ("local", "/workspace/models/usf_omega_vision", "USF Omega Vision", "usf_omega_vision", "UsfOmegaVLForConditionalGeneration"),
 ]
