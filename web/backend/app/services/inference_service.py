@@ -313,12 +313,11 @@ class InferenceService:
             logging.info(f"Found adapter at: {adapter_path}")
             return adapter_path
         
-        # Search for adapter in subdirectories (checkpoints)
+        # Search recursively for adapter in subdirectories (handles nested v0-*/checkpoint-*/...)
         # Priority: checkpoint-final > highest checkpoint number > any checkpoint
         checkpoint_dirs = []
-        for item in adapter_dir.iterdir():
-            if item.is_dir() and (item / "adapter_config.json").exists():
-                checkpoint_dirs.append(item)
+        for adapter_config in adapter_dir.glob("**/adapter_config.json"):
+            checkpoint_dirs.append(adapter_config.parent)
         
         if not checkpoint_dirs:
             logging.warning(f"No adapter_config.json found in {adapter_path} or its subdirectories")
