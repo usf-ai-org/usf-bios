@@ -702,12 +702,13 @@ def _calculate_storage_requirements(config, model_path: str, model_source: str,
         result['checkpoint_info']['checkpoint_size_gb'] = checkpoint_size
         result['breakdown'].append(f"Output (Full): {num_checkpoints} checkpoints × {checkpoint_size:.1f}GB = {output_size:.1f}GB")
     
-    # Add buffer for optimizer states (full training only) and logs
+    # Add buffer for checkpoint overhead (full training only)
     if train_type_value == 'full':
-        # Optimizer states can be 2-3x model size for Adam
-        optimizer_overhead = model_info['size_gb'] * 2
-        output_size += optimizer_overhead
-        result['breakdown'].append(f"Optimizer states: ~{optimizer_overhead:.1f}GB")
+        # Optimizer states are in GPU VRAM during training, NOT saved to disk by default.
+        # Only add a small buffer for training state files (scheduler, rng, trainer_state.json)
+        checkpoint_overhead = model_info['size_gb'] * 0.05  # 5% buffer
+        output_size += checkpoint_overhead
+        result['breakdown'].append(f"Checkpoint overhead: ~{checkpoint_overhead:.1f}GB")
     
     # Logs and misc
     output_size += 0.5  # 500MB for logs, metrics, etc.
