@@ -967,17 +967,21 @@ class InferenceService:
             logging.warning(f"Could not validate adapter config: {e}")
         
         try:
-            logging.info(f"Loading adapter from: {adapter_path} onto model: {self._current_model_path}")
+            # Save model path and backend before clearing (clear resets them to None)
+            saved_model_path = self._current_model_path
+            saved_backend = self._current_backend
+            
+            logging.info(f"Loading adapter from: {adapter_path} onto model: {saved_model_path}")
             
             # Clear existing engine before reload to free VRAM
             logging.info("Clearing VRAM before adapter reload...")
             await self._clear_all_engines()
             
-            # Reload model with the new adapter
+            # Reload model with the new adapter using saved values
             result = await self.load_model(
-                self._current_model_path,
+                saved_model_path,
                 adapter_path,
-                self._current_backend
+                saved_backend
             )
             
             if result.get("success"):
