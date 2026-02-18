@@ -186,44 +186,46 @@ def get_test_matrix(data_dir: str):
     })
     
     # ============================================================
-    # GRPO Test (1 combo - QLoRA, online RL)
+    # GRPO Test (DISABLED - system_guard: "Unsupported algorithm")
+    # Uncomment when license enables GRPO
     # ============================================================
-    tests.append({
-        "name": "GRPO_QLORA",
-        "training_method": "rlhf",
-        "train_type": "qlora",
-        "dataset_path": prompt_dataset,
-        "rlhf_type": "grpo",
-        "extra_params": {
-            "num_generations": 4,
-            "max_completion_length": 256,
-            "use_vllm": False,
-            "quant_bits": 4,
-        },
-        "category": "RLHF_Online",
-        "requires_multi_gpu": False,
-    })
+    # tests.append({
+    #     "name": "GRPO_QLORA",
+    #     "training_method": "rlhf",
+    #     "train_type": "qlora",
+    #     "dataset_path": prompt_dataset,
+    #     "rlhf_type": "grpo",
+    #     "extra_params": {
+    #         "num_generations": 4,
+    #         "max_completion_length": 256,
+    #         "use_vllm": False,
+    #         "quant_bits": 4,
+    #     },
+    #     "category": "RLHF_Online",
+    #     "requires_multi_gpu": False,
+    # })
     
     # ============================================================
-    # PPO Test (1 combo - QLoRA, online RL)
+    # PPO Test (DISABLED - system_guard: "Unsupported algorithm")
+    # Uncomment when license enables PPO
     # ============================================================
-    tests.append({
-        "name": "PPO_QLORA",
-        "training_method": "rlhf",
-        "train_type": "qlora",
-        "dataset_path": prompt_dataset,
-        "rlhf_type": "ppo",
-        "extra_params": {
-            "num_ppo_epochs": 2,
-            "kl_coef": 0.05,
-            "cliprange": 0.2,
-            "max_completion_length": 256,
-            "use_vllm": False,
-            "quant_bits": 4,
-        },
-        "category": "RLHF_Online",
-        "requires_multi_gpu": False,
-    })
+    # tests.append({
+    #     "name": "PPO_QLORA",
+    #     "training_method": "rlhf",
+    #     "train_type": "qlora",
+    #     "dataset_path": prompt_dataset,
+    #     "rlhf_type": "ppo",
+    #     "extra_params": {
+    #         "num_ppo_epochs": 2,
+    #         "kl_coef": 0.05,
+    #         "cliprange": 0.2,
+    #         "max_completion_length": 256,
+    #         "use_vllm": False,
+    #         "quant_bits": 4,
+    #     },
+    #     "category": "RLHF_Online",
+    #     "requires_multi_gpu": False,
+    # })
     
     # ============================================================
     # Pre-training Tests (2 combos)
