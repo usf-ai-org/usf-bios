@@ -281,7 +281,9 @@ class APIClient:
     def health_check(self) -> bool:
         """Check if the backend is running."""
         try:
-            r = self.session.get(f"{self.base_url}/system/status", timeout=10)
+            # Try the health endpoint first (no /api prefix)
+            base = self.base_url.replace("/api", "")
+            r = self.session.get(f"{base}/health", timeout=10)
             return r.status_code == 200
         except Exception:
             return False
@@ -292,42 +294,40 @@ class APIClient:
         r.raise_for_status()
         return r.json()
     
-    def get_gpu_count(self) -> int:
-        """Get number of available GPUs."""
-        try:
-            status = self.get_system_status()
-            return status.get("gpu_count", 1)
-        except Exception:
-            return 1
-    
-    def start_training(self, config: dict) -> dict:
-        """Start a training job."""
-        r = self.session.post(f"{self.base_url}/training/start", json=config, timeout=30)
+    def create_job(self, config: dict) -> dict:
+        """Create a training job via POST /api/jobs/create."""
+        r = self.session.post(f"{self.base_url}/jobs/create", json=config, timeout=60)
         r.raise_for_status()
         return r.json()
     
-    def get_training_status(self) -> dict:
-        """Get global training status."""
-        r = self.session.get(f"{self.base_url}/training/status", timeout=10)
+    def start_job(self, job_id: str) -> dict:
+        """Start a training job via POST /api/jobs/{job_id}/start."""
+        r = self.session.post(f"{self.base_url}/jobs/{job_id}/start", timeout=60)
         r.raise_for_status()
         return r.json()
     
     def get_job_status(self, job_id: str) -> dict:
-        """Get specific job status."""
-        r = self.session.get(f"{self.base_url}/training/jobs/{job_id}", timeout=10)
+        """Get specific job status via GET /api/jobs/{job_id}."""
+        r = self.session.get(f"{self.base_url}/jobs/{job_id}", timeout=10)
         r.raise_for_status()
         return r.json()
     
-    def stop_training(self, job_id: str) -> dict:
-        """Stop a training job."""
-        r = self.session.post(f"{self.base_url}/training/stop/{job_id}", timeout=30)
+    def get_current_job(self) -> dict:
+        """Get current active job via GET /api/jobs/current."""
+        r = self.session.get(f"{self.base_url}/jobs/current", timeout=10)
         r.raise_for_status()
         return r.json()
     
-    def get_training_logs(self, job_id: str) -> list:
-        """Get training logs."""
+    def stop_job(self, job_id: str) -> dict:
+        """Stop a training job via POST /api/jobs/{job_id}/stop."""
+        r = self.session.post(f"{self.base_url}/jobs/{job_id}/stop", timeout=30)
+        r.raise_for_status()
+        return r.json()
+    
+    def get_terminal_logs(self, job_id: str, lines: int = 100) -> list:
+        """Get terminal logs via GET /api/jobs/{job_id}/terminal-logs."""
         try:
-            r = self.session.get(f"{self.base_url}/training/logs/{job_id}", timeout=10)
+            r = self.session.get(f"{self.base_url}/jobs/{job_id}/terminal-logs?lines={lines}", timeout=10)
             r.raise_for_status()
             data = r.json()
             return data.get("logs", [])
@@ -335,30 +335,28 @@ class APIClient:
             return []
     
     def clean_memory(self) -> dict:
-        """Clean GPU memory between tests."""
+        """Deep clean GPU memory via POST /api/inference/deep-clear-memory."""
         try:
-            r = self.session.post(f"{self.base_url}/system/clean-memory", timeout=30)
+            r = self.session.post(f"{self.base_url}/inference/deep-clear-memory", timeout=30)
             r.raise_for_status()
             return r.json()
         except Exception:
             return {"status": "skipped"}
     
-    def load_model_for_inference(self, model_path: str, adapter_path: str = None, merge_mode: str = None) -> dict:
-        """Load a model for inference testing."""
-        payload = {"model_path": model_path}
+    def load_model_for_inference(self, model_path: str, adapter_path: str = None) -> dict:
+        """Load a model for inference via POST /api/inference/load."""
+        payload = {"model_path": model_path, "backend": "transformers"}
         if adapter_path:
             payload["adapter_path"] = adapter_path
-        if merge_mode:
-            payload["merge_mode"] = merge_mode
-        r = self.session.post(f"{self.base_url}/inference/load", json=payload, timeout=120)
+        r = self.session.post(f"{self.base_url}/inference/load", json=payload, timeout=180)
         r.raise_for_status()
         return r.json()
     
     def run_inference(self, prompt: str, max_tokens: int = 50) -> dict:
-        """Run inference on loaded model."""
+        """Run inference via POST /api/inference/chat."""
         payload = {
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": max_tokens,
+            "max_new_tokens": max_tokens,
             "temperature": 0.7,
         }
         r = self.session.post(f"{self.base_url}/inference/chat", json=payload, timeout=60)
@@ -366,9 +364,9 @@ class APIClient:
         return r.json()
     
     def unload_model(self) -> dict:
-        """Unload inference model."""
+        """Clear inference model via POST /api/inference/clear-memory."""
         try:
-            r = self.session.post(f"{self.base_url}/inference/unload", timeout=30)
+            r = self.session.post(f"{self.base_url}/inference/clear-memory", timeout=30)
             r.raise_for_status()
             return r.json()
         except Exception:
@@ -377,19 +375,19 @@ class APIClient:
     def check_active_training(self) -> bool:
         """Check if any training is currently active."""
         try:
-            status = self.get_training_status()
-            return status.get("is_training_active", False)
+            data = self.get_current_job()
+            return data.get("has_active_job", False)
         except Exception:
             return False
     
-    def wait_for_no_training(self, timeout: int = 300):
-        """Wait until no training is active."""
-        start = time.time()
-        while time.time() - start < timeout:
-            if not self.check_active_training():
-                return True
-            time.sleep(5)
-        return False
+    def get_inference_status(self) -> dict:
+        """Get inference status via GET /api/inference/status."""
+        try:
+            r = self.session.get(f"{self.base_url}/inference/status", timeout=10)
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            return {}
 
 
 # ============================================================
@@ -609,16 +607,21 @@ class E2ETestRunner:
             print(f"    Dataset: {os.path.basename(dataset_path)}")
             print(f"    Output:  {output_dir}")
             
-            response = self.client.start_training(config)
-            job_id = response.get("job_id", "")
+            # Step 1: Create the job
+            create_response = self.client.create_job(config)
+            job_id = create_response.get("id", create_response.get("job_id", ""))
             result.job_id = job_id
             print(f"    Job ID:  {job_id}")
             
             if not job_id:
                 result.status = "error"
-                result.error_message = f"No job_id returned: {response}"
+                result.error_message = f"No job_id returned: {create_response}"
                 print(f"  ✗ ERROR: {result.error_message}")
                 return result
+            
+            # Step 2: Start the job
+            start_response = self.client.start_job(job_id)
+            print(f"    Start:   {start_response.get('status', 'unknown')}")
             
             # Wait for training to complete
             print(f"    Waiting for training to complete (timeout: {TEST_TIMEOUT}s)...")
@@ -628,20 +631,21 @@ class E2ETestRunner:
                 result.status = "failed"
                 result.error_message = "Training timed out or failed"
                 # Get logs for debugging
-                logs = self.client.get_training_logs(job_id)
+                logs = self.client.get_terminal_logs(job_id)
                 result.training_logs_tail = logs[-20:] if logs else []
                 
                 # Try to get more specific error
                 try:
-                    job_status = self.client.get_job_status(job_id)
-                    actual_status = job_status.get("status", "unknown")
-                    error_msg = job_status.get("error_message", "")
+                    job_data = self.client.get_job_status(job_id)
+                    job_info = job_data.get("job", job_data)
+                    actual_status = job_info.get("status", "unknown")
+                    error_msg = job_info.get("error_message", job_info.get("error", ""))
                     if error_msg:
                         result.error_message = f"Training {actual_status}: {error_msg}"
                     elif actual_status == "running":
                         result.error_message = f"Training timed out after {TEST_TIMEOUT}s"
                         # Stop the timed-out training
-                        self.client.stop_training(job_id)
+                        self.client.stop_job(job_id)
                 except Exception:
                     pass
                 
@@ -654,9 +658,10 @@ class E2ETestRunner:
             
             # Training completed - get final info
             try:
-                job_status = self.client.get_job_status(job_id)
-                result.output_dir = job_status.get("output_dir", output_dir)
-                result.final_loss = job_status.get("current_loss")
+                job_data = self.client.get_job_status(job_id)
+                job_info = job_data.get("job", job_data)
+                result.output_dir = job_info.get("output_dir", output_dir)
+                result.final_loss = job_info.get("current_loss")
             except Exception:
                 result.output_dir = output_dir
             
@@ -703,39 +708,33 @@ class E2ETestRunner:
         
         while time.time() - start < TEST_TIMEOUT:
             try:
-                # Check global training status first
-                global_status = self.client.get_training_status()
-                is_active = global_status.get("is_training_active", False)
-                
-                if not is_active:
-                    # Training finished - check if it was successful
-                    try:
-                        job_status = self.client.get_job_status(job_id)
-                        status = job_status.get("status", "")
-                        if status == "completed":
-                            return True
-                        elif status in ("failed", "stopped", "cancelled"):
-                            return False
-                    except Exception:
-                        # Job might have completed, give it a moment
-                        time.sleep(2)
+                # Check job status directly
+                try:
+                    job_data = self.client.get_job_status(job_id)
+                    # The response may have a nested 'job' object or be flat
+                    job_info = job_data.get("job", job_data)
+                    status = job_info.get("status", "")
+                    
+                    if status == "completed":
                         return True
-                
-                # Print progress periodically
-                progress = global_status.get("progress", {})
-                current_step = progress.get("current_step", 0)
-                total_steps = progress.get("total_steps", 0)
-                progress_pct = progress.get("progress_percent", 0)
-                
-                if time.time() - last_print > 15 or current_step != last_step:
-                    elapsed = int(time.time() - start)
-                    if total_steps > 0:
-                        print(f"    [{elapsed}s] Step {current_step}/{total_steps} ({progress_pct:.1f}%)")
-                    else:
-                        phase = global_status.get("phase", "unknown")
-                        print(f"    [{elapsed}s] Phase: {phase}")
-                    last_step = current_step
-                    last_print = time.time()
+                    elif status in ("failed", "stopped", "cancelled"):
+                        return False
+                    
+                    # Print progress periodically
+                    current_step = job_info.get("current_step", 0)
+                    total_steps = job_info.get("total_steps", 0)
+                    
+                    if time.time() - last_print > 15 or current_step != last_step:
+                        elapsed = int(time.time() - start)
+                        if total_steps > 0:
+                            pct = (current_step / total_steps * 100) if total_steps > 0 else 0
+                            print(f"    [{elapsed}s] Step {current_step}/{total_steps} ({pct:.1f}%)")
+                        else:
+                            print(f"    [{elapsed}s] Status: {status}")
+                        last_step = current_step
+                        last_print = time.time()
+                except Exception:
+                    pass
                 
             except Exception as e:
                 # Connection error - might be temporary
