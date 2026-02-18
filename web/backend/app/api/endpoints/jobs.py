@@ -85,8 +85,9 @@ async def preflight_validation(config: TrainingConfig):
     try:
         import torch
         if torch.cuda.is_available():
-            gpu_name = torch.cuda.get_device_properties(0).name
-            gpu_mem = torch.cuda.get_device_properties(0).total_mem / (1024**3)
+            props = torch.cuda.get_device_properties(0)
+            gpu_name = props.name
+            gpu_mem = getattr(props, 'total_memory', getattr(props, 'total_mem', 0)) / (1024**3)
             gpu_count = torch.cuda.device_count()
             add_check("gpu", True, f"{gpu_name} ({gpu_mem:.1f}GB){f' x{gpu_count}' if gpu_count > 1 else ''}")
         else:
@@ -288,8 +289,10 @@ async def preflight_validation(config: TrainingConfig):
         output_dir = getattr(config, 'output_dir', '') or '/workspace'
         # Check the parent directory that exists
         check_path = output_dir
-        while check_path and not os.path.exists(check_path):
+        while check_path and check_path != '/' and not os.path.exists(check_path):
             check_path = os.path.dirname(check_path)
+        if not check_path or not os.path.exists(check_path):
+            check_path = '/'
         if check_path:
             stat = shutil.disk_usage(check_path)
             free_gb = stat.free / (1024**3)
