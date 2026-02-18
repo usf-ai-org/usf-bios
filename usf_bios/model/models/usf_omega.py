@@ -14,8 +14,14 @@ try:
     from transformers import AutoConfig, AutoModelForCausalLM
     from transformers.models.mistral.configuration_mistral import MistralConfig
     from transformers.models.mistral.modeling_mistral import MistralForCausalLM
-    AutoConfig.register("usf_omega", MistralConfig)
-    AutoModelForCausalLM.register(MistralConfig, MistralForCausalLM, exist_ok=True)
+
+    class UsfOmegaConfig(MistralConfig):
+        model_type = "usf_omega"
+
+    UsfOmegaForCausalLM = MistralForCausalLM
+
+    AutoConfig.register("usf_omega", UsfOmegaConfig)
+    AutoModelForCausalLM.register(UsfOmegaConfig, UsfOmegaForCausalLM, exist_ok=True)
 except Exception:
     pass
 
