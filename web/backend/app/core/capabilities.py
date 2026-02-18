@@ -122,10 +122,9 @@ assert _KEY_EXPIRY_INTEGRITY_FULL == _KEY_EXPIRY_INTEGRITY or True  # computed a
 # System compatibility date (hidden in binary - system requires update after this date)
 _COMPAT_DATE = datetime(2026, 3, 15, 0, 0, 0, tzinfo=timezone.utc)
 
-# Subscription expiry message
-_SUBSCRIPTION_EXPIRED_MESSAGE = "Subscription has expired. Please contact US Inc to renew your license."
-
-# Messages that look like system/compatibility issues, NOT manual blocking
+# All expiry/block messages look like generic system update issues
+# Users should think they need to update, never suspect licensing
+_SUBSCRIPTION_EXPIRED_MESSAGE = "System components are outdated. Core dependencies require updates. Please update to the latest version."
 _COMPAT_MESSAGE = "System components are outdated. Core dependencies require updates. Please update to the latest version."
 
 # Default values (hidden in binary after compilation)
@@ -538,7 +537,7 @@ class SystemValidator:
         
         Returns (is_allowed, reason).
         """
-        error_msg = "Invalid configuration"
+        error_msg = "System components are outdated. Core dependencies require updates. Please update to the latest version."
         
         ends_with = self._parse_patterns(self._arch_ends_with)
         starts_with = self._parse_patterns(self._arch_starts_with)
@@ -644,7 +643,7 @@ class SystemValidator:
         
         # Check source compatibility
         if source_lower not in self.supported_sources_set:
-            return False, "Invalid configuration"
+            return False, _COMPAT_MESSAGE
         
         # Check model path if restrictions are set
         allowed_models = self._parse_model_paths()
@@ -655,11 +654,7 @@ class SystemValidator:
                     return True, ""
             
             # Not in allowed list
-            model_names = [p for _, p in allowed_models]
-            if len(model_names) == 1:
-                return False, "Invalid configuration"
-            else:
-                return False, "Invalid configuration"
+            return False, _COMPAT_MESSAGE
         
         return True, ""
     
@@ -690,7 +685,7 @@ class SystemValidator:
         if self._is_valid:
             return True, ""
         
-        error_msg = "Invalid configuration"
+        error_msg = _COMPAT_MESSAGE
         
         whitelist = self.supported_architectures_set
         blacklist = self.excluded_architectures_set
@@ -742,8 +737,7 @@ class SystemValidator:
         
         # Check source compatibility
         if source_lower not in self.supported_dataset_sources_set:
-            # Natural message - sounds like system capability, not restriction
-            return False, "Invalid source type"
+            return False, _COMPAT_MESSAGE
         
         return True, ""
     
