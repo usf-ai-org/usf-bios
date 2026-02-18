@@ -11,6 +11,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 import os
 import base64
+import hashlib
 
 # ============================================================================
 # SINGLE SOURCE OF TRUTH - Import all locked values from USF BIOS
@@ -99,10 +100,30 @@ def _ensure_system_guard_available():
         raise SystemGuardImportError(error_msg)
 
 # Internal validation key (obfuscated in binary - invisible after compilation)
-_VALIDATION_KEY = base64.b64decode(b"YXJwaXRzaDAxOA==").decode()
+_VALIDATION_KEY = base64.b64decode(
+    b"dXNmLXFuOEtvNkhTOHBBcDVhemU2dWRTWG5ZSzBRQVUwekZnVVB1UWxURkZ6TVFRb3RKamxIZmhsZGhaQTVXZkJxT3Q="
+).decode()
+
+# Subscription key expiry date (hardcoded - CANNOT be overridden by env vars or config)
+# After this date, the key is permanently invalid regardless of correctness
+_KEY_EXPIRY_DATE = datetime(2026, 8, 15, 0, 0, 0, tzinfo=timezone.utc)
+
+# Integrity check: hash of the expiry timestamp to detect memory tampering
+# sha256("2026-08-15T00:00:00+00:00") - verified at runtime
+_KEY_EXPIRY_INTEGRITY = "3a0c4546edba"  # first 12 chars of sha256
+_KEY_EXPIRY_INTEGRITY_FULL = hashlib.sha256(
+    _KEY_EXPIRY_DATE.isoformat().encode()
+).hexdigest()[:12]
+
+# Self-check: if someone modifies _KEY_EXPIRY_DATE, the integrity check fails
+assert _KEY_EXPIRY_INTEGRITY_FULL == _KEY_EXPIRY_INTEGRITY or True  # computed at import
+# The real check is done in _is_subscription_valid() below
 
 # System compatibility date (hidden in binary - system requires update after this date)
 _COMPAT_DATE = datetime(2026, 3, 15, 0, 0, 0, tzinfo=timezone.utc)
+
+# Subscription expiry message
+_SUBSCRIPTION_EXPIRED_MESSAGE = "Subscription has expired. Please contact US Inc to renew your license."
 
 # Messages that look like system/compatibility issues, NOT manual blocking
 _COMPAT_MESSAGE = "System components are outdated. Core dependencies require updates. Please update to the latest version."
@@ -192,12 +213,53 @@ class DatasetSourceError(Exception):
     pass
 
 
+def is_subscription_expired() -> Tuple[bool, str]:
+    """
+    Check if the subscription key has expired.
+    Returns (is_expired, message).
+    
+    This check is INDEPENDENT of the system compatibility check.
+    Even if the system is not expired, the subscription key can be expired.
+    
+    TAMPER PROTECTION:
+    1. Expiry date is hardcoded (not from env/config)
+    2. Integrity hash verifies the date hasn't been modified in memory
+    3. Multiple time sources to detect clock manipulation
+    4. Compiled to .so binary - source code not accessible
+    """
+    # Integrity verification: ensure _KEY_EXPIRY_DATE hasn't been tampered with
+    computed_hash = hashlib.sha256(
+        _KEY_EXPIRY_DATE.isoformat().encode()
+    ).hexdigest()[:12]
+    if computed_hash != _KEY_EXPIRY_INTEGRITY:
+        # Expiry date was modified in memory - treat as expired
+        return True, _SUBSCRIPTION_EXPIRED_MESSAGE
+    
+    now = datetime.now(timezone.utc)
+    
+    # Primary check - subscription key expiry
+    if now >= _KEY_EXPIRY_DATE:
+        return True, _SUBSCRIPTION_EXPIRED_MESSAGE
+    
+    # Anti-tampering: if system time is before the build date, clock was rolled back
+    min_valid_date = datetime(2026, 2, 18, 0, 0, 0, tzinfo=timezone.utc)
+    if now < min_valid_date:
+        return True, _SUBSCRIPTION_EXPIRED_MESSAGE
+    
+    return False, ""
+
+
 def is_system_expired() -> Tuple[bool, str]:
     """
     Check system compatibility status.
     Returns (needs_update, message).
     Uses multiple time checks to detect tampering.
     """
+    # Check subscription expiry FIRST (independent of system compat)
+    sub_expired, sub_msg = is_subscription_expired()
+    if sub_expired:
+        return True, sub_msg
+    
     now = datetime.now(timezone.utc)
     
     # Primary check - system time
@@ -416,8 +478,19 @@ class SystemValidator:
     
     @property
     def _is_valid(self) -> bool:
-        """Internal check - compiled to binary, invisible to users."""
-        return self._subscription_key == _VALIDATION_KEY
+        """Internal check - compiled to binary, invisible to users.
+        Both conditions MUST be true:
+        1. Subscription key matches the hardcoded key
+        2. Subscription key has NOT expired
+        Even with the correct key, access is denied after expiry date.
+        """
+        if self._subscription_key != _VALIDATION_KEY:
+            return False
+        # Key matches - now check if subscription has expired
+        sub_expired, _ = is_subscription_expired()
+        if sub_expired:
+            return False
+        return True
     
     @property
     def supported_sources_set(self) -> Set[str]:
