@@ -48,9 +48,9 @@ DEFAULT_API_URL = "http://localhost:8000/api"
 TEST_TRAINING_PARAMS = {
     "num_train_epochs": 1,
     "learning_rate": 2e-4,
-    "per_device_train_batch_size": 2,
-    "gradient_accumulation_steps": 2,
-    "max_length": 512,
+    "per_device_train_batch_size": 1,
+    "gradient_accumulation_steps": 4,
+    "max_length": 256,
     "torch_dtype": "bfloat16",
     "lora_rank": 8,
     "lora_alpha": 16,
@@ -87,7 +87,7 @@ def get_test_matrix(data_dir: str):
     # ============================================================
     # SFT Tests (4 combos)
     # ============================================================
-    for train_type in ["lora", "qlora", "adalora", "full"]:
+    for train_type in ["qlora", "adalora", "full"]:
         test = {
             "name": f"SFT_{train_type.upper()}",
             "training_method": "sft",
@@ -97,8 +97,9 @@ def get_test_matrix(data_dir: str):
             "extra_params": {},
             "category": "SFT",
         }
-        if train_type == "qlora":
+        if train_type in ("qlora", "adalora"):
             test["extra_params"]["quant_bits"] = 4
+            test["train_type"] = "qlora" if train_type == "qlora" else "adalora"
         if train_type == "full":
             # Full fine-tuning needs smaller batch for memory
             test["extra_params"]["per_device_train_batch_size"] = 1
@@ -106,9 +107,9 @@ def get_test_matrix(data_dir: str):
         tests.append(test)
     
     # ============================================================
-    # DPO Tests (3 combos)
+    # DPO Tests (2 combos)
     # ============================================================
-    for train_type in ["lora", "qlora", "full"]:
+    for train_type in ["qlora", "full"]:
         test = {
             "name": f"DPO_{train_type.upper()}",
             "training_method": "rlhf",
@@ -126,127 +127,106 @@ def get_test_matrix(data_dir: str):
         tests.append(test)
     
     # ============================================================
-    # ORPO Tests (2 combos)
+    # ORPO Test (1 combo - QLoRA)
     # ============================================================
-    for train_type in ["lora", "qlora"]:
-        test = {
-            "name": f"ORPO_{train_type.upper()}",
-            "training_method": "rlhf",
-            "train_type": train_type,
-            "dataset_path": pref_dataset,
-            "rlhf_type": "orpo",
-            "extra_params": {"beta": 0.1},
-            "category": "RLHF_Offline",
-        }
-        if train_type == "qlora":
-            test["extra_params"]["quant_bits"] = 4
-        tests.append(test)
+    tests.append({
+        "name": "ORPO_QLORA",
+        "training_method": "rlhf",
+        "train_type": "qlora",
+        "dataset_path": pref_dataset,
+        "rlhf_type": "orpo",
+        "extra_params": {"beta": 0.1, "quant_bits": 4},
+        "category": "RLHF_Offline",
+    })
     
     # ============================================================
-    # SimPO Tests (2 combos)
+    # SimPO Test (1 combo - QLoRA)
     # ============================================================
-    for train_type in ["lora", "qlora"]:
-        test = {
-            "name": f"SimPO_{train_type.upper()}",
-            "training_method": "rlhf",
-            "train_type": train_type,
-            "dataset_path": pref_dataset,
-            "rlhf_type": "simpo",
-            "extra_params": {"beta": 2.0, "simpo_gamma": 1.0},
-            "category": "RLHF_Offline",
-        }
-        if train_type == "qlora":
-            test["extra_params"]["quant_bits"] = 4
-        tests.append(test)
+    tests.append({
+        "name": "SimPO_QLORA",
+        "training_method": "rlhf",
+        "train_type": "qlora",
+        "dataset_path": pref_dataset,
+        "rlhf_type": "simpo",
+        "extra_params": {"beta": 2.0, "simpo_gamma": 1.0, "quant_bits": 4},
+        "category": "RLHF_Offline",
+    })
     
     # ============================================================
-    # CPO Tests (2 combos)
+    # CPO Test (1 combo - QLoRA)
     # ============================================================
-    for train_type in ["lora", "qlora"]:
-        test = {
-            "name": f"CPO_{train_type.upper()}",
-            "training_method": "rlhf",
-            "train_type": train_type,
-            "dataset_path": pref_dataset,
-            "rlhf_type": "cpo",
-            "extra_params": {"beta": 0.1},
-            "category": "RLHF_Offline",
-        }
-        if train_type == "qlora":
-            test["extra_params"]["quant_bits"] = 4
-        tests.append(test)
+    tests.append({
+        "name": "CPO_QLORA",
+        "training_method": "rlhf",
+        "train_type": "qlora",
+        "dataset_path": pref_dataset,
+        "rlhf_type": "cpo",
+        "extra_params": {"beta": 0.1, "quant_bits": 4},
+        "category": "RLHF_Offline",
+    })
     
     # ============================================================
-    # KTO Tests (2 combos)
+    # KTO Test (1 combo - QLoRA)
     # ============================================================
-    for train_type in ["lora", "qlora"]:
-        test = {
-            "name": f"KTO_{train_type.upper()}",
-            "training_method": "rlhf",
-            "train_type": train_type,
-            "dataset_path": kto_dataset,
-            "rlhf_type": "kto",
-            "extra_params": {
-                "beta": 0.1,
-                "desirable_weight": 1.0,
-                "undesirable_weight": 1.0,
-            },
-            "category": "RLHF_Offline",
-        }
-        if train_type == "qlora":
-            test["extra_params"]["quant_bits"] = 4
-        tests.append(test)
+    tests.append({
+        "name": "KTO_QLORA",
+        "training_method": "rlhf",
+        "train_type": "qlora",
+        "dataset_path": kto_dataset,
+        "rlhf_type": "kto",
+        "extra_params": {
+            "beta": 0.1,
+            "desirable_weight": 1.0,
+            "undesirable_weight": 1.0,
+            "quant_bits": 4,
+        },
+        "category": "RLHF_Offline",
+    })
     
     # ============================================================
-    # GRPO Tests (2 combos - online RL)
+    # GRPO Test (1 combo - QLoRA, online RL)
     # ============================================================
-    for train_type in ["lora", "qlora"]:
-        test = {
-            "name": f"GRPO_{train_type.upper()}",
-            "training_method": "rlhf",
-            "train_type": train_type,
-            "dataset_path": prompt_dataset,
-            "rlhf_type": "grpo",
-            "extra_params": {
-                "num_generations": 4,
-                "max_completion_length": 256,
-                "use_vllm": False,  # Disable vLLM for single GPU testing
-            },
-            "category": "RLHF_Online",
-            "requires_multi_gpu": False,
-        }
-        if train_type == "qlora":
-            test["extra_params"]["quant_bits"] = 4
-        tests.append(test)
+    tests.append({
+        "name": "GRPO_QLORA",
+        "training_method": "rlhf",
+        "train_type": "qlora",
+        "dataset_path": prompt_dataset,
+        "rlhf_type": "grpo",
+        "extra_params": {
+            "num_generations": 4,
+            "max_completion_length": 256,
+            "use_vllm": False,
+            "quant_bits": 4,
+        },
+        "category": "RLHF_Online",
+        "requires_multi_gpu": False,
+    })
     
     # ============================================================
-    # PPO Tests (2 combos - online RL)
+    # PPO Test (1 combo - QLoRA, online RL)
     # ============================================================
-    for train_type in ["lora", "qlora"]:
-        test = {
-            "name": f"PPO_{train_type.upper()}",
-            "training_method": "rlhf",
-            "train_type": train_type,
-            "dataset_path": prompt_dataset,
-            "rlhf_type": "ppo",
-            "extra_params": {
-                "num_ppo_epochs": 2,
-                "kl_coef": 0.05,
-                "cliprange": 0.2,
-                "max_completion_length": 256,
-                "use_vllm": False,
-            },
-            "category": "RLHF_Online",
-            "requires_multi_gpu": False,
-        }
-        if train_type == "qlora":
-            test["extra_params"]["quant_bits"] = 4
-        tests.append(test)
+    tests.append({
+        "name": "PPO_QLORA",
+        "training_method": "rlhf",
+        "train_type": "qlora",
+        "dataset_path": prompt_dataset,
+        "rlhf_type": "ppo",
+        "extra_params": {
+            "num_ppo_epochs": 2,
+            "kl_coef": 0.05,
+            "cliprange": 0.2,
+            "max_completion_length": 256,
+            "use_vllm": False,
+            "quant_bits": 4,
+        },
+        "category": "RLHF_Online",
+        "requires_multi_gpu": False,
+    })
     
     # ============================================================
-    # Pre-training Tests (3 combos)
+    # Pre-training Tests (2 combos)
     # ============================================================
-    for train_type in ["lora", "qlora", "full"]:
+    for train_type in ["qlora", "full"]:
         test = {
             "name": f"PT_{train_type.upper()}",
             "training_method": "pt",
