@@ -104,6 +104,7 @@ def get_test_matrix(data_dir: str):
             # Full fine-tuning needs smaller batch for memory
             test["extra_params"]["per_device_train_batch_size"] = 1
             test["extra_params"]["gradient_accumulation_steps"] = 4
+            test["extra_params"]["save_total_limit"] = 1
         tests.append(test)
     
     # ============================================================
@@ -124,6 +125,7 @@ def get_test_matrix(data_dir: str):
         if train_type == "full":
             test["extra_params"]["per_device_train_batch_size"] = 1
             test["extra_params"]["gradient_accumulation_steps"] = 4
+            test["extra_params"]["save_total_limit"] = 1
         tests.append(test)
     
     # ============================================================
@@ -241,6 +243,7 @@ def get_test_matrix(data_dir: str):
         if train_type == "full":
             test["extra_params"]["per_device_train_batch_size"] = 1
             test["extra_params"]["gradient_accumulation_steps"] = 4
+            test["extra_params"]["save_total_limit"] = 1
         tests.append(test)
     
     return tests
@@ -733,6 +736,11 @@ class E2ETestRunner:
             train_type = test_config["train_type"]
             output_dir = result.output_dir
             
+            if not output_dir:
+                result.inference_passed = False
+                print(f"  ✗ Inference SKIPPED: No output directory from training")
+                return
+            
             if train_type in ["lora", "qlora", "adalora"]:
                 # Load base model + adapter
                 print(f"    Loading base model + adapter from {output_dir}")
@@ -740,28 +748,39 @@ class E2ETestRunner:
                     model_path=self.model_path,
                     adapter_path=output_dir,
                 )
+                infer_model_path = self.model_path
             else:
                 # Full fine-tuning - load output directly
                 print(f"    Loading full model from {output_dir}")
                 self.client.load_model_for_inference(model_path=output_dir)
+                infer_model_path = output_dir
             
             # Wait for model to load
-            time.sleep(5)
+            time.sleep(10)
             
             # Run a test inference
             print(f"    Running test inference...")
-            response = self.client.run_inference("What is machine learning?", max_tokens=50)
+            response = self.client.run_inference(
+                "What is machine learning?",
+                model_path=infer_model_path,
+                max_tokens=50,
+            )
             
-            if response:
+            if response and response.get("response"):
+                generated = response["response"][:100]
                 result.inference_passed = True
-                print(f"  ✓ Inference PASSED")
+                print(f"  ✓ Inference PASSED: \"{generated}...\"")
+            elif response:
+                result.inference_passed = True
+                print(f"  ✓ Inference PASSED (response received)")
             else:
                 result.inference_passed = False
                 print(f"  ✗ Inference returned empty response")
             
             # Unload model
+            print(f"    Unloading model...")
             self.client.unload_model()
-            time.sleep(2)
+            time.sleep(5)
             
         except Exception as e:
             result.inference_passed = False
