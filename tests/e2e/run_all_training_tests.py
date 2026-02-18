@@ -579,7 +579,7 @@ class E2ETestRunner:
             "train_type": test_config["train_type"],
             "dataset_path": dataset_path,
             "output_dir": "",
-            "name": f"e2e_test_{test_config['name'].lower()}",
+            "name": f"e2e_{test_config['name'].lower()}_{int(time.time())}",
             **TEST_TRAINING_PARAMS,
         }
         
