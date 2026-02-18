@@ -1523,7 +1523,7 @@ class InferenceService:
                         stream=True,
                     )
                     
-                    gen = self._engine.infer_async(
+                    gen = await self._engine.infer_async(
                         infer_request,
                         request_config=request_config,
                     )
