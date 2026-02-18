@@ -47,11 +47,11 @@ const Shimmer = ({ className = '', width = 'w-full', height = 'h-4' }: {
   height?: string 
 }) => (
   <div className={`animate-pulse rounded ${width} ${height} ${className}`} 
-    style={{ background: 'linear-gradient(90deg, rgba(148,163,184,0.06), rgba(148,163,184,0.12), rgba(148,163,184,0.06))', backgroundSize: '200% 100%', animation: 'shimmer 1.5s ease-in-out infinite' }} />
+    style={{ background: 'linear-gradient(90deg, #e2e8f0, #f1f5f9, #e2e8f0)', backgroundSize: '200% 100%', animation: 'shimmer 1.5s ease-in-out infinite' }} />
 )
 
 const ShimmerCard = ({ lines = 3 }: { lines?: number }) => (
-  <div className="rounded-xl p-4 space-y-3" style={{ background: 'rgba(15, 22, 41, 0.6)', border: '1px solid rgba(148, 163, 184, 0.08)' }}>
+  <div className="rounded-xl p-4 space-y-3 bg-white border border-slate-200">
     <Shimmer width="w-1/3" height="h-5" />
     {Array.from({ length: lines }).map((_, i) => (
       <Shimmer key={i} width={i === lines - 1 ? 'w-2/3' : 'w-full'} height="h-3" />
@@ -695,6 +695,16 @@ export default function Home() {
     error: string | null
   }>({ model_type: null, architecture: null, isLoading: false, error: null })
   
+  // Real-time model validation state - validates model path/ID on selection
+  // Blocks "Next" button until model is confirmed valid
+  const [modelValidation, setModelValidation] = useState<{
+    status: 'idle' | 'validating' | 'valid' | 'invalid'
+    message: string
+    model_type: string | null
+  }>({ status: 'idle', message: '', model_type: null })
+  const modelValidationTimer = useRef<NodeJS.Timeout | null>(null)
+  const modelValidationAbort = useRef<AbortController | null>(null)
+  
   // System API tokens status - check if HF_TOKEN/MS_TOKEN are configured on server
   const [systemTokens, setSystemTokens] = useState<{
     hf_token_available: boolean
@@ -1042,6 +1052,78 @@ export default function Home() {
       }
     }, 300) // 300ms debounce (increased from 100ms)
   }, []) // NO DEPENDENCIES - completely stable callback
+
+  // Real-time model validation - validates model path/ID on selection
+  // Called whenever model_path or model_source changes
+  // Blocks "Next" button until validation passes
+  const validateModelPath = useCallback((modelPath: string, source: string) => {
+    if (!modelPath || modelPath.trim().length === 0) {
+      setModelValidation({ status: 'idle', message: '', model_type: null })
+      return
+    }
+    
+    // Clear pending validation timer
+    if (modelValidationTimer.current) clearTimeout(modelValidationTimer.current)
+    
+    // Show validating state immediately
+    setModelValidation({ status: 'validating', message: 'Validating model...', model_type: null })
+    
+    // Debounce 500ms to avoid spamming on every keystroke
+    modelValidationTimer.current = setTimeout(async () => {
+      // Cancel any in-flight validation request
+      if (modelValidationAbort.current) modelValidationAbort.current.abort()
+      const abort = new AbortController()
+      modelValidationAbort.current = abort
+      
+      try {
+        const res = await fetch(
+          `/api/models/validate?model_path=${encodeURIComponent(modelPath)}&source=${source}`,
+          { signal: abort.signal }
+        )
+        if (abort.signal.aborted) return
+        
+        if (res.ok) {
+          const data = await res.json()
+          if (data.valid) {
+            setModelValidation({
+              status: 'valid',
+              message: data.model_type ? `Model verified (${data.model_type})` : 'Model path verified',
+              model_type: data.model_type || null
+            })
+          } else {
+            setModelValidation({
+              status: 'invalid',
+              message: data.error || 'Model validation failed',
+              model_type: null
+            })
+          }
+        } else if (res.status === 503) {
+          // System expired
+          setModelValidation({ status: 'invalid', message: 'System requires upgrade', model_type: null })
+        } else {
+          setModelValidation({ status: 'invalid', message: 'Could not validate model', model_type: null })
+        }
+      } catch (e: unknown) {
+        if (e instanceof Error && e.name === 'AbortError') return
+        setModelValidation({ status: 'invalid', message: 'Validation request failed', model_type: null })
+      }
+    }, 500)
+  }, [])
+
+  // Trigger model validation whenever model_path or model_source changes
+  useEffect(() => {
+    // Skip validation for locked models with single option (always valid)
+    if (IS_SINGLE_MODEL) {
+      setModelValidation({ status: 'valid', message: 'Locked model', model_type: null })
+      return
+    }
+    validateModelPath(config.model_path, config.model_source)
+    return () => {
+      if (modelValidationTimer.current) clearTimeout(modelValidationTimer.current)
+      if (modelValidationAbort.current) modelValidationAbort.current.abort()
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.model_path, config.model_source])
 
   // Fetch output path configuration from backend API
   const fetchOutputPathConfig = useCallback(async () => {
@@ -3236,7 +3318,14 @@ export default function Home() {
     } else {
       // Steps: 1=Model, 2=Dataset, 3=Settings, 4=Review
       switch (currentStep) {
-        case 1: return config.model_path.length > 0  // Model step
+        case 1: {
+          // Model step - require model path AND validation pass
+          if (!config.model_path || config.model_path.trim().length === 0) return false
+          // For locked models (multi-select), always valid once selected
+          if (IS_MODEL_LOCKED) return true
+          // For unlocked models, require backend validation to pass
+          return modelValidation.status === 'valid'
+        }
         case 2: return config.dataset_paths.length > 0  // Dataset step
         case 3: return true  // Settings step
         case 4: return true  // Review step
@@ -3265,16 +3354,16 @@ export default function Home() {
   // SYSTEM LOCKDOWN - Complete block when expired
   if (systemExpired) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-white flex items-center justify-center">
         <div className="text-center p-8">
-          <div className="w-20 h-20 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
+          <div className="w-20 h-20 bg-red-50 border border-red-200 rounded-full flex items-center justify-center mx-auto mb-6">
             <XCircle className="w-10 h-10 text-red-500" />
           </div>
-          <h1 className="text-2xl font-bold text-white mb-3">System Requires Upgrade</h1>
-          <p className="text-slate-400 max-w-md">
+          <h1 className="text-2xl font-bold text-slate-900 mb-3">System Requires Upgrade</h1>
+          <p className="text-slate-500 max-w-md">
             This system version has expired. Please contact support to upgrade your system.
           </p>
-          <p className="text-slate-500 text-sm mt-6">
+          <p className="text-slate-400 text-sm mt-6">
             USF BIOS - Powered by US Inc
           </p>
         </div>
@@ -3285,10 +3374,10 @@ export default function Home() {
   // Wait for expiration check before showing anything
   if (!expirationChecked) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-white flex items-center justify-center">
         <div className="text-center">
           <Loader2 className="w-8 h-8 text-blue-500 animate-spin mx-auto mb-4" />
-          <p className="text-slate-400">Initializing system...</p>
+          <p className="text-slate-500">Initializing system...</p>
         </div>
       </div>
     )
@@ -3298,30 +3387,30 @@ export default function Home() {
   if (hardwareStatus.checked && !hardwareStatus.hardware_supported) {
     const error = hardwareStatus.errors[0]
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-white flex items-center justify-center p-4">
         <div className="text-center max-w-lg">
           {/* GPU Icon */}
-          <div className="w-24 h-24 bg-red-500/20 rounded-2xl flex items-center justify-center mx-auto mb-6">
+          <div className="w-24 h-24 bg-red-50 border border-red-200 rounded-2xl flex items-center justify-center mx-auto mb-6">
             <Monitor className="w-12 h-12 text-red-500" />
           </div>
           
           {/* Title */}
-          <h1 className="text-2xl font-bold text-white mb-3">
+          <h1 className="text-2xl font-bold text-slate-900 mb-3">
             {error?.title || 'NVIDIA GPU Required'}
           </h1>
           
           {/* Message */}
-          <p className="text-slate-400 mb-6">
+          <p className="text-slate-500 mb-6">
             {error?.message || 'This system requires an NVIDIA GPU with CUDA support. AMD GPUs and CPU-only are not supported.'}
           </p>
           
           {/* Supported Hardware Box */}
-          <div className="bg-slate-800/50 rounded-xl p-6 text-left mb-6">
-            <h3 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-6 text-left mb-6">
+            <h3 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
               <Cpu className="w-4 h-4" />
               Supported Hardware
             </h3>
-            <ul className="text-sm text-slate-400 space-y-2">
+            <ul className="text-sm text-slate-600 space-y-2">
               <li className="flex items-center gap-2">
                 <Check className="w-4 h-4 text-green-500" />
                 NVIDIA RTX 20xx/30xx/40xx Series
@@ -3336,8 +3425,8 @@ export default function Home() {
               </li>
             </ul>
             
-            <div className="border-t border-slate-700 mt-4 pt-4">
-              <h4 className="text-sm font-semibold text-red-400 mb-2">Not Supported</h4>
+            <div className="border-t border-slate-200 mt-4 pt-4">
+              <h4 className="text-sm font-semibold text-red-600 mb-2">Not Supported</h4>
               <ul className="text-sm text-slate-500 space-y-1">
                 <li className="flex items-center gap-2">
                   <XCircle className="w-3 h-3 text-red-500" />
@@ -3357,12 +3446,12 @@ export default function Home() {
           
           {/* Suggestions */}
           {error?.suggestions && error.suggestions.length > 0 && (
-            <div className="bg-blue-500/10 rounded-xl p-4 text-left mb-6">
-              <h4 className="text-sm font-semibold text-blue-400 mb-2">How to Fix</h4>
-              <ul className="text-sm text-slate-400 space-y-1">
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-left mb-6">
+              <h4 className="text-sm font-semibold text-blue-700 mb-2">How to Fix</h4>
+              <ul className="text-sm text-slate-600 space-y-1">
                 {error.suggestions.map((s: string, i: number) => (
                   <li key={i} className="flex items-start gap-2">
-                    <span className="text-blue-400 mt-1">•</span>
+                    <span className="text-blue-500 mt-1">•</span>
                     {s}
                   </li>
                 ))}
@@ -3509,7 +3598,7 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen relative" style={{ background: '#0a0e1a' }}>
+    <div className="min-h-screen relative" style={{ background: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 50%, #eff6ff 100%)' }}>
       {/* Shimmer Animation Styles */}
       <style dangerouslySetInnerHTML={{ __html: shimmerStyles }} />
       
@@ -3616,42 +3705,39 @@ export default function Home() {
       {/* Training Status Banner - Shows prominently when training is active */}
       <TrainingStatusBanner />
 
-      {/* Header - Dark Glassmorphic Nav */}
-      <header className="sticky top-0 z-40 border-b" style={{ background: 'rgba(10, 14, 26, 0.85)', backdropFilter: 'blur(20px) saturate(180%)', borderColor: 'rgba(148, 163, 184, 0.08)' }}>
+      {/* Header - Clean Light Nav */}
+      <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-xl border-b border-slate-200/80" style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="relative w-10 h-10">
-                <div className="absolute inset-0 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-xl opacity-20 blur-lg" />
-                <div className="relative w-10 h-10 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-xl flex items-center justify-center" style={{ boxShadow: '0 0 20px rgba(59, 130, 246, 0.3)' }}>
-                  <Sparkles className="w-5 h-5 text-white" />
-                </div>
+              <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center shadow-md">
+                <Sparkles className="w-5 h-5 text-white" />
               </div>
               <div className="hidden sm:block">
-                <h1 className="text-lg font-bold" style={{ color: '#f1f5f9' }}>USF BIOS</h1>
-                <p className="text-xs" style={{ color: '#64748b' }}>AI Fine-tuning Platform</p>
+                <h1 className="text-lg font-bold text-slate-900">USF BIOS</h1>
+                <p className="text-xs text-slate-500">AI Fine-tuning Platform</p>
               </div>
             </div>
             
             {/* Mobile menu button */}
-            <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} className="sm:hidden p-2 rounded-lg" style={{ color: '#94a3b8' }}>
+            <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} className="sm:hidden p-2 rounded-lg text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors">
               <Menu className="w-6 h-6" />
             </button>
             
             {/* Desktop tabs - Premium pill switcher */}
-            <div className="hidden sm:flex rounded-xl p-1" style={{ background: 'rgba(148, 163, 184, 0.06)', border: '1px solid rgba(148, 163, 184, 0.08)' }}>
+            <div className="hidden sm:flex rounded-xl p-1 bg-slate-100 border border-slate-200/50">
               <button
                 onClick={() => handleTabChange('train')}
                 disabled={isTraining}
                 className={`px-5 py-2 rounded-lg text-sm font-medium transition-all duration-300 flex items-center gap-2 ${
                   mainTab === 'train' 
-                    ? 'text-white' 
-                    : 'hover:text-white/80'
+                    ? 'text-white shadow-md' 
+                    : 'text-slate-500 hover:text-slate-700'
                 } ${isTraining ? 'opacity-50 cursor-not-allowed' : ''}`}
                 style={mainTab === 'train' ? { 
-                  background: 'linear-gradient(135deg, #3b82f6, #2563eb)', 
-                  boxShadow: '0 0 20px rgba(59, 130, 246, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' 
-                } : { color: '#94a3b8' }}
+                  background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
+                  boxShadow: '0 2px 8px rgba(59, 130, 246, 0.3)'
+                } : {}}
               >
                 <Zap className="w-4 h-4" />Fine-tuning
                 {isTraining && <Loader2 className="w-3 h-3 animate-spin" />}
@@ -3661,13 +3747,13 @@ export default function Home() {
                 disabled={isTraining}
                 className={`px-5 py-2 rounded-lg text-sm font-medium transition-all duration-300 flex items-center gap-2 ${
                   mainTab === 'inference' 
-                    ? 'text-white' 
-                    : 'hover:text-white/80'
+                    ? 'text-white shadow-md' 
+                    : 'text-slate-500 hover:text-slate-700'
                 } ${isTraining ? 'opacity-50 cursor-not-allowed' : ''}`}
                 style={mainTab === 'inference' ? { 
-                  background: 'linear-gradient(135deg, #3b82f6, #2563eb)', 
-                  boxShadow: '0 0 20px rgba(59, 130, 246, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' 
-                } : { color: '#94a3b8' }}
+                  background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
+                  boxShadow: '0 2px 8px rgba(59, 130, 246, 0.3)'
+                } : {}}
               >
                 <MessageSquare className="w-4 h-4" />Inference
               </button>
@@ -3676,29 +3762,29 @@ export default function Home() {
             {/* System metrics mini display */}
             <div className="hidden lg:flex items-center gap-3 text-xs">
               {systemMetrics.available && systemMetrics.gpu_utilization !== null && (
-                <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg" style={{ background: 'rgba(6, 182, 212, 0.08)', border: '1px solid rgba(6, 182, 212, 0.15)' }}>
-                  <Gauge className="w-3.5 h-3.5" style={{ color: '#22d3ee' }} />
-                  <span style={{ color: '#94a3b8' }}>GPU: <span style={{ color: '#e2e8f0', fontWeight: 500 }}>{systemMetrics.gpu_utilization}%</span></span>
+                <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-cyan-50 border border-cyan-200/60">
+                  <Gauge className="w-3.5 h-3.5 text-cyan-600" />
+                  <span className="text-slate-500">GPU: <span className="text-slate-800 font-medium">{systemMetrics.gpu_utilization}%</span></span>
                 </div>
               )}
               {systemMetrics.available && systemMetrics.gpu_memory_used !== null && systemMetrics.gpu_memory_total !== null && (
-                <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg" style={{ background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.15)' }}>
-                  <HardDrive className="w-3.5 h-3.5" style={{ color: '#60a5fa' }} />
-                  <span style={{ color: '#94a3b8' }}>VRAM: <span style={{ color: '#e2e8f0', fontWeight: 500 }}>{systemMetrics.gpu_memory_used.toFixed(1)}/{systemMetrics.gpu_memory_total.toFixed(0)}GB</span>{systemMetrics.device_count && systemMetrics.device_count > 1 ? ` (${systemMetrics.device_count} GPUs)` : ''}</span>
+                <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-50 border border-blue-200/60">
+                  <HardDrive className="w-3.5 h-3.5 text-blue-600" />
+                  <span className="text-slate-500">VRAM: <span className="text-slate-800 font-medium">{systemMetrics.gpu_memory_used.toFixed(1)}/{systemMetrics.gpu_memory_total.toFixed(0)}GB</span>{systemMetrics.device_count && systemMetrics.device_count > 1 ? ` (${systemMetrics.device_count} GPUs)` : ''}</span>
                 </div>
               )}
-              <span style={{ color: '#475569' }}>Powered by <a href="https://us.inc" target="_blank" rel="noopener noreferrer" className="hover:underline font-medium" style={{ color: '#60a5fa' }}>Ultrasafe AI</a></span>
+              <span className="text-slate-400">Powered by <a href="https://us.inc" target="_blank" rel="noopener noreferrer" className="hover:underline font-medium text-blue-500">Ultrasafe AI</a></span>
             </div>
           </div>
           
           {/* Mobile menu */}
           {mobileMenuOpen && (
-            <div className="sm:hidden mt-3 pt-3 flex gap-2" style={{ borderTop: '1px solid rgba(148, 163, 184, 0.08)' }}>
+            <div className="sm:hidden mt-3 pt-3 flex gap-2 border-t border-slate-200">
               <button 
                 onClick={() => { handleTabChange('train'); setMobileMenuOpen(false) }}
                 disabled={isTraining}
                 className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${isTraining ? 'opacity-50 cursor-not-allowed' : ''}`}
-                style={mainTab === 'train' ? { background: 'linear-gradient(135deg, #3b82f6, #2563eb)', color: 'white' } : { background: 'rgba(148, 163, 184, 0.06)', color: '#94a3b8' }}>
+                style={mainTab === 'train' ? { background: 'linear-gradient(135deg, #3b82f6, #2563eb)', color: 'white' } : { background: '#f1f5f9', color: '#64748b' }}>
                 <Zap className="w-4 h-4 inline mr-1" />Fine-tuning
                 {isTraining && <Loader2 className="w-3 h-3 inline ml-1 animate-spin" />}
               </button>
@@ -3706,7 +3792,7 @@ export default function Home() {
                 onClick={() => { handleTabChange('inference'); setMobileMenuOpen(false) }}
                 disabled={isTraining}
                 className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${isTraining ? 'opacity-50 cursor-not-allowed' : ''}`}
-                style={mainTab === 'inference' ? { background: 'linear-gradient(135deg, #3b82f6, #2563eb)', color: 'white' } : { background: 'rgba(148, 163, 184, 0.06)', color: '#94a3b8' }}>
+                style={mainTab === 'inference' ? { background: 'linear-gradient(135deg, #3b82f6, #2563eb)', color: 'white' } : { background: '#f1f5f9', color: '#64748b' }}>
                 <MessageSquare className="w-4 h-4 inline mr-1" />Inference
               </button>
             </div>
@@ -3741,7 +3827,7 @@ export default function Home() {
 
       {/* Training In Progress Banner - Shows when training is active */}
       {isTraining && (
-        <div className="bg-blue-600 text-white px-4 py-3 text-center text-sm font-medium border-b border-blue-700">
+        <div className="bg-blue-600 text-white px-4 py-3 text-center text-sm font-medium border-b border-blue-500">
           <div className="max-w-6xl mx-auto flex items-center justify-center gap-2">
             <Loader2 className="w-4 h-4 animate-spin" />
             <span>
@@ -4377,10 +4463,10 @@ export default function Home() {
               )}
               
               {/* Terminal Logs - Only this container scrolls, NOT the page */}
-              <div className={`bg-slate-900 rounded-lg border flex flex-col h-64 ${
-                jobStatus.status === 'failed' ? 'border-red-500/50' : 'border-slate-700'
+              <div className={`bg-slate-900 rounded-xl border flex flex-col h-64 shadow-inner ${
+                jobStatus.status === 'failed' ? 'border-red-500/50' : 'border-slate-300'
               }`}>
-                <div className={`flex-shrink-0 px-3 py-2 border-b text-[10px] bg-slate-900 rounded-t-lg flex items-center justify-between ${
+                <div className={`flex-shrink-0 px-3 py-2 border-b text-[10px] bg-slate-900 rounded-t-xl flex items-center justify-between ${
                   jobStatus.status === 'failed' ? 'border-red-500/50 text-red-400' : 'border-slate-700 text-slate-500'
                 }`}>
                   <span>TERMINAL OUTPUT ({trainingLogs.length} lines)</span>
@@ -4440,8 +4526,8 @@ export default function Home() {
                     </div>
                   ) : (
                     trainingLogs.map((log, i) => (
-                      <div key={i} className={`hover:bg-slate-800/50 py-0.5 whitespace-pre-wrap break-all ${
-                        log.includes('ERROR') || log.includes('[ERROR]') ? 'text-red-400 bg-red-900/20' : ''
+                      <div key={i} className={`hover:bg-slate-800/40 py-0.5 whitespace-pre-wrap break-all ${
+                        log.includes('ERROR') || log.includes('[ERROR]') ? 'text-red-400 bg-red-900/20' : 'text-slate-300'
                       }`}>{log}</div>
                     ))
                   )}
@@ -4451,25 +4537,25 @@ export default function Home() {
               
               {/* Training Completion Summary - show when completed */}
               {jobStatus.status === 'completed' && (
-                <div className="rounded-xl overflow-hidden" style={{ background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.08), rgba(6, 182, 212, 0.05))', border: '1px solid rgba(16, 185, 129, 0.2)' }}>
+                <div className="rounded-xl overflow-hidden bg-gradient-to-br from-emerald-50 to-cyan-50 border border-emerald-200">
                   {/* Success Header */}
-                  <div className="px-5 py-4 flex items-center gap-3" style={{ borderBottom: '1px solid rgba(16, 185, 129, 0.1)' }}>
-                    <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #10b981, #059669)', boxShadow: '0 0 20px rgba(16, 185, 129, 0.3)' }}>
+                  <div className="px-5 py-4 flex items-center gap-3 border-b border-emerald-100">
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-gradient-to-br from-emerald-500 to-teal-600 shadow-md">
                       <CheckCircle className="w-5 h-5 text-white" />
                     </div>
                     <div>
-                      <h4 className="font-semibold text-base" style={{ color: '#6ee7b7' }}>Training Completed Successfully</h4>
-                      <p className="text-xs" style={{ color: '#64748b' }}>{trainTypeInfo?.display_name || 'SFT'} • {config.train_type?.toUpperCase()}</p>
+                      <h4 className="font-semibold text-base text-emerald-800">Training Completed Successfully</h4>
+                      <p className="text-xs text-slate-500">{trainTypeInfo?.display_name || 'SFT'} • {config.train_type?.toUpperCase()}</p>
                     </div>
                   </div>
                   
                   <div className="p-5 space-y-4">
                     {/* Output Path */}
                     <div className="flex items-start gap-3">
-                      <FolderOpen className="w-4 h-4 mt-0.5 flex-shrink-0" style={{ color: '#34d399' }} />
+                      <FolderOpen className="w-4 h-4 mt-0.5 flex-shrink-0 text-emerald-600" />
                       <div className="flex-1 min-w-0">
-                        <span className="text-xs font-medium uppercase tracking-wider" style={{ color: '#64748b' }}>Output Path</span>
-                        <code className="block mt-1 px-3 py-2 rounded-lg text-xs break-all font-mono" style={{ background: 'rgba(16, 185, 129, 0.06)', border: '1px solid rgba(16, 185, 129, 0.1)', color: '#6ee7b7' }}>
+                        <span className="text-xs font-medium uppercase tracking-wider text-slate-500">Output Path</span>
+                        <code className="block mt-1 px-3 py-2 rounded-lg text-xs break-all font-mono bg-white border border-emerald-200 text-emerald-700">
                           {jobStatus.output_dir || `Job: ${jobStatus.job_id}`}
                         </code>
                       </div>
@@ -4478,21 +4564,21 @@ export default function Home() {
                     {/* Metrics Grid */}
                     {trainingMetrics.length > 0 && (
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                        <div className="rounded-lg px-3 py-2.5 text-center" style={{ background: 'rgba(16, 185, 129, 0.06)', border: '1px solid rgba(16, 185, 129, 0.1)' }}>
-                          <span className="text-[10px] uppercase tracking-wider block" style={{ color: '#64748b' }}>Final Loss</span>
-                          <span className="text-lg font-bold font-mono" style={{ color: '#6ee7b7' }}>{trainingMetrics[trainingMetrics.length - 1]?.loss?.toFixed(4) || '--'}</span>
+                        <div className="rounded-lg px-3 py-2.5 text-center bg-white border border-emerald-200">
+                          <span className="text-[10px] uppercase tracking-wider block text-slate-500">Final Loss</span>
+                          <span className="text-lg font-bold font-mono text-emerald-600">{trainingMetrics[trainingMetrics.length - 1]?.loss?.toFixed(4) || '--'}</span>
                         </div>
-                        <div className="rounded-lg px-3 py-2.5 text-center" style={{ background: 'rgba(6, 182, 212, 0.06)', border: '1px solid rgba(6, 182, 212, 0.1)' }}>
-                          <span className="text-[10px] uppercase tracking-wider block" style={{ color: '#64748b' }}>Total Steps</span>
-                          <span className="text-lg font-bold font-mono" style={{ color: '#67e8f9' }}>{jobStatus.current_step || trainingMetrics[trainingMetrics.length - 1]?.step || '--'}</span>
+                        <div className="rounded-lg px-3 py-2.5 text-center bg-white border border-cyan-200">
+                          <span className="text-[10px] uppercase tracking-wider block text-slate-500">Total Steps</span>
+                          <span className="text-lg font-bold font-mono text-cyan-600">{jobStatus.current_step || trainingMetrics[trainingMetrics.length - 1]?.step || '--'}</span>
                         </div>
-                        <div className="rounded-lg px-3 py-2.5 text-center" style={{ background: 'rgba(139, 92, 246, 0.06)', border: '1px solid rgba(139, 92, 246, 0.1)' }}>
-                          <span className="text-[10px] uppercase tracking-wider block" style={{ color: '#64748b' }}>Epochs</span>
-                          <span className="text-lg font-bold font-mono" style={{ color: '#c4b5fd' }}>{trainingMetrics[trainingMetrics.length - 1]?.epoch || jobStatus.total_epochs || '--'}</span>
+                        <div className="rounded-lg px-3 py-2.5 text-center bg-white border border-violet-200">
+                          <span className="text-[10px] uppercase tracking-wider block text-slate-500">Epochs</span>
+                          <span className="text-lg font-bold font-mono text-violet-600">{trainingMetrics[trainingMetrics.length - 1]?.epoch || jobStatus.total_epochs || '--'}</span>
                         </div>
-                        <div className="rounded-lg px-3 py-2.5 text-center" style={{ background: 'rgba(59, 130, 246, 0.06)', border: '1px solid rgba(59, 130, 246, 0.1)' }}>
-                          <span className="text-[10px] uppercase tracking-wider block" style={{ color: '#64748b' }}>Type</span>
-                          <span className="text-sm font-semibold" style={{ color: '#93c5fd' }}>{trainTypeInfo?.display_name || 'SFT'}</span>
+                        <div className="rounded-lg px-3 py-2.5 text-center bg-white border border-blue-200">
+                          <span className="text-[10px] uppercase tracking-wider block text-slate-500">Type</span>
+                          <span className="text-sm font-semibold text-blue-600">{trainTypeInfo?.display_name || 'SFT'}</span>
                         </div>
                       </div>
                     )}
@@ -4532,7 +4618,7 @@ export default function Home() {
               {isTraining && (
                 <button onClick={confirmStopTraining}
                   className="w-full py-3.5 text-white rounded-xl font-medium flex items-center justify-center gap-2 transition-all duration-300 hover:-translate-y-0.5"
-                  style={{ background: 'linear-gradient(135deg, #ef4444, #dc2626)', border: '1px solid rgba(239, 68, 68, 0.3)', boxShadow: '0 0 20px rgba(239, 68, 68, 0.2)' }}>
+                  style={{ background: 'linear-gradient(135deg, #ef4444, #dc2626)', boxShadow: '0 2px 10px rgba(239, 68, 68, 0.2)' }}>
                   <StopCircle className="w-5 h-5" /> Stop Training
                 </button>
               )}
@@ -4586,7 +4672,7 @@ export default function Home() {
                       }}
                       disabled={isModelLoading || isCleaningMemory}
                       className="w-full py-3.5 text-white rounded-xl font-medium disabled:opacity-50 flex items-center justify-center gap-2 transition-all duration-300 hover:-translate-y-0.5"
-                      style={{ background: 'linear-gradient(135deg, #10b981, #059669)', border: '1px solid rgba(16, 185, 129, 0.3)', boxShadow: '0 0 25px rgba(16, 185, 129, 0.25)' }}>
+                      style={{ background: 'linear-gradient(135deg, #10b981, #059669)', boxShadow: '0 2px 12px rgba(16, 185, 129, 0.25)' }}>
                       {isModelLoading ? (
                         <>
                           <Loader2 className="w-5 h-5 animate-spin" />
@@ -4605,13 +4691,13 @@ export default function Home() {
                     <button onClick={resetTrainingState}
                       disabled={isModelLoading}
                       className="flex-1 py-3.5 text-white rounded-xl font-medium disabled:opacity-50 flex items-center justify-center gap-2 transition-all duration-300 hover:-translate-y-0.5"
-                      style={{ background: 'linear-gradient(135deg, #3b82f6, #2563eb)', border: '1px solid rgba(59, 130, 246, 0.3)', boxShadow: '0 0 20px rgba(59, 130, 246, 0.2)' }}>
+                      style={{ background: 'linear-gradient(135deg, #3b82f6, #2563eb)', boxShadow: '0 2px 10px rgba(59, 130, 246, 0.25)' }}>
                       <Play className="w-5 h-5" /> Start New Training
                     </button>
                     <button onClick={() => setShowHistory(true)}
                       disabled={isModelLoading}
                       className="px-5 py-3.5 rounded-xl font-medium disabled:opacity-50 flex items-center justify-center gap-2 transition-all duration-200 hover:-translate-y-0.5"
-                      style={{ background: 'rgba(148, 163, 184, 0.06)', border: '1px solid rgba(148, 163, 184, 0.12)', color: '#94a3b8' }}>
+                      style={{ background: '#f1f5f9', border: '1px solid #e2e8f0', color: '#64748b' }}>
                       <History className="w-5 h-5" />
                     </button>
                   </div>
@@ -4782,23 +4868,59 @@ export default function Home() {
                             
                             <div>
                               <label className="block text-sm font-medium text-slate-700 mb-2">{getLabel()}</label>
-                              <input type="text" value={config.model_path}
-                                onChange={(e) => setConfig({ ...config, model_path: e.target.value })}
-                                placeholder={getPlaceholder()}
-                                className="w-full px-4 py-3 border border-slate-300 rounded-lg text-slate-900 placeholder-slate-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                              />
+                              <div className="relative">
+                                <input type="text" value={config.model_path}
+                                  onChange={(e) => setConfig({ ...config, model_path: e.target.value })}
+                                  placeholder={getPlaceholder()}
+                                  className={`w-full px-4 py-3 pr-12 border-2 rounded-xl text-slate-900 placeholder-slate-400 focus:ring-2 transition-all duration-200 ${
+                                    !config.model_path ? 'border-slate-200 focus:ring-blue-500 focus:border-blue-500' :
+                                    modelValidation.status === 'validating' ? 'border-blue-300 focus:ring-blue-500 focus:border-blue-400' :
+                                    modelValidation.status === 'valid' ? 'border-emerald-400 focus:ring-emerald-500 focus:border-emerald-500 bg-emerald-50/30' :
+                                    modelValidation.status === 'invalid' ? 'border-red-400 focus:ring-red-500 focus:border-red-500 bg-red-50/30' :
+                                    'border-slate-200 focus:ring-blue-500 focus:border-blue-500'
+                                  }`}
+                                />
+                                {/* Validation status icon inside input */}
+                                {config.model_path && (
+                                  <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                                    {modelValidation.status === 'validating' && (
+                                      <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                                    )}
+                                    {modelValidation.status === 'valid' && (
+                                      <CheckCircle className="w-5 h-5 text-emerald-500" />
+                                    )}
+                                    {modelValidation.status === 'invalid' && (
+                                      <XCircle className="w-5 h-5 text-red-500" />
+                                    )}
+                                  </div>
+                                )}
+                              </div>
                               
-                              {/* Model Info Display - shows after model path is entered */}
+                              {/* Validation message + Model info display */}
                               {config.model_path && (
-                                <div className="mt-2">
-                                  {modelInfo.isLoading ? (
-                                    <div className="flex items-center gap-2 text-sm text-slate-500">
-                                      <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                                      <span>Loading model info...</span>
+                                <div className="mt-2 space-y-2">
+                                  {/* Validation status message */}
+                                  {modelValidation.status === 'validating' && (
+                                    <div className="flex items-center gap-2 text-sm text-blue-600">
+                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                      <span>Validating model path...</span>
                                     </div>
-                                  ) : modelInfo.error ? (
-                                    <p className="text-sm text-amber-600">⚠️ Could not fetch model info. Using defaults.</p>
-                                  ) : (modelInfo.model_type || modelContextLength !== 4096) ? (
+                                  )}
+                                  {modelValidation.status === 'valid' && (
+                                    <div className="flex items-center gap-2 text-sm text-emerald-600 font-medium">
+                                      <CheckCircle className="w-3.5 h-3.5" />
+                                      <span>{modelValidation.message}</span>
+                                    </div>
+                                  )}
+                                  {modelValidation.status === 'invalid' && (
+                                    <div className="flex items-start gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                                      <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                                      <span>{modelValidation.message}</span>
+                                    </div>
+                                  )}
+                                  
+                                  {/* Model info badges (shown when validated) */}
+                                  {modelValidation.status === 'valid' && (modelInfo.model_type || modelContextLength !== 4096) && (
                                     <div className="flex flex-wrap gap-2">
                                       {modelInfo.model_type && (
                                         <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full">
@@ -4814,7 +4936,7 @@ export default function Home() {
                                         </span>
                                       )}
                                     </div>
-                                  ) : null}
+                                  )}
                                 </div>
                               )}
                               
@@ -5379,10 +5501,19 @@ export default function Home() {
                     <ChevronLeft className="w-5 h-5" /> Back
                   </button>
                   {currentStep < TOTAL_STEPS && (
-                    <button onClick={() => setCurrentStep(currentStep + 1)} disabled={!canProceed()}
-                      className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg font-medium disabled:opacity-50 hover:bg-blue-600 transition-colors">
-                      Next <ChevronRight className="w-5 h-5" />
-                    </button>
+                    <div className="relative group">
+                      <button onClick={() => setCurrentStep(currentStep + 1)} disabled={!canProceed()}
+                        className="flex items-center gap-2 px-5 py-2.5 text-white rounded-xl font-medium disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 hover:-translate-y-0.5 shadow-md hover:shadow-lg"
+                        style={{ background: canProceed() ? 'linear-gradient(135deg, #3b82f6, #2563eb)' : '#94a3b8' }}>
+                        Next <ChevronRight className="w-5 h-5" />
+                      </button>
+                      {/* Show validation hint when on model step and validation is pending/failed */}
+                      {!canProceed() && currentStep === 1 && !IS_SINGLE_MODEL && !IS_MODEL_LOCKED && config.model_path && (
+                        <div className="absolute right-0 top-full mt-2 bg-slate-800 text-white text-xs px-3 py-1.5 rounded-lg shadow-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                          {modelValidation.status === 'validating' ? 'Validating model...' : 'Model validation required'}
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               )}

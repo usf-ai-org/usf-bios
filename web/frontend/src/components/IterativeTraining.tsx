@@ -179,23 +179,23 @@ function formatDate(dateStr: string | null): string {
 
 function getStatusColor(status: string): string {
   switch (status) {
-    case 'completed': return 'text-green-400'
-    case 'running': return 'text-blue-400'
-    case 'paused': return 'text-yellow-400'
-    case 'failed': return 'text-red-400'
-    case 'cancelled': return 'text-gray-400'
-    default: return 'text-slate-400'
+    case 'completed': return 'text-emerald-600'
+    case 'running': return 'text-blue-600'
+    case 'paused': return 'text-amber-600'
+    case 'failed': return 'text-red-600'
+    case 'cancelled': return 'text-gray-500'
+    default: return 'text-slate-500'
   }
 }
 
 function getStatusBgColor(status: string): string {
   switch (status) {
-    case 'completed': return 'bg-green-500/20 border-green-500/30'
-    case 'running': return 'bg-blue-500/20 border-blue-500/30'
-    case 'paused': return 'bg-yellow-500/20 border-yellow-500/30'
-    case 'failed': return 'bg-red-500/20 border-red-500/30'
-    case 'cancelled': return 'bg-gray-500/20 border-gray-500/30'
-    default: return 'bg-slate-500/20 border-slate-500/30'
+    case 'completed': return 'bg-emerald-50 border-emerald-200'
+    case 'running': return 'bg-blue-50 border-blue-200'
+    case 'paused': return 'bg-amber-50 border-amber-200'
+    case 'failed': return 'bg-red-50 border-red-200'
+    case 'cancelled': return 'bg-gray-50 border-gray-200'
+    default: return 'bg-slate-50 border-slate-200'
   }
 }
 
@@ -227,7 +227,7 @@ function PhaseProgress({ phase, progress }: { phase: string; progress: number })
               ? 'bg-green-500'
               : i === currentIndex
               ? 'bg-blue-500'
-              : 'bg-slate-600'
+              : 'bg-slate-200'
           }`}
         />
       ))}
@@ -241,13 +241,13 @@ function RoundCard({ round, isExpanded, onToggle }: {
   onToggle: () => void 
 }) {
   return (
-    <div className="border border-slate-700 rounded-lg overflow-hidden">
+    <div className="border border-slate-200 rounded-lg overflow-hidden bg-white">
       <button
         onClick={onToggle}
-        className="w-full px-4 py-3 flex items-center justify-between bg-slate-800/50 hover:bg-slate-800 transition-colors"
+        className="w-full px-4 py-3 flex items-center justify-between bg-slate-50 hover:bg-slate-100 transition-colors"
       >
         <div className="flex items-center gap-3">
-          <span className="text-sm font-medium text-slate-300">
+          <span className="text-sm font-medium text-slate-700">
             Round {round.round_number + 1}
           </span>
           <span className="text-xs text-slate-500">
@@ -255,10 +255,10 @@ function RoundCard({ round, isExpanded, onToggle }: {
           </span>
         </div>
         <div className="flex items-center gap-4">
-          <span className="text-xs text-slate-400">
+          <span className="text-xs text-slate-500">
             Score: {round.mean_reward_score.toFixed(3)}
           </span>
-          <span className="text-xs text-slate-400">
+          <span className="text-xs text-slate-500">
             {round.num_filtered} samples
           </span>
           {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
@@ -266,34 +266,34 @@ function RoundCard({ round, isExpanded, onToggle }: {
       </button>
       
       {isExpanded && (
-        <div className="px-4 py-3 bg-slate-900/50 space-y-3">
+        <div className="px-4 py-3 bg-white space-y-3">
           <div className="grid grid-cols-4 gap-4 text-xs">
             <div>
               <span className="text-slate-500">Generated</span>
-              <p className="text-slate-300">{round.num_generated} samples</p>
+              <p className="text-slate-700">{round.num_generated} samples</p>
               <p className="text-slate-500">{formatDuration(round.generation_time_seconds)}</p>
             </div>
             <div>
               <span className="text-slate-500">Judged</span>
-              <p className="text-slate-300">{round.num_judged} samples</p>
+              <p className="text-slate-700">{round.num_judged} samples</p>
               <p className="text-slate-500">{formatDuration(round.judging_time_seconds)}</p>
             </div>
             <div>
               <span className="text-slate-500">Filtered</span>
-              <p className="text-slate-300">{round.num_filtered} kept</p>
+              <p className="text-slate-700">{round.num_filtered} kept</p>
               <p className="text-slate-500">Threshold: {round.filter_threshold_used}</p>
             </div>
             <div>
               <span className="text-slate-500">Trained</span>
-              <p className="text-slate-300">Loss: {round.training_loss_end.toFixed(4)}</p>
+              <p className="text-slate-700">Loss: {round.training_loss_end.toFixed(4)}</p>
               <p className="text-slate-500">{formatDuration(round.training_time_seconds)}</p>
             </div>
           </div>
           
-          <div className="pt-2 border-t border-slate-700">
+          <div className="pt-2 border-t border-slate-200">
             <div className="flex items-center justify-between text-xs">
               <span className="text-slate-500">Reward Score Range</span>
-              <span className="text-slate-300">
+              <span className="text-slate-700">
                 {round.min_reward_score.toFixed(3)} - {round.max_reward_score.toFixed(3)}
                 <span className="text-slate-500 ml-2">(avg: {round.mean_reward_score.toFixed(3)})</span>
               </span>
@@ -329,12 +329,12 @@ function JobCard({ job, onStart, onPause, onCancel, onDelete, onViewDetails }: {
     <div className={`border rounded-lg p-4 ${getStatusBgColor(job.status)}`}>
       <div className="flex items-start justify-between mb-3">
         <div>
-          <h3 className="font-medium text-white">{job.name}</h3>
-          <p className="text-xs text-slate-400 mt-0.5">
+          <h3 className="font-medium text-slate-900">{job.name}</h3>
+          <p className="text-xs text-slate-500 mt-0.5">
             Created {formatDate(job.created_at)}
           </p>
         </div>
-        <span className={`text-xs font-medium px-2 py-1 rounded ${getStatusColor(job.status)} bg-black/20`}>
+        <span className={`text-xs font-medium px-2 py-1 rounded ${getStatusColor(job.status)} bg-white/60`}>
           {job.status?.toUpperCase() || 'UNKNOWN'}
         </span>
       </div>
@@ -342,14 +342,14 @@ function JobCard({ job, onStart, onPause, onCancel, onDelete, onViewDetails }: {
       {/* Progress */}
       <div className="mb-3">
         <div className="flex items-center justify-between text-xs mb-1">
-          <span className="text-slate-400">
+          <span className="text-slate-600">
             Round {job.current_round + 1} / {job.total_rounds}
           </span>
-          <span className="text-slate-400">
+          <span className="text-slate-600">
             {job.progress_percent.toFixed(0)}%
           </span>
         </div>
-        <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
+        <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
           <div 
             className="h-full bg-blue-500 transition-all duration-300"
             style={{ width: `${job.progress_percent}%` }}
@@ -357,7 +357,7 @@ function JobCard({ job, onStart, onPause, onCancel, onDelete, onViewDetails }: {
         </div>
         {isRunning && (
           <div className="mt-2">
-            <div className="flex items-center gap-2 text-xs text-slate-400">
+            <div className="flex items-center gap-2 text-xs text-slate-500">
               {getPhaseIcon(job.current_phase)}
               <span className="capitalize">{job.current_phase}</span>
             </div>
@@ -368,16 +368,16 @@ function JobCard({ job, onStart, onPause, onCancel, onDelete, onViewDetails }: {
       
       {/* Error message */}
       {job.error_message && (
-        <div className="mb-3 p-2 bg-red-500/10 border border-red-500/30 rounded text-xs text-red-400">
+        <div className="mb-3 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-600">
           {job.error_message}
         </div>
       )}
       
       {/* Final model path */}
       {job.final_model_path && (
-        <div className="mb-3 p-2 bg-green-500/10 border border-green-500/30 rounded">
-          <p className="text-xs text-green-400">Final Model:</p>
-          <p className="text-xs text-slate-300 font-mono truncate">{job.final_model_path}</p>
+        <div className="mb-3 p-2 bg-emerald-50 border border-emerald-200 rounded">
+          <p className="text-xs text-emerald-600">Final Model:</p>
+          <p className="text-xs text-slate-700 font-mono truncate">{job.final_model_path}</p>
         </div>
       )}
       
@@ -414,7 +414,7 @@ function JobCard({ job, onStart, onPause, onCancel, onDelete, onViewDetails }: {
         
         <button
           onClick={onViewDetails}
-          className="flex items-center gap-1 px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-xs rounded transition-colors"
+          className="flex items-center gap-1 px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs rounded transition-colors"
         >
           <History className="w-3 h-3" />
           History
@@ -423,7 +423,7 @@ function JobCard({ job, onStart, onPause, onCancel, onDelete, onViewDetails }: {
         {!isRunning && (
           <button
             onClick={onDelete}
-            className="flex items-center gap-1 px-3 py-1.5 bg-slate-700 hover:bg-red-600 text-slate-300 hover:text-white text-xs rounded transition-colors ml-auto"
+            className="flex items-center gap-1 px-3 py-1.5 bg-slate-100 hover:bg-red-100 text-slate-400 hover:text-red-600 text-xs rounded transition-colors ml-auto"
           >
             <Trash2 className="w-3 h-3" />
           </button>
@@ -659,30 +659,30 @@ export default function IterativeTraining({
   if (!isOpen) return null
   
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
-      <div className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-5xl max-h-[90vh] overflow-hidden shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+      <div className="bg-white border border-slate-200 rounded-xl w-full max-w-5xl max-h-[90vh] overflow-hidden shadow-2xl">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
           <div className="flex items-center gap-3">
-            <Repeat className="w-6 h-6 text-blue-400" />
+            <Repeat className="w-6 h-6 text-blue-500" />
             <div>
-              <h2 className="text-lg font-semibold text-white">Iterative Self-Training</h2>
-              <p className="text-xs text-slate-400">ReST / STaR / Expert Iteration</p>
+              <h2 className="text-lg font-semibold text-slate-900">Iterative Self-Training</h2>
+              <p className="text-xs text-slate-500">ReST / STaR / Expert Iteration</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
             <button
               onClick={loadJobs}
-              className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
+              className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
               title="Refresh"
             >
-              <RefreshCw className={`w-4 h-4 text-slate-400 ${isLoading ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-4 h-4 text-slate-500 ${isLoading ? 'animate-spin' : ''}`} />
             </button>
             <button
               onClick={onClose}
-              className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
+              className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
             >
-              <X className="w-5 h-5 text-slate-400" />
+              <X className="w-5 h-5 text-slate-500" />
             </button>
           </div>
         </div>
@@ -691,7 +691,7 @@ export default function IterativeTraining({
         <div className="p-6 overflow-y-auto max-h-[calc(90vh-140px)]">
           {/* Error */}
           {error && (
-            <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg flex items-center gap-2 text-red-400">
+            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2 text-red-600">
               <AlertCircle className="w-4 h-4 flex-shrink-0" />
               <span className="text-sm">{error}</span>
               <button onClick={() => setError(null)} className="ml-auto">
@@ -701,11 +701,11 @@ export default function IterativeTraining({
           )}
           
           {/* Info Banner */}
-          <div className="mb-6 p-4 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+          <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
             <div className="flex items-start gap-3">
-              <Info className="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5" />
-              <div className="text-sm text-slate-300">
-                <p className="font-medium text-blue-400 mb-1">Generate → Judge → Train → Repeat</p>
+              <Info className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" />
+              <div className="text-sm text-slate-600">
+                <p className="font-medium text-blue-700 mb-1">Generate → Judge → Train → Repeat</p>
                 <p>Iterative self-training improves your model by generating responses, scoring them with a reward model, filtering the best ones, and training on them. Each round produces a better model.</p>
               </div>
             </div>
@@ -715,7 +715,7 @@ export default function IterativeTraining({
           {!showCreateForm ? (
             <button
               onClick={() => setShowCreateForm(true)}
-              className="w-full mb-6 p-4 border-2 border-dashed border-slate-600 rounded-lg hover:border-blue-500 hover:bg-blue-500/5 transition-colors text-slate-400 hover:text-blue-400"
+              className="w-full mb-6 p-4 border-2 border-dashed border-slate-300 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors text-slate-500 hover:text-blue-600"
             >
               <div className="flex items-center justify-center gap-2">
                 <Sparkles className="w-5 h-5" />
@@ -723,10 +723,10 @@ export default function IterativeTraining({
               </div>
             </button>
           ) : (
-            <div className="mb-6 p-4 bg-slate-800/50 border border-slate-700 rounded-lg">
+            <div className="mb-6 p-4 bg-slate-50 border border-slate-200 rounded-lg">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="font-medium text-white">New Iterative Training Job</h3>
-                <button onClick={() => setShowCreateForm(false)} className="text-slate-400 hover:text-white">
+                <h3 className="font-medium text-slate-900">New Iterative Training Job</h3>
+                <button onClick={() => setShowCreateForm(false)} className="text-slate-400 hover:text-slate-700">
                   <X className="w-4 h-4" />
                 </button>
               </div>
@@ -741,7 +741,7 @@ export default function IterativeTraining({
                       value={formData.name}
                       onChange={e => setFormData({ ...formData, name: e.target.value })}
                       placeholder="my-iterative-training"
-                      className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-sm text-white placeholder-slate-500 focus:border-blue-500 focus:outline-none"
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded text-sm text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                     />
                   </div>
                   <div>
@@ -752,7 +752,7 @@ export default function IterativeTraining({
                       onChange={e => setFormData({ ...formData, num_rounds: parseInt(e.target.value) || 5 })}
                       min={1}
                       max={100}
-                      className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-sm text-white focus:border-blue-500 focus:outline-none"
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded text-sm text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                     />
                   </div>
                 </div>
@@ -765,21 +765,21 @@ export default function IterativeTraining({
                     value={formData.base_model_path}
                     onChange={e => setFormData({ ...formData, base_model_path: e.target.value })}
                     placeholder="/path/to/model or huggingface/model-name"
-                    className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-sm text-white placeholder-slate-500 focus:border-blue-500 focus:outline-none"
+                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded text-sm text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                   />
                 </div>
                 
                 {/* Reward Model Configuration */}
-                <div className="border border-slate-700 rounded-lg p-4 bg-slate-800/30">
+                <div className="border border-slate-200 rounded-lg p-4 bg-white">
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
-                      <Brain className="w-4 h-4 text-purple-400" />
-                      <h4 className="text-sm font-medium text-white">Reward Model / Judge</h4>
+                      <Brain className="w-4 h-4 text-purple-500" />
+                      <h4 className="text-sm font-medium text-slate-900">Reward Model / Judge</h4>
                     </div>
                     <button
                       type="button"
                       onClick={() => setShowAdvancedReward(!showAdvancedReward)}
-                      className="text-xs text-blue-400 hover:text-blue-300"
+                      className="text-xs text-blue-500 hover:text-blue-600"
                     >
                       {showAdvancedReward ? 'Simple Mode' : 'Advanced Options'}
                     </button>
@@ -799,12 +799,12 @@ export default function IterativeTraining({
                         onClick={() => setFormData({ ...formData, reward_type: opt.id as any })}
                         className={`p-2 rounded-lg border text-left transition-all ${
                           formData.reward_type === opt.id
-                            ? 'border-purple-500 bg-purple-500/20'
-                            : 'border-slate-600 hover:border-slate-500'
+                            ? 'border-purple-500 bg-purple-50'
+                            : 'border-slate-200 hover:border-slate-300'
                         }`}
                       >
-                        <opt.icon className={`w-4 h-4 mb-1 ${formData.reward_type === opt.id ? 'text-purple-400' : 'text-slate-400'}`} />
-                        <p className={`text-xs font-medium ${formData.reward_type === opt.id ? 'text-purple-300' : 'text-slate-300'}`}>{opt.label}</p>
+                        <opt.icon className={`w-4 h-4 mb-1 ${formData.reward_type === opt.id ? 'text-purple-500' : 'text-slate-400'}`} />
+                        <p className={`text-xs font-medium ${formData.reward_type === opt.id ? 'text-purple-700' : 'text-slate-700'}`}>{opt.label}</p>
                         <p className="text-[10px] text-slate-500">{opt.desc}</p>
                       </button>
                     ))}
@@ -819,7 +819,7 @@ export default function IterativeTraining({
                         value={formData.reward_model_path}
                         onChange={e => setFormData({ ...formData, reward_model_path: e.target.value })}
                         placeholder="OpenAssistant/reward-model-deberta-v3-large-v2"
-                        className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-sm text-white placeholder-slate-500 focus:border-blue-500 focus:outline-none"
+                        className="w-full px-3 py-2 bg-white border border-slate-300 rounded text-sm text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                       />
                     </div>
                   )}
@@ -833,7 +833,7 @@ export default function IterativeTraining({
                           value={formData.api_endpoint}
                           onChange={e => setFormData({ ...formData, api_endpoint: e.target.value })}
                           placeholder="https://your-server.com/score"
-                          className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-sm text-white placeholder-slate-500 focus:border-blue-500 focus:outline-none"
+                          className="w-full px-3 py-2 bg-white border border-slate-300 rounded text-sm text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                         />
                       </div>
                       {showAdvancedReward && (
@@ -845,7 +845,7 @@ export default function IterativeTraining({
                               value={formData.api_key}
                               onChange={e => setFormData({ ...formData, api_key: e.target.value })}
                               placeholder="Bearer token"
-                              className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-sm text-white placeholder-slate-500 focus:border-blue-500 focus:outline-none"
+                              className="w-full px-3 py-2 bg-white border border-slate-300 rounded text-sm text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                             />
                           </div>
                           <div>
@@ -854,7 +854,7 @@ export default function IterativeTraining({
                               type="number"
                               value={formData.api_timeout}
                               onChange={e => setFormData({ ...formData, api_timeout: parseInt(e.target.value) || 30 })}
-                              className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-sm text-white focus:border-blue-500 focus:outline-none"
+                              className="w-full px-3 py-2 bg-white border border-slate-300 rounded text-sm text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                             />
                           </div>
                           <div>
@@ -863,12 +863,12 @@ export default function IterativeTraining({
                               type="number"
                               value={formData.api_batch_size}
                               onChange={e => setFormData({ ...formData, api_batch_size: parseInt(e.target.value) || 10 })}
-                              className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-sm text-white focus:border-blue-500 focus:outline-none"
+                              className="w-full px-3 py-2 bg-white border border-slate-300 rounded text-sm text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                             />
                           </div>
                         </div>
                       )}
-                      <div className="p-2 bg-blue-500/10 border border-blue-500/30 rounded text-xs text-blue-300">
+                      <div className="p-2 bg-blue-50 border border-blue-200 rounded text-xs text-blue-700">
                         <strong>API Format:</strong> POST with {`{"items": [{"prompt": "...", "response": "..."}]}`}. 
                         Returns {`{"scores": [0.85, 0.72]}`}. Retries automatically on failure.
                       </div>
@@ -885,7 +885,7 @@ export default function IterativeTraining({
                             value={formData.script_path}
                             onChange={e => setFormData({ ...formData, script_path: e.target.value })}
                             placeholder="/path/to/my_scorer.py"
-                            className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-sm text-white placeholder-slate-500 focus:border-blue-500 focus:outline-none"
+                            className="w-full px-3 py-2 bg-white border border-slate-300 rounded text-sm text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                           />
                         </div>
                         <div>
@@ -895,11 +895,11 @@ export default function IterativeTraining({
                             value={formData.script_function}
                             onChange={e => setFormData({ ...formData, script_function: e.target.value })}
                             placeholder="score"
-                            className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-sm text-white placeholder-slate-500 focus:border-blue-500 focus:outline-none"
+                            className="w-full px-3 py-2 bg-white border border-slate-300 rounded text-sm text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                           />
                         </div>
                       </div>
-                      <div className="p-2 bg-slate-700/50 border border-slate-600 rounded text-xs text-slate-400">
+                      <div className="p-2 bg-slate-50 border border-slate-200 rounded text-xs text-slate-600">
                         Script receives --input (JSONL) and --output paths. Each line needs "reward_score" field added.
                       </div>
                     </div>
@@ -911,7 +911,7 @@ export default function IterativeTraining({
                       <select
                         value={formData.rule_type}
                         onChange={e => setFormData({ ...formData, rule_type: e.target.value })}
-                        className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-sm text-white focus:border-blue-500 focus:outline-none"
+                        className="w-full px-3 py-2 bg-white border border-slate-300 rounded text-sm text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                       >
                         <option value="math">Math - Extract & verify numerical answers</option>
                         <option value="code">Code - Execute & check test cases</option>
@@ -926,16 +926,16 @@ export default function IterativeTraining({
                 </div>
                 
                 {/* Dataset Configuration */}
-                <div className="border border-slate-700 rounded-lg p-4 bg-slate-800/30">
+                <div className="border border-slate-200 rounded-lg p-4 bg-white">
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
-                      <Database className="w-4 h-4 text-green-400" />
-                      <h4 className="text-sm font-medium text-white">Dataset Configuration</h4>
+                      <Database className="w-4 h-4 text-emerald-500" />
+                      <h4 className="text-sm font-medium text-slate-900">Dataset Configuration</h4>
                     </div>
                     <button
                       type="button"
                       onClick={() => setShowDatasetFormat(!showDatasetFormat)}
-                      className="flex items-center gap-1 text-xs text-green-400 hover:text-green-300"
+                      className="flex items-center gap-1 text-xs text-emerald-500 hover:text-emerald-600"
                     >
                       <BookOpen className="w-3 h-3" />
                       {showDatasetFormat ? 'Hide Format Info' : 'View Format Info'}
@@ -943,24 +943,24 @@ export default function IterativeTraining({
                   </div>
                   
                   {showDatasetFormat && (
-                    <div className="mb-4 p-3 bg-slate-900/50 border border-slate-600 rounded-lg text-xs space-y-2">
-                      <p className="text-slate-300 font-medium">Supported Dataset Formats:</p>
+                    <div className="mb-4 p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs space-y-2">
+                      <p className="text-slate-700 font-medium">Supported Dataset Formats:</p>
                       <div className="grid grid-cols-2 gap-2">
-                        <div className="p-2 bg-slate-800 rounded">
-                          <p className="text-green-400 font-medium">Basic Prompts</p>
-                          <code className="text-slate-400">{`{"prompt": "Question..."}`}</code>
+                        <div className="p-2 bg-white border border-slate-200 rounded">
+                          <p className="text-emerald-600 font-medium">Basic Prompts</p>
+                          <code className="text-slate-500">{`{"prompt": "Question..."}`}</code>
                         </div>
-                        <div className="p-2 bg-slate-800 rounded">
-                          <p className="text-green-400 font-medium">With Difficulty</p>
-                          <code className="text-slate-400">{`{"prompt": "...", "difficulty": "easy"}`}</code>
+                        <div className="p-2 bg-white border border-slate-200 rounded">
+                          <p className="text-emerald-600 font-medium">With Difficulty</p>
+                          <code className="text-slate-500">{`{"prompt": "...", "difficulty": "easy"}`}</code>
                         </div>
-                        <div className="p-2 bg-slate-800 rounded">
-                          <p className="text-green-400 font-medium">Verifiable (Math)</p>
-                          <code className="text-slate-400">{`{"prompt": "...", "metadata": {"expected_answer": "42"}}`}</code>
+                        <div className="p-2 bg-white border border-slate-200 rounded">
+                          <p className="text-emerald-600 font-medium">Verifiable (Math)</p>
+                          <code className="text-slate-500">{`{"prompt": "...", "metadata": {"expected_answer": "42"}}`}</code>
                         </div>
-                        <div className="p-2 bg-slate-800 rounded">
-                          <p className="text-green-400 font-medium">Code with Tests</p>
-                          <code className="text-slate-400">{`{"prompt": "...", "metadata": {"test_cases": [...]}}`}</code>
+                        <div className="p-2 bg-white border border-slate-200 rounded">
+                          <p className="text-emerald-600 font-medium">Code with Tests</p>
+                          <code className="text-slate-500">{`{"prompt": "...", "metadata": {"test_cases": [...]}}`}</code>
                         </div>
                       </div>
                     </div>
@@ -973,7 +973,7 @@ export default function IterativeTraining({
                       value={formData.prompts_dataset_path}
                       onChange={e => setFormData({ ...formData, prompts_dataset_path: e.target.value })}
                       placeholder="/path/to/prompts.jsonl"
-                      className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-sm text-white placeholder-slate-500 focus:border-blue-500 focus:outline-none"
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded text-sm text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                     />
                   </div>
                   
@@ -984,10 +984,10 @@ export default function IterativeTraining({
                       id="curriculum"
                       checked={formData.enable_difficulty_curriculum}
                       onChange={e => setFormData({ ...formData, enable_difficulty_curriculum: e.target.checked })}
-                      className="rounded border-slate-600 bg-slate-900 text-green-500 focus:ring-green-500"
+                      className="rounded border-slate-300 bg-white text-emerald-500 focus:ring-emerald-500"
                     />
-                    <label htmlFor="curriculum" className="text-sm text-slate-300 flex items-center gap-2">
-                      <GraduationCap className="w-4 h-4 text-green-400" />
+                    <label htmlFor="curriculum" className="text-sm text-slate-700 flex items-center gap-2">
+                      <GraduationCap className="w-4 h-4 text-emerald-500" />
                       Enable difficulty curriculum (easy → hard as rounds progress)
                     </label>
                   </div>
@@ -999,7 +999,7 @@ export default function IterativeTraining({
                         <select
                           value={formData.dataset_selection_strategy}
                           onChange={e => setFormData({ ...formData, dataset_selection_strategy: e.target.value })}
-                          className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-sm text-white focus:border-blue-500 focus:outline-none"
+                          className="w-full px-3 py-2 bg-white border border-slate-300 rounded text-sm text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                         >
                           <option value="sequential">Sequential</option>
                           <option value="difficulty_curriculum">Difficulty Curriculum</option>
@@ -1014,7 +1014,7 @@ export default function IterativeTraining({
                           value={formData.samples_per_round}
                           onChange={e => setFormData({ ...formData, samples_per_round: parseInt(e.target.value) || 1000 })}
                           min={10}
-                          className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-sm text-white focus:border-blue-500 focus:outline-none"
+                          className="w-full px-3 py-2 bg-white border border-slate-300 rounded text-sm text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                         />
                       </div>
                     </div>
@@ -1031,7 +1031,7 @@ export default function IterativeTraining({
                       onChange={e => setFormData({ ...formData, num_generations_per_prompt: parseInt(e.target.value) || 8 })}
                       min={1}
                       max={64}
-                      className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-sm text-white focus:border-blue-500 focus:outline-none"
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded text-sm text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                     />
                   </div>
                   <div>
@@ -1042,7 +1042,7 @@ export default function IterativeTraining({
                       onChange={e => setFormData({ ...formData, max_new_tokens: parseInt(e.target.value) || 512 })}
                       min={32}
                       max={4096}
-                      className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-sm text-white focus:border-blue-500 focus:outline-none"
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded text-sm text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                     />
                   </div>
                   <div>
@@ -1054,7 +1054,7 @@ export default function IterativeTraining({
                       min={0}
                       max={2}
                       step={0.1}
-                      className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-sm text-white focus:border-blue-500 focus:outline-none"
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded text-sm text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                     />
                   </div>
                   <div>
@@ -1066,7 +1066,7 @@ export default function IterativeTraining({
                       min={0}
                       max={1}
                       step={0.05}
-                      className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-sm text-white focus:border-blue-500 focus:outline-none"
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded text-sm text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                     />
                   </div>
                 </div>
@@ -1078,7 +1078,7 @@ export default function IterativeTraining({
                     <select
                       value={formData.filter_strategy}
                       onChange={e => setFormData({ ...formData, filter_strategy: e.target.value })}
-                      className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-sm text-white focus:border-blue-500 focus:outline-none"
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded text-sm text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                     >
                       <option value="top_k_percent">Top K%</option>
                       <option value="threshold">Threshold</option>
@@ -1094,7 +1094,7 @@ export default function IterativeTraining({
                       onChange={e => setFormData({ ...formData, filter_top_k_percent: parseFloat(e.target.value) || 20 })}
                       min={1}
                       max={100}
-                      className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-sm text-white focus:border-blue-500 focus:outline-none"
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded text-sm text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                     />
                   </div>
                   <div>
@@ -1102,7 +1102,7 @@ export default function IterativeTraining({
                     <select
                       value={formData.training_method}
                       onChange={e => setFormData({ ...formData, training_method: e.target.value })}
-                      className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-sm text-white focus:border-blue-500 focus:outline-none"
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded text-sm text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                     >
                       <option value="lora">LoRA</option>
                       <option value="qlora">QLoRA</option>
@@ -1120,7 +1120,7 @@ export default function IterativeTraining({
                       value={formData.learning_rate}
                       onChange={e => setFormData({ ...formData, learning_rate: parseFloat(e.target.value) || 0.00001 })}
                       step={0.000001}
-                      className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-sm text-white focus:border-blue-500 focus:outline-none"
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded text-sm text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                     />
                   </div>
                   <div>
@@ -1131,7 +1131,7 @@ export default function IterativeTraining({
                       onChange={e => setFormData({ ...formData, num_train_epochs: parseInt(e.target.value) || 1 })}
                       min={1}
                       max={10}
-                      className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-sm text-white focus:border-blue-500 focus:outline-none"
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded text-sm text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                     />
                   </div>
                   <div>
@@ -1142,7 +1142,7 @@ export default function IterativeTraining({
                       onChange={e => setFormData({ ...formData, batch_size: parseInt(e.target.value) || 4 })}
                       min={1}
                       max={64}
-                      className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-sm text-white focus:border-blue-500 focus:outline-none"
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded text-sm text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                     />
                   </div>
                   <div>
@@ -1153,7 +1153,7 @@ export default function IterativeTraining({
                       onChange={e => setFormData({ ...formData, gradient_accumulation_steps: parseInt(e.target.value) || 4 })}
                       min={1}
                       max={64}
-                      className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-sm text-white focus:border-blue-500 focus:outline-none"
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded text-sm text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                     />
                   </div>
                 </div>
@@ -1165,9 +1165,9 @@ export default function IterativeTraining({
                     id="use_previous"
                     checked={formData.use_previous_round_model}
                     onChange={e => setFormData({ ...formData, use_previous_round_model: e.target.checked })}
-                    className="rounded border-slate-600 bg-slate-900 text-blue-500 focus:ring-blue-500"
+                    className="rounded border-slate-300 bg-white text-blue-500 focus:ring-blue-500"
                   />
-                  <label htmlFor="use_previous" className="text-sm text-slate-300">
+                  <label htmlFor="use_previous" className="text-sm text-slate-700">
                     Train each round from previous round's model (recommended)
                   </label>
                 </div>
@@ -1176,14 +1176,14 @@ export default function IterativeTraining({
                 <div className="flex justify-end gap-2 pt-2">
                   <button
                     onClick={() => setShowCreateForm(false)}
-                    className="px-4 py-2 text-sm text-slate-300 hover:text-white transition-colors"
+                    className="px-4 py-2 text-sm text-slate-500 hover:text-slate-700 transition-colors"
                   >
                     Cancel
                   </button>
                   <button
                     onClick={handleCreateJob}
                     disabled={isLoading}
-                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-600 text-white text-sm rounded transition-colors"
+                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300 text-white text-sm rounded transition-colors"
                   >
                     {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
                     Create Job
@@ -1199,7 +1199,7 @@ export default function IterativeTraining({
             <div>
               <button
                 onClick={() => setSelectedJob(null)}
-                className="mb-4 text-sm text-slate-400 hover:text-white flex items-center gap-1"
+                className="mb-4 text-sm text-slate-500 hover:text-slate-900 flex items-center gap-1"
               >
                 ← Back to Jobs
               </button>
@@ -1207,8 +1207,8 @@ export default function IterativeTraining({
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h3 className="text-lg font-medium text-white">{selectedJob.name}</h3>
-                    <p className="text-xs text-slate-400">
+                    <h3 className="text-lg font-medium text-slate-900">{selectedJob.name}</h3>
+                    <p className="text-xs text-slate-500">
                       {selectedJob.round_history.length} / {selectedJob.total_rounds} rounds completed
                     </p>
                   </div>
@@ -1219,7 +1219,7 @@ export default function IterativeTraining({
                 
                 {/* Round History */}
                 <div className="space-y-2">
-                  <h4 className="text-sm font-medium text-slate-300">Round History</h4>
+                  <h4 className="text-sm font-medium text-slate-700">Round History</h4>
                   {selectedJob.round_history.length === 0 ? (
                     <p className="text-sm text-slate-500 italic">No rounds completed yet</p>
                   ) : (
@@ -1245,8 +1245,8 @@ export default function IterativeTraining({
                 </div>
               ) : jobs.length === 0 ? (
                 <div className="text-center py-8">
-                  <Repeat className="w-12 h-12 text-slate-600 mx-auto mb-3" />
-                  <p className="text-slate-400">No iterative training jobs yet</p>
+                  <Repeat className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+                  <p className="text-slate-500">No iterative training jobs yet</p>
                   <p className="text-sm text-slate-500">Create one to get started</p>
                 </div>
               ) : (
@@ -1267,7 +1267,7 @@ export default function IterativeTraining({
         </div>
         
         {/* Footer */}
-        <div className="px-6 py-3 border-t border-slate-700 bg-slate-800/50">
+        <div className="px-6 py-3 border-t border-slate-200 bg-slate-50">
           <p className="text-xs text-slate-500 text-center">
             VRAM-safe sequential execution • Full logging and history • Automatic checkpointing
           </p>
