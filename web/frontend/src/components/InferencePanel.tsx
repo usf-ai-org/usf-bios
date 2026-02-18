@@ -798,6 +798,25 @@ export default function InferencePanel({ systemMetrics, onRefreshMetrics, locked
         if (data.available_backends) {
           setAvailableBackends(data.available_backends)
         }
+        // Sync loaded adapters from backend status
+        if (data.adapter_path) {
+          setAdapterPath('')
+          const adapterName = data.adapter_path.split('/').pop() || 'adapter'
+          setLoadedAdapters(prev => {
+            const alreadyLoaded = prev.some(a => a.path === data.adapter_path)
+            if (alreadyLoaded) return prev
+            return [{ id: Date.now().toString(), name: adapterName, path: data.adapter_path, active: true }]
+          })
+        } else if (data.loaded_adapters && data.loaded_adapters.length > 0) {
+          setLoadedAdapters(data.loaded_adapters.map((p: string, i: number) => ({
+            id: `api-${i}`,
+            name: p.split('/').pop() || 'adapter',
+            path: p,
+            active: true
+          })))
+        } else {
+          setLoadedAdapters([])
+        }
       }
     } catch (e) {
       console.error('Failed to fetch inference status:', e)
@@ -806,8 +825,8 @@ export default function InferencePanel({ systemMetrics, onRefreshMetrics, locked
 
   // Check if current backend supports streaming
   const supportsStreaming = useCallback(() => {
-    if (inferenceBackend === 'transformers') return false // Transformers uses non-streaming
-    return inferenceStatus.capabilities?.supports_streaming ?? (inferenceBackend === 'vllm' || inferenceBackend === 'sglang')
+    // All backends support streaming: transformers via infer_async, vLLM, SGLang
+    return true
   }, [inferenceBackend, inferenceStatus.capabilities])
 
   // Check if model supports image input
@@ -1287,10 +1306,8 @@ export default function InferencePanel({ systemMetrics, onRefreshMetrics, locked
   // Get backend streaming info
   const getStreamingInfo = () => {
     if (!inferenceStatus.model_loaded) return { available: false, reason: 'Load a model first' }
-    if (inferenceBackend === 'transformers') return { available: false, reason: 'Transformers backend does not support streaming' }
-    if (inferenceBackend === 'vllm' && availableBackends.vllm) return { available: true, reason: 'vLLM supports streaming' }
-    if (inferenceBackend === 'sglang' && availableBackends.sglang) return { available: true, reason: 'SGLang supports streaming' }
-    return { available: false, reason: 'Selected backend not available' }
+    // All backends support streaming
+    return { available: true, reason: `${inferenceBackend} supports streaming` }
   }
 
   const streamingInfo = getStreamingInfo()
@@ -1413,6 +1430,26 @@ export default function InferencePanel({ systemMetrics, onRefreshMetrics, locked
               <label className="text-sm font-medium text-slate-700 flex items-center gap-2">
                 <Layers className="w-4 h-4 text-blue-500" /> LoRA Adapters
               </label>
+
+              {/* Adapter Status Banner */}
+              {(inferenceStatus.adapter_path || loadedAdapters.length > 0) ? (
+                <div className="flex items-center gap-2 p-2.5 bg-purple-50 border border-purple-200 rounded-lg">
+                  <div className="w-2.5 h-2.5 rounded-full bg-purple-500 animate-pulse" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-purple-800">Adapter Loaded</p>
+                    <p className="text-[10px] text-purple-600 truncate">
+                      {loadedAdapters.length > 0 ? loadedAdapters[0].path : inferenceStatus.adapter_path}
+                    </p>
+                  </div>
+                  <Check className="w-4 h-4 text-purple-600 flex-shrink-0" />
+                </div>
+              ) : inferenceStatus.model_loaded ? (
+                <div className="flex items-center gap-2 p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
+                  <div className="w-2.5 h-2.5 rounded-full bg-slate-300" />
+                  <p className="text-xs text-slate-500">No adapter loaded (using base model only)</p>
+                </div>
+              ) : null}
+
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -1433,9 +1470,10 @@ export default function InferencePanel({ systemMetrics, onRefreshMetrics, locked
               {loadedAdapters.length > 0 && (
                 <div className="space-y-1 mt-2">
                   {loadedAdapters.map(adapter => (
-                    <div key={adapter.id} className={`flex items-center gap-2 p-2 rounded-lg text-xs ${adapter.active ? 'bg-blue-50 border border-blue-200' : 'bg-slate-50'}`}>
-                      <div className={`w-2 h-2 rounded-full ${adapter.active ? 'bg-blue-500' : 'bg-slate-300'}`} />
-                      <span className="flex-1 text-slate-700 truncate">{adapter.name}</span>
+                    <div key={adapter.id} className={`flex items-center gap-2 p-2 rounded-lg text-xs ${adapter.active ? 'bg-purple-50 border border-purple-200' : 'bg-slate-50'}`}>
+                      <div className={`w-2 h-2 rounded-full ${adapter.active ? 'bg-purple-500' : 'bg-slate-300'}`} />
+                      <span className="flex-1 text-slate-700 truncate" title={adapter.path}>{adapter.name}</span>
+                      {adapter.active && <span className="text-[10px] text-purple-600 font-medium">Active</span>}
                     </div>
                   ))}
                 </div>
@@ -1687,6 +1725,12 @@ export default function InferencePanel({ systemMetrics, onRefreshMetrics, locked
                       {getModelDisplayName(inferenceStatus.model_path)}
                     </span>
                     <span className="text-slate-400 ml-2">• {inferenceBackend}</span>
+                    {(inferenceStatus.adapter_path || loadedAdapters.length > 0) && (
+                      <span className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-[10px] font-medium">
+                        <Layers className="w-3 h-3" />
+                        LoRA: {loadedAdapters.length > 0 ? loadedAdapters[0].name : inferenceStatus.adapter_path?.split('/').pop()}
+                      </span>
+                    )}
                   </>
                 ) : (
                   'Load a model to start'
