@@ -4406,33 +4406,48 @@ export default function Home() {
               
               {/* Training Completion Summary - show when completed */}
               {jobStatus.status === 'completed' && (
-                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                  <h4 className="font-semibold text-green-800 flex items-center gap-2 mb-3">
-                    <CheckCircle className="w-5 h-5" /> Training Completed Successfully
-                  </h4>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex items-start gap-2">
-                      <FolderOpen className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />
-                      <div>
-                        <span className="text-green-700 font-medium">Output Path:</span>
-                        <code className="block text-green-800 bg-green-100 px-2 py-1 rounded mt-1 text-xs break-all">
+                <div className="rounded-xl overflow-hidden" style={{ background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.08), rgba(6, 182, 212, 0.05))', border: '1px solid rgba(16, 185, 129, 0.2)' }}>
+                  {/* Success Header */}
+                  <div className="px-5 py-4 flex items-center gap-3" style={{ borderBottom: '1px solid rgba(16, 185, 129, 0.1)' }}>
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #10b981, #059669)', boxShadow: '0 0 20px rgba(16, 185, 129, 0.3)' }}>
+                      <CheckCircle className="w-5 h-5 text-white" />
+                    </div>
+                    <div>
+                      <h4 className="font-semibold text-base" style={{ color: '#6ee7b7' }}>Training Completed Successfully</h4>
+                      <p className="text-xs" style={{ color: '#64748b' }}>{trainTypeInfo?.display_name || 'SFT'} • {config.train_type?.toUpperCase()}</p>
+                    </div>
+                  </div>
+                  
+                  <div className="p-5 space-y-4">
+                    {/* Output Path */}
+                    <div className="flex items-start gap-3">
+                      <FolderOpen className="w-4 h-4 mt-0.5 flex-shrink-0" style={{ color: '#34d399' }} />
+                      <div className="flex-1 min-w-0">
+                        <span className="text-xs font-medium uppercase tracking-wider" style={{ color: '#64748b' }}>Output Path</span>
+                        <code className="block mt-1 px-3 py-2 rounded-lg text-xs break-all font-mono" style={{ background: 'rgba(16, 185, 129, 0.06)', border: '1px solid rgba(16, 185, 129, 0.1)', color: '#6ee7b7' }}>
                           {jobStatus.output_dir || `Job: ${jobStatus.job_id}`}
                         </code>
                       </div>
                     </div>
+                    
+                    {/* Metrics Grid */}
                     {trainingMetrics.length > 0 && (
-                      <div className="grid grid-cols-2 gap-2 mt-3 pt-3 border-t border-green-200">
-                        <div className="text-green-700">
-                          <span className="font-medium">Final Loss:</span> {trainingMetrics[trainingMetrics.length - 1]?.loss?.toFixed(4) || '--'}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <div className="rounded-lg px-3 py-2.5 text-center" style={{ background: 'rgba(16, 185, 129, 0.06)', border: '1px solid rgba(16, 185, 129, 0.1)' }}>
+                          <span className="text-[10px] uppercase tracking-wider block" style={{ color: '#64748b' }}>Final Loss</span>
+                          <span className="text-lg font-bold font-mono" style={{ color: '#6ee7b7' }}>{trainingMetrics[trainingMetrics.length - 1]?.loss?.toFixed(4) || '--'}</span>
                         </div>
-                        <div className="text-green-700">
-                          <span className="font-medium">Total Steps:</span> {jobStatus.current_step || trainingMetrics[trainingMetrics.length - 1]?.step || '--'}
+                        <div className="rounded-lg px-3 py-2.5 text-center" style={{ background: 'rgba(6, 182, 212, 0.06)', border: '1px solid rgba(6, 182, 212, 0.1)' }}>
+                          <span className="text-[10px] uppercase tracking-wider block" style={{ color: '#64748b' }}>Total Steps</span>
+                          <span className="text-lg font-bold font-mono" style={{ color: '#67e8f9' }}>{jobStatus.current_step || trainingMetrics[trainingMetrics.length - 1]?.step || '--'}</span>
                         </div>
-                        <div className="text-green-700">
-                          <span className="font-medium">Epochs:</span> {trainingMetrics[trainingMetrics.length - 1]?.epoch || jobStatus.total_epochs || '--'}
+                        <div className="rounded-lg px-3 py-2.5 text-center" style={{ background: 'rgba(139, 92, 246, 0.06)', border: '1px solid rgba(139, 92, 246, 0.1)' }}>
+                          <span className="text-[10px] uppercase tracking-wider block" style={{ color: '#64748b' }}>Epochs</span>
+                          <span className="text-lg font-bold font-mono" style={{ color: '#c4b5fd' }}>{trainingMetrics[trainingMetrics.length - 1]?.epoch || jobStatus.total_epochs || '--'}</span>
                         </div>
-                        <div className="text-green-700">
-                          <span className="font-medium">Training Type:</span> {trainTypeInfo?.display_name || 'SFT'}
+                        <div className="rounded-lg px-3 py-2.5 text-center" style={{ background: 'rgba(59, 130, 246, 0.06)', border: '1px solid rgba(59, 130, 246, 0.1)' }}>
+                          <span className="text-[10px] uppercase tracking-wider block" style={{ color: '#64748b' }}>Type</span>
+                          <span className="text-sm font-semibold" style={{ color: '#93c5fd' }}>{trainTypeInfo?.display_name || 'SFT'}</span>
                         </div>
                       </div>
                     )}
@@ -4471,7 +4486,8 @@ export default function Home() {
               {/* Stop Training Button - only show when running */}
               {isTraining && (
                 <button onClick={confirmStopTraining}
-                  className="w-full py-3 bg-red-500 text-white rounded-lg font-medium hover:bg-red-600 flex items-center justify-center gap-2">
+                  className="w-full py-3.5 text-white rounded-xl font-medium flex items-center justify-center gap-2 transition-all duration-300 hover:-translate-y-0.5"
+                  style={{ background: 'linear-gradient(135deg, #ef4444, #dc2626)', border: '1px solid rgba(239, 68, 68, 0.3)', boxShadow: '0 0 20px rgba(239, 68, 68, 0.2)' }}>
                   <StopCircle className="w-5 h-5" /> Stop Training
                 </button>
               )}
@@ -4524,7 +4540,8 @@ export default function Home() {
                         }
                       }}
                       disabled={isModelLoading || isCleaningMemory}
-                      className="w-full py-3 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-lg font-medium hover:from-green-600 hover:to-emerald-700 disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-green-500/20 transition-all">
+                      className="w-full py-3.5 text-white rounded-xl font-medium disabled:opacity-50 flex items-center justify-center gap-2 transition-all duration-300 hover:-translate-y-0.5"
+                      style={{ background: 'linear-gradient(135deg, #10b981, #059669)', border: '1px solid rgba(16, 185, 129, 0.3)', boxShadow: '0 0 25px rgba(16, 185, 129, 0.25)' }}>
                       {isModelLoading ? (
                         <>
                           <Loader2 className="w-5 h-5 animate-spin" />
@@ -4539,15 +4556,17 @@ export default function Home() {
                     </button>
                   )}
                   
-                  <div className="flex gap-2">
+                  <div className="flex gap-3">
                     <button onClick={resetTrainingState}
                       disabled={isModelLoading}
-                      className="flex-1 py-3 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600 disabled:opacity-50 flex items-center justify-center gap-2">
+                      className="flex-1 py-3.5 text-white rounded-xl font-medium disabled:opacity-50 flex items-center justify-center gap-2 transition-all duration-300 hover:-translate-y-0.5"
+                      style={{ background: 'linear-gradient(135deg, #3b82f6, #2563eb)', border: '1px solid rgba(59, 130, 246, 0.3)', boxShadow: '0 0 20px rgba(59, 130, 246, 0.2)' }}>
                       <Play className="w-5 h-5" /> Start New Training
                     </button>
                     <button onClick={() => setShowHistory(true)}
                       disabled={isModelLoading}
-                      className="px-4 py-3 bg-slate-100 text-slate-700 rounded-lg font-medium hover:bg-slate-200 disabled:opacity-50 flex items-center justify-center gap-2 border border-slate-200">
+                      className="px-5 py-3.5 rounded-xl font-medium disabled:opacity-50 flex items-center justify-center gap-2 transition-all duration-200 hover:-translate-y-0.5"
+                      style={{ background: 'rgba(148, 163, 184, 0.06)', border: '1px solid rgba(148, 163, 184, 0.12)', color: '#94a3b8' }}>
                       <History className="w-5 h-5" />
                     </button>
                   </div>
