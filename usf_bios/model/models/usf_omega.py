@@ -18,10 +18,11 @@ try:
     class UsfOmegaConfig(MistralConfig):
         model_type = "usf_omega"
 
-    UsfOmegaForCausalLM = MistralForCausalLM
+    class _UsfOmegaForCausalLM(MistralForCausalLM):
+        config_class = UsfOmegaConfig
 
     AutoConfig.register("usf_omega", UsfOmegaConfig)
-    AutoModelForCausalLM.register(UsfOmegaConfig, UsfOmegaForCausalLM, exist_ok=True)
+    AutoModelForCausalLM.register(UsfOmegaConfig, _UsfOmegaForCausalLM)
 except Exception:
     pass
 
