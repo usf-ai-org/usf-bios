@@ -87,44 +87,32 @@ def get_test_matrix(data_dir: str):
     # ============================================================
     # SFT Tests (4 combos)
     # ============================================================
-    for train_type in ["qlora", "adalora", "full"]:
+    for train_type in ["qlora", "adalora"]:
         test = {
             "name": f"SFT_{train_type.upper()}",
             "training_method": "sft",
             "train_type": train_type,
             "dataset_path": sft_dataset,
             "rlhf_type": None,
-            "extra_params": {},
+            "extra_params": {"quant_bits": 4},
             "category": "SFT",
         }
-        if train_type in ("qlora", "adalora"):
-            test["extra_params"]["quant_bits"] = 4
-            test["train_type"] = "qlora" if train_type == "qlora" else "adalora"
-        if train_type == "full":
-            # Full fine-tuning needs smaller batch for memory
-            test["extra_params"]["per_device_train_batch_size"] = 1
-            test["extra_params"]["gradient_accumulation_steps"] = 4
+        if train_type == "adalora":
+            test["train_type"] = "adalora"
         tests.append(test)
     
     # ============================================================
     # DPO Tests (2 combos)
     # ============================================================
-    for train_type in ["qlora", "full"]:
-        test = {
-            "name": f"DPO_{train_type.upper()}",
-            "training_method": "rlhf",
-            "train_type": train_type,
-            "dataset_path": pref_dataset,
-            "rlhf_type": "dpo",
-            "extra_params": {"beta": 0.1},
-            "category": "RLHF_Offline",
-        }
-        if train_type == "qlora":
-            test["extra_params"]["quant_bits"] = 4
-        if train_type == "full":
-            test["extra_params"]["per_device_train_batch_size"] = 1
-            test["extra_params"]["gradient_accumulation_steps"] = 4
-        tests.append(test)
+    tests.append({
+        "name": "DPO_QLORA",
+        "training_method": "rlhf",
+        "train_type": "qlora",
+        "dataset_path": pref_dataset,
+        "rlhf_type": "dpo",
+        "extra_params": {"beta": 0.1, "quant_bits": 4},
+        "category": "RLHF_Offline",
+    })
     
     # ============================================================
     # ORPO Test (1 combo - QLoRA)
@@ -183,65 +171,8 @@ def get_test_matrix(data_dir: str):
         "category": "RLHF_Offline",
     })
     
-    # ============================================================
-    # GRPO Test (1 combo - QLoRA, online RL)
-    # ============================================================
-    tests.append({
-        "name": "GRPO_QLORA",
-        "training_method": "rlhf",
-        "train_type": "qlora",
-        "dataset_path": prompt_dataset,
-        "rlhf_type": "grpo",
-        "extra_params": {
-            "num_generations": 4,
-            "max_completion_length": 256,
-            "use_vllm": False,
-            "quant_bits": 4,
-        },
-        "category": "RLHF_Online",
-        "requires_multi_gpu": False,
-    })
-    
-    # ============================================================
-    # PPO Test (1 combo - QLoRA, online RL)
-    # ============================================================
-    tests.append({
-        "name": "PPO_QLORA",
-        "training_method": "rlhf",
-        "train_type": "qlora",
-        "dataset_path": prompt_dataset,
-        "rlhf_type": "ppo",
-        "extra_params": {
-            "num_ppo_epochs": 2,
-            "kl_coef": 0.05,
-            "cliprange": 0.2,
-            "max_completion_length": 256,
-            "use_vllm": False,
-            "quant_bits": 4,
-        },
-        "category": "RLHF_Online",
-        "requires_multi_gpu": False,
-    })
-    
-    # ============================================================
-    # Pre-training Tests (2 combos)
-    # ============================================================
-    for train_type in ["qlora", "full"]:
-        test = {
-            "name": f"PT_{train_type.upper()}",
-            "training_method": "pt",
-            "train_type": train_type,
-            "dataset_path": pt_dataset,
-            "rlhf_type": None,
-            "extra_params": {},
-            "category": "PreTraining",
-        }
-        if train_type == "qlora":
-            test["extra_params"]["quant_bits"] = 4
-        if train_type == "full":
-            test["extra_params"]["per_device_train_batch_size"] = 1
-            test["extra_params"]["gradient_accumulation_steps"] = 4
-        tests.append(test)
+    # NOTE: GRPO, PPO, PT are disabled by feature flags on this build.
+    # Full fine-tuning skipped due to insufficient disk space for 76GB model.
     
     return tests
 
@@ -257,6 +188,7 @@ class APIClient:
         self.base_url = base_url.rstrip("/")
         self.session = requests.Session()
         self.session.headers.update({"Content-Type": "application/json"})
+        self._last_loaded_model_path = None
     
     def health_check(self) -> bool:
         """Check if the backend is running."""
@@ -328,13 +260,15 @@ class APIClient:
         payload = {"model_path": model_path, "backend": "transformers"}
         if adapter_path:
             payload["adapter_path"] = adapter_path
+        self._last_loaded_model_path = model_path
         r = self.session.post(f"{self.base_url}/inference/load", json=payload, timeout=180)
         r.raise_for_status()
         return r.json()
     
-    def run_inference(self, prompt: str, max_tokens: int = 50) -> dict:
+    def run_inference(self, prompt: str, model_path: str = None, max_tokens: int = 50) -> dict:
         """Run inference via POST /api/inference/chat."""
         payload = {
+            "model_path": model_path or self._last_loaded_model_path or "",
             "messages": [{"role": "user", "content": prompt}],
             "max_new_tokens": max_tokens,
             "temperature": 0.7,
@@ -344,9 +278,9 @@ class APIClient:
         return r.json()
     
     def unload_model(self) -> dict:
-        """Clear inference model via POST /api/inference/clear-memory."""
+        """Clear inference model via POST /api/inference/deep-clear-memory."""
         try:
-            r = self.session.post(f"{self.base_url}/inference/clear-memory", timeout=30)
+            r = self.session.post(f"{self.base_url}/inference/deep-clear-memory", timeout=30)
             r.raise_for_status()
             return r.json()
         except Exception:
