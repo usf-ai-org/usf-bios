@@ -768,7 +768,7 @@ class TrainingService:
             if training_method:
                 method_value = training_method.value if hasattr(training_method, 'value') else str(training_method)
                 try:
-                    validate_train_type(method_value)
+                    validate_training_method(method_value)
                 except FeatureDisabledError as e:
                     return False, str(e)
             
@@ -777,7 +777,7 @@ class TrainingService:
             if train_type:
                 type_value = train_type.value if hasattr(train_type, 'value') else str(train_type)
                 try:
-                    validate_training_method(type_value)
+                    validate_train_type(type_value)
                 except FeatureDisabledError as e:
                     return False, str(e)
             
