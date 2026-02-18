@@ -46,12 +46,12 @@ const Shimmer = ({ className = '', width = 'w-full', height = 'h-4' }: {
   width?: string
   height?: string 
 }) => (
-  <div className={`animate-pulse bg-gradient-to-r from-slate-200 via-slate-300 to-slate-200 bg-[length:200%_100%] rounded ${width} ${height} ${className}`} 
-    style={{ animation: 'shimmer 1.5s ease-in-out infinite' }} />
+  <div className={`animate-pulse rounded ${width} ${height} ${className}`} 
+    style={{ background: 'linear-gradient(90deg, rgba(148,163,184,0.06), rgba(148,163,184,0.12), rgba(148,163,184,0.06))', backgroundSize: '200% 100%', animation: 'shimmer 1.5s ease-in-out infinite' }} />
 )
 
 const ShimmerCard = ({ lines = 3 }: { lines?: number }) => (
-  <div className="bg-white rounded-lg border border-slate-200 p-4 space-y-3">
+  <div className="rounded-xl p-4 space-y-3" style={{ background: 'rgba(15, 22, 41, 0.6)', border: '1px solid rgba(148, 163, 184, 0.08)' }}>
     <Shimmer width="w-1/3" height="h-5" />
     {Array.from({ length: lines }).map((_, i) => (
       <Shimmer key={i} width={i === lines - 1 ? 'w-2/3' : 'w-full'} height="h-3" />
@@ -3464,7 +3464,7 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-white">
+    <div className="min-h-screen relative" style={{ background: '#0a0e1a' }}>
       {/* Shimmer Animation Styles */}
       <style dangerouslySetInnerHTML={{ __html: shimmerStyles }} />
       
@@ -3571,33 +3571,42 @@ export default function Home() {
       {/* Training Status Banner - Shows prominently when training is active */}
       <TrainingStatusBanner />
 
-      {/* Header - Light Theme with Blue Accents */}
-      <header className="bg-white border-b border-slate-200 shadow-sm sticky top-0 z-40">
+      {/* Header - Dark Glassmorphic Nav */}
+      <header className="sticky top-0 z-40 border-b" style={{ background: 'rgba(10, 14, 26, 0.85)', backdropFilter: 'blur(20px) saturate(180%)', borderColor: 'rgba(148, 163, 184, 0.08)' }}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/30">
-                <Sparkles className="w-5 h-5 text-white" />
+              <div className="relative w-10 h-10">
+                <div className="absolute inset-0 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-xl opacity-20 blur-lg" />
+                <div className="relative w-10 h-10 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-xl flex items-center justify-center" style={{ boxShadow: '0 0 20px rgba(59, 130, 246, 0.3)' }}>
+                  <Sparkles className="w-5 h-5 text-white" />
+                </div>
               </div>
               <div className="hidden sm:block">
-                <h1 className="text-lg font-bold text-slate-900">USF BIOS</h1>
-                <p className="text-xs text-slate-500">AI Fine-tuning Platform</p>
+                <h1 className="text-lg font-bold" style={{ color: '#f1f5f9' }}>USF BIOS</h1>
+                <p className="text-xs" style={{ color: '#64748b' }}>AI Fine-tuning Platform</p>
               </div>
             </div>
             
             {/* Mobile menu button */}
-            <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} className="sm:hidden p-2 text-slate-600 hover:text-slate-900">
+            <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} className="sm:hidden p-2 rounded-lg" style={{ color: '#94a3b8' }}>
               <Menu className="w-6 h-6" />
             </button>
             
-            {/* Desktop tabs - Disabled during training */}
-            <div className="hidden sm:flex bg-slate-100 rounded-lg p-1">
+            {/* Desktop tabs - Premium pill switcher */}
+            <div className="hidden sm:flex rounded-xl p-1" style={{ background: 'rgba(148, 163, 184, 0.06)', border: '1px solid rgba(148, 163, 184, 0.08)' }}>
               <button
                 onClick={() => handleTabChange('train')}
                 disabled={isTraining}
-                className={`px-4 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${
-                  mainTab === 'train' ? 'bg-blue-500 text-white shadow-md' : 'text-slate-600 hover:text-slate-900'
+                className={`px-5 py-2 rounded-lg text-sm font-medium transition-all duration-300 flex items-center gap-2 ${
+                  mainTab === 'train' 
+                    ? 'text-white' 
+                    : 'hover:text-white/80'
                 } ${isTraining ? 'opacity-50 cursor-not-allowed' : ''}`}
+                style={mainTab === 'train' ? { 
+                  background: 'linear-gradient(135deg, #3b82f6, #2563eb)', 
+                  boxShadow: '0 0 20px rgba(59, 130, 246, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' 
+                } : { color: '#94a3b8' }}
               >
                 <Zap className="w-4 h-4" />Fine-tuning
                 {isTraining && <Loader2 className="w-3 h-3 animate-spin" />}
@@ -3605,46 +3614,54 @@ export default function Home() {
               <button
                 onClick={() => handleTabChange('inference')}
                 disabled={isTraining}
-                className={`px-4 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${
-                  mainTab === 'inference' ? 'bg-blue-500 text-white shadow-md' : 'text-slate-600 hover:text-slate-900'
+                className={`px-5 py-2 rounded-lg text-sm font-medium transition-all duration-300 flex items-center gap-2 ${
+                  mainTab === 'inference' 
+                    ? 'text-white' 
+                    : 'hover:text-white/80'
                 } ${isTraining ? 'opacity-50 cursor-not-allowed' : ''}`}
+                style={mainTab === 'inference' ? { 
+                  background: 'linear-gradient(135deg, #3b82f6, #2563eb)', 
+                  boxShadow: '0 0 20px rgba(59, 130, 246, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' 
+                } : { color: '#94a3b8' }}
               >
                 <MessageSquare className="w-4 h-4" />Inference
               </button>
             </div>
             
-            {/* System metrics mini display - only show if data available */}
-            <div className="hidden lg:flex items-center gap-4 text-xs">
+            {/* System metrics mini display */}
+            <div className="hidden lg:flex items-center gap-3 text-xs">
               {systemMetrics.available && systemMetrics.gpu_utilization !== null && (
-                <div className="flex items-center gap-1 text-slate-600">
-                  <Gauge className="w-4 h-4 text-blue-500" />
-                  <span>GPU: {systemMetrics.gpu_utilization}%</span>
+                <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg" style={{ background: 'rgba(6, 182, 212, 0.08)', border: '1px solid rgba(6, 182, 212, 0.15)' }}>
+                  <Gauge className="w-3.5 h-3.5" style={{ color: '#22d3ee' }} />
+                  <span style={{ color: '#94a3b8' }}>GPU: <span style={{ color: '#e2e8f0', fontWeight: 500 }}>{systemMetrics.gpu_utilization}%</span></span>
                 </div>
               )}
               {systemMetrics.available && systemMetrics.gpu_memory_used !== null && systemMetrics.gpu_memory_total !== null && (
-                <div className="flex items-center gap-1 text-slate-600">
-                  <HardDrive className="w-4 h-4 text-blue-500" />
-                  <span>VRAM: {systemMetrics.gpu_memory_used.toFixed(1)}/{systemMetrics.gpu_memory_total.toFixed(0)}GB{systemMetrics.device_count && systemMetrics.device_count > 1 ? ` (${systemMetrics.device_count} GPUs)` : ''}</span>
+                <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg" style={{ background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.15)' }}>
+                  <HardDrive className="w-3.5 h-3.5" style={{ color: '#60a5fa' }} />
+                  <span style={{ color: '#94a3b8' }}>VRAM: <span style={{ color: '#e2e8f0', fontWeight: 500 }}>{systemMetrics.gpu_memory_used.toFixed(1)}/{systemMetrics.gpu_memory_total.toFixed(0)}GB</span>{systemMetrics.device_count && systemMetrics.device_count > 1 ? ` (${systemMetrics.device_count} GPUs)` : ''}</span>
                 </div>
               )}
-              <div className="text-slate-500">Powered by <a href="https://us.inc" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 hover:underline font-medium">Ultrasafe AI</a></div>
+              <span style={{ color: '#475569' }}>Powered by <a href="https://us.inc" target="_blank" rel="noopener noreferrer" className="hover:underline font-medium" style={{ color: '#60a5fa' }}>Ultrasafe AI</a></span>
             </div>
           </div>
           
-          {/* Mobile menu - Disabled during training */}
+          {/* Mobile menu */}
           {mobileMenuOpen && (
-            <div className="sm:hidden mt-3 pt-3 border-t border-slate-200 flex gap-2">
+            <div className="sm:hidden mt-3 pt-3 flex gap-2" style={{ borderTop: '1px solid rgba(148, 163, 184, 0.08)' }}>
               <button 
                 onClick={() => { handleTabChange('train'); setMobileMenuOpen(false) }}
                 disabled={isTraining}
-                className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium ${mainTab === 'train' ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-700'} ${isTraining ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${isTraining ? 'opacity-50 cursor-not-allowed' : ''}`}
+                style={mainTab === 'train' ? { background: 'linear-gradient(135deg, #3b82f6, #2563eb)', color: 'white' } : { background: 'rgba(148, 163, 184, 0.06)', color: '#94a3b8' }}>
                 <Zap className="w-4 h-4 inline mr-1" />Fine-tuning
                 {isTraining && <Loader2 className="w-3 h-3 inline ml-1 animate-spin" />}
               </button>
               <button 
                 onClick={() => { handleTabChange('inference'); setMobileMenuOpen(false) }}
                 disabled={isTraining}
-                className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium ${mainTab === 'inference' ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-700'} ${isTraining ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${isTraining ? 'opacity-50 cursor-not-allowed' : ''}`}
+                style={mainTab === 'inference' ? { background: 'linear-gradient(135deg, #3b82f6, #2563eb)', color: 'white' } : { background: 'rgba(148, 163, 184, 0.06)', color: '#94a3b8' }}>
                 <MessageSquare className="w-4 h-4 inline mr-1" />Inference
               </button>
             </div>
