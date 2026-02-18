@@ -1199,6 +1199,8 @@ class TrainingService:
             cmd.extend(["--eval_steps", str(config.eval_steps)])
         if config.save_steps:
             cmd.extend(["--save_steps", str(config.save_steps)])
+        if hasattr(config, 'save_total_limit') and config.save_total_limit is not None:
+            cmd.extend(["--save_total_limit", str(config.save_total_limit)])
         
         return cmd, output_dir
     
@@ -1978,7 +1980,6 @@ class TrainingService:
                 await ws_manager.send_log(job_id, f"\u2713 Storage check passed (~{total_required:.1f}GB needed)")
                 
             except Exception as storage_err:
-                import traceback
                 _log_step(job_id, "STORAGE_VALIDATION_ERROR", {
                     "error": str(storage_err),
                     "error_type": type(storage_err).__name__,

@@ -603,6 +603,7 @@ class TrainingConfig(BaseModel):
     eval_strategy: Optional[str] = Field(default=None)
     eval_steps: Optional[int] = Field(default=None)
     save_steps: Optional[int] = Field(default=500)
+    save_total_limit: Optional[int] = Field(default=None, description="Maximum number of checkpoints to keep")
 
 
 class JobCreate(BaseModel):
