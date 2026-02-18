@@ -85,9 +85,10 @@ def get_test_matrix(data_dir: str):
     tests = []
     
     # ============================================================
-    # SFT Tests (3 combos)
+    # SFT Tests (2 combos - QLoRA, AdaLoRA)
+    # FULL disabled: 76GB model OOMs on single 96GB GPU (needs DeepSpeed ZeRO-3 or multi-GPU)
     # ============================================================
-    for train_type in ["qlora", "adalora", "full"]:
+    for train_type in ["qlora", "adalora"]:
         test = {
             "name": f"SFT_{train_type.upper()}",
             "training_method": "sft",
@@ -100,33 +101,21 @@ def get_test_matrix(data_dir: str):
         if train_type in ("qlora", "adalora"):
             test["extra_params"]["quant_bits"] = 4
             test["train_type"] = "qlora" if train_type == "qlora" else "adalora"
-        if train_type == "full":
-            # Full fine-tuning needs smaller batch for memory
-            test["extra_params"]["per_device_train_batch_size"] = 1
-            test["extra_params"]["gradient_accumulation_steps"] = 4
-            test["extra_params"]["save_total_limit"] = 1
         tests.append(test)
     
     # ============================================================
-    # DPO Tests (2 combos)
+    # DPO Tests (1 combo - QLoRA)
+    # FULL disabled: 76GB model OOMs on single 96GB GPU (needs DeepSpeed ZeRO-3 or multi-GPU)
     # ============================================================
-    for train_type in ["qlora", "full"]:
-        test = {
-            "name": f"DPO_{train_type.upper()}",
-            "training_method": "rlhf",
-            "train_type": train_type,
-            "dataset_path": pref_dataset,
-            "rlhf_type": "dpo",
-            "extra_params": {"beta": 0.1},
-            "category": "RLHF_Offline",
-        }
-        if train_type == "qlora":
-            test["extra_params"]["quant_bits"] = 4
-        if train_type == "full":
-            test["extra_params"]["per_device_train_batch_size"] = 1
-            test["extra_params"]["gradient_accumulation_steps"] = 4
-            test["extra_params"]["save_total_limit"] = 1
-        tests.append(test)
+    tests.append({
+        "name": "DPO_QLORA",
+        "training_method": "rlhf",
+        "train_type": "qlora",
+        "dataset_path": pref_dataset,
+        "rlhf_type": "dpo",
+        "extra_params": {"beta": 0.1, "quant_bits": 4},
+        "category": "RLHF_Offline",
+    })
     
     # ============================================================
     # ORPO Test (1 combo - QLoRA)
@@ -228,25 +217,18 @@ def get_test_matrix(data_dir: str):
     # })
     
     # ============================================================
-    # Pre-training Tests (2 combos)
+    # Pre-training Tests (1 combo - QLoRA)
+    # FULL disabled: 76GB model OOMs on single 96GB GPU (needs DeepSpeed ZeRO-3 or multi-GPU)
     # ============================================================
-    for train_type in ["qlora", "full"]:
-        test = {
-            "name": f"PT_{train_type.upper()}",
-            "training_method": "pt",
-            "train_type": train_type,
-            "dataset_path": pt_dataset,
-            "rlhf_type": None,
-            "extra_params": {},
-            "category": "PreTraining",
-        }
-        if train_type == "qlora":
-            test["extra_params"]["quant_bits"] = 4
-        if train_type == "full":
-            test["extra_params"]["per_device_train_batch_size"] = 1
-            test["extra_params"]["gradient_accumulation_steps"] = 4
-            test["extra_params"]["save_total_limit"] = 1
-        tests.append(test)
+    tests.append({
+        "name": "PT_QLORA",
+        "training_method": "pt",
+        "train_type": "qlora",
+        "dataset_path": pt_dataset,
+        "rlhf_type": None,
+        "extra_params": {"quant_bits": 4},
+        "category": "PreTraining",
+    })
     
     return tests
 
