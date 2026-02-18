@@ -571,16 +571,14 @@ class E2ETestRunner:
             print(f"  ✗ ERROR: {result.error_message}")
             return result
         
-        # Build training config
-        output_dir = os.path.join(self.output_base, f"test_{test_config['name'].lower()}")
-        
+        # Build training config (do NOT set output_dir - system_guard locks it)
         config = {
             "model_path": self.model_path,
             "model_source": "huggingface" if "/" in self.model_path and not self.model_path.startswith("/") else "local",
             "training_method": test_config["training_method"],
             "train_type": test_config["train_type"],
             "dataset_path": dataset_path,
-            "output_dir": output_dir,
+            "output_dir": "",
             "name": f"e2e_test_{test_config['name'].lower()}",
             **TEST_TRAINING_PARAMS,
         }
@@ -605,7 +603,6 @@ class E2ETestRunner:
                   f"{test_config['train_type'].upper()}"
                   f"{' + ' + test_config['rlhf_type'].upper() if test_config['rlhf_type'] else ''}")
             print(f"    Dataset: {os.path.basename(dataset_path)}")
-            print(f"    Output:  {output_dir}")
             
             # Step 1: Create the job
             create_response = self.client.create_job(config)
@@ -660,10 +657,10 @@ class E2ETestRunner:
             try:
                 job_data = self.client.get_job_status(job_id)
                 job_info = job_data.get("job", job_data)
-                result.output_dir = job_info.get("output_dir", output_dir)
+                result.output_dir = job_info.get("output_dir", "")
                 result.final_loss = job_info.get("current_loss")
             except Exception:
-                result.output_dir = output_dir
+                result.output_dir = ""
             
             result.status = "passed"
             result.end_time = datetime.now()
