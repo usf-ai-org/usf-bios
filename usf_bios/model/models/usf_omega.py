@@ -8,6 +8,17 @@ from ..register import register_model
 
 logger = get_logger()
 
+# Register usf_omega in transformers' CONFIG_MAPPING so AutoConfig/AutoModelForCausalLM
+# can recognize this custom model type. UsfOmega is architecturally Mistral-based.
+try:
+    from transformers import AutoConfig, AutoModelForCausalLM
+    from transformers.models.mistral.configuration_mistral import MistralConfig
+    from transformers.models.mistral.modeling_mistral import MistralForCausalLM
+    AutoConfig.register("usf_omega", MistralConfig)
+    AutoModelForCausalLM.register(MistralConfig, MistralForCausalLM, exist_ok=True)
+except Exception:
+    pass
+
 register_model(
     ModelMeta(
         LLMModelType.usf_omega, [
