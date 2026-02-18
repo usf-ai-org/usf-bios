@@ -1474,13 +1474,14 @@ class InferenceService:
     async def generate_stream(self, request: InferenceRequest) -> AsyncGenerator[str, None]:
         """
         Stream generation - yields chunks as they're generated.
-        Best supported with vLLM and SGLang backends.
+        Supports all backends: Transformers (via infer_async), vLLM, SGLang.
         """
         backend = request.backend if hasattr(request, 'backend') else InferenceBackend.TRANSFORMERS
         
         # Load model if needed
         if (self._engine is None or 
             self._current_model_path != request.model_path or
+            self._current_adapter_path != request.adapter_path or
             self._current_backend != backend):
             
             load_result = await self.load_model(request.model_path, request.adapter_path, backend)
@@ -1510,9 +1511,32 @@ class InferenceService:
                     yield chunk
             
             else:
-                # Transformers - non-streaming fallback
-                response_text, _ = await self._generate_transformers(request)
-                yield response_text
+                # Transformers - native token-by-token streaming via infer_async
+                if USF_BIOS_AVAILABLE and self._engine is not None:
+                    infer_request = InferRequest(messages=request.messages)
+                    request_config = RequestConfig(
+                        max_tokens=request.max_new_tokens,
+                        temperature=request.temperature,
+                        top_p=request.top_p,
+                        top_k=request.top_k,
+                        repetition_penalty=request.repetition_penalty,
+                        stream=True,
+                    )
+                    
+                    gen = self._engine.infer_async(
+                        infer_request,
+                        request_config=request_config,
+                    )
+                    
+                    async for chunk in gen:
+                        if hasattr(chunk, 'choices') and chunk.choices:
+                            delta = chunk.choices[0].delta
+                            if hasattr(delta, 'content') and delta.content:
+                                yield delta.content
+                else:
+                    # Ultimate fallback - non-streaming
+                    response_text, _ = await self._generate_transformers(request)
+                    yield response_text
         
         except Exception as e:
             sanitized = sanitized_log_service.sanitize_error(str(e))

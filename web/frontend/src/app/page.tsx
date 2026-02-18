@@ -1626,6 +1626,7 @@ export default function Home() {
             total_steps: job.total_steps ?? prev.total_steps,
             current_loss: job.current_loss ?? prev.current_loss,
             epoch: job.current_epoch ?? prev.epoch,
+            output_dir: job.output_dir ?? prev.output_dir,
           } : null)
           
           // Check for terminal states
