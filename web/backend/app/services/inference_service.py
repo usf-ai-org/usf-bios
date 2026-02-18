@@ -1273,15 +1273,16 @@ class InferenceService:
             repetition_penalty=request.repetition_penalty,
         )
         
-        response = self._engine.infer(
-            infer_request=infer_request,
+        resp_list = self._engine.infer(
+            [infer_request],
             request_config=request_config,
         )
         
+        response = resp_list[0] if resp_list else None
         response_text = ""
         tokens_generated = 0
         
-        if hasattr(response, 'choices') and response.choices:
+        if response and hasattr(response, 'choices') and response.choices:
             choice = response.choices[0]
             if hasattr(choice, 'message') and choice.message:
                 response_text = choice.message.content or ""
