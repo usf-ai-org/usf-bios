@@ -38,6 +38,282 @@ class JobNameUpdate(BaseModel):
     name: str
 
 
+@router.post("/preflight", response_model=None)
+async def preflight_validation(config: TrainingConfig):
+    """Comprehensive pre-flight validation before training starts.
+    
+    Checks EVERYTHING that could cause a runtime failure:
+    1. System expiration / subscription status
+    2. GPU availability and VRAM
+    3. Model path exists and is valid (config.json, model files)
+    4. Dataset paths exist and format is valid
+    5. Dataset type compatible with training method
+    6. Feature flags (training method enabled in this build)
+    7. Config compatibility (DeepSpeed+FSDP, Flash Attention, etc.)
+    8. Storage space for output
+    9. Core dependencies (torch, transformers, peft, trl, etc.)
+    10. No other training already running
+    
+    Returns detailed validation results so the frontend can show
+    exactly what's wrong before the user even clicks Start.
+    """
+    checks = []
+    all_passed = True
+    
+    def add_check(name: str, passed: bool, message: str, severity: str = "error"):
+        nonlocal all_passed
+        if not passed and severity == "error":
+            all_passed = False
+        checks.append({
+            "name": name,
+            "passed": passed,
+            "message": message,
+            "severity": severity  # "error", "warning", "info"
+        })
+    
+    # ── 1. System expiration ──────────────────────────────────────
+    try:
+        expired, exp_msg = is_system_expired()
+        if expired:
+            add_check("system_status", False, exp_msg)
+        else:
+            add_check("system_status", True, "System is active and operational")
+    except Exception as e:
+        add_check("system_status", False, f"System check failed: {str(e)}")
+    
+    # ── 2. GPU availability ───────────────────────────────────────
+    try:
+        import torch
+        if torch.cuda.is_available():
+            gpu_name = torch.cuda.get_device_properties(0).name
+            gpu_mem = torch.cuda.get_device_properties(0).total_mem / (1024**3)
+            gpu_count = torch.cuda.device_count()
+            add_check("gpu", True, f"{gpu_name} ({gpu_mem:.1f}GB){f' x{gpu_count}' if gpu_count > 1 else ''}")
+        else:
+            add_check("gpu", False, "No CUDA GPU detected. Training requires an NVIDIA GPU.")
+    except ImportError:
+        add_check("gpu", False, "PyTorch not installed. Cannot check GPU.")
+    except Exception as e:
+        add_check("gpu", False, f"GPU check failed: {str(e)}")
+    
+    # ── 3. No other training running ──────────────────────────────
+    try:
+        from ...services.training_status_service import training_status_service
+        can_create, reason = await training_status_service.can_create_job()
+        if can_create:
+            add_check("no_active_training", True, "No other training in progress")
+        else:
+            add_check("no_active_training", False, reason)
+    except Exception as e:
+        add_check("no_active_training", True, "Could not check active training status", "warning")
+    
+    # ── 4. Model path validation ──────────────────────────────────
+    model_source = config.model_source.value if hasattr(config.model_source, 'value') else str(config.model_source)
+    model_path = config.model_path
+    
+    if not model_path:
+        add_check("model_path", False, "No model path specified")
+    elif model_source == 'local':
+        if not os.path.exists(model_path):
+            add_check("model_path", False, f"Model path does not exist: {model_path}")
+        elif not os.path.isdir(model_path):
+            add_check("model_path", False, f"Model path is not a directory: {model_path}")
+        else:
+            config_json = os.path.join(model_path, "config.json")
+            has_config = os.path.exists(config_json)
+            # Check for model weight files
+            model_files = [f for f in os.listdir(model_path) 
+                          if f.endswith(('.safetensors', '.bin', '.pt', '.pth', '.gguf'))]
+            if has_config and model_files:
+                add_check("model_path", True, f"Model directory valid ({len(model_files)} weight files)")
+            elif has_config and not model_files:
+                add_check("model_path", False, "Model directory has config.json but no weight files (.safetensors, .bin)")
+            elif not has_config and model_files:
+                add_check("model_path", True, f"Model directory has {len(model_files)} weight files (no config.json)", "warning")
+            else:
+                add_check("model_path", False, "Model directory is empty or has no recognizable model files")
+    else:
+        # Remote model (HuggingFace/ModelScope) - validate format
+        if '/' in model_path or model_path.count('/') >= 1:
+            add_check("model_path", True, f"Remote model ID: {model_path}")
+        else:
+            add_check("model_path", True, f"Model: {model_path}", "warning")
+    
+    # ── 5. Model compatibility (architecture, source restrictions) ─
+    try:
+        validator = get_validator()
+        is_supported, msg = validator.validate_model_path(model_path, model_source)
+        if is_supported:
+            add_check("model_compatibility", True, "Model is compatible with this system")
+        else:
+            add_check("model_compatibility", False, msg)
+    except Exception as e:
+        add_check("model_compatibility", False, f"Model compatibility check failed: {str(e)}")
+    
+    # ── 6. Dataset validation ─────────────────────────────────────
+    dataset_path_str = config.dataset_path if hasattr(config, 'dataset_path') and config.dataset_path else ''
+    dataset_paths = [p.strip() for p in dataset_path_str.split(',') if p.strip()] if dataset_path_str else []
+    
+    if not dataset_paths:
+        add_check("dataset", False, "No dataset specified")
+    else:
+        all_datasets_valid = True
+        dataset_messages = []
+        for ds_path in dataset_paths:
+            if ds_path.upper().startswith(('HF::', 'MS::')):
+                dataset_messages.append(f"Remote dataset: {ds_path}")
+                continue
+            if not os.path.exists(ds_path):
+                all_datasets_valid = False
+                dataset_messages.append(f"NOT FOUND: {ds_path}")
+            else:
+                # Check file is readable and has content
+                try:
+                    file_size = os.path.getsize(ds_path)
+                    if file_size == 0:
+                        all_datasets_valid = False
+                        dataset_messages.append(f"EMPTY FILE: {os.path.basename(ds_path)}")
+                    else:
+                        size_str = f"{file_size/1024:.1f}KB" if file_size < 1024*1024 else f"{file_size/(1024*1024):.1f}MB"
+                        dataset_messages.append(f"{os.path.basename(ds_path)} ({size_str})")
+                except Exception:
+                    dataset_messages.append(f"{os.path.basename(ds_path)}")
+        
+        if all_datasets_valid:
+            add_check("dataset", True, f"{len(dataset_paths)} dataset(s): {'; '.join(dataset_messages)}")
+        else:
+            add_check("dataset", False, f"Dataset issues: {'; '.join(dataset_messages)}")
+    
+    # ── 7. Dataset format validation ──────────────────────────────
+    if dataset_paths:
+        try:
+            from ...services.dataset_type_service import dataset_type_service
+            from pathlib import Path
+            
+            format_issues = []
+            for ds_path in dataset_paths:
+                ds_path = ds_path.strip()
+                if ds_path.upper().startswith(('HF::', 'MS::')):
+                    continue
+                if not os.path.exists(ds_path):
+                    continue
+                try:
+                    type_info = dataset_type_service.detect_dataset_type(ds_path)
+                    if type_info.dataset_type.value == 'unknown':
+                        format_issues.append(f"{Path(ds_path).name}: unknown format")
+                except Exception as e:
+                    format_issues.append(f"{Path(ds_path).name}: detection failed ({str(e)[:50]})")
+            
+            if format_issues:
+                add_check("dataset_format", False, f"Format issues: {'; '.join(format_issues)}")
+            else:
+                add_check("dataset_format", True, "All dataset formats recognized")
+        except Exception as e:
+            add_check("dataset_format", True, "Dataset format check skipped", "warning")
+    
+    # ── 8. Dataset-training method compatibility ──────────────────
+    dataset_type = getattr(config, 'dataset_type', None)
+    compatible_methods = getattr(config, 'compatible_training_methods', None)
+    training_method = config.training_method.value if hasattr(config.training_method, 'value') else str(config.training_method) if config.training_method else 'sft'
+    
+    if dataset_type and dataset_type != 'unknown' and compatible_methods:
+        if training_method in compatible_methods:
+            add_check("method_compatibility", True, f"Dataset type '{dataset_type}' is compatible with {training_method.upper()}")
+        else:
+            method_names = {'sft': 'Supervised Fine-Tuning (SFT)', 'rlhf': 'RLHF', 'pt': 'Pre-Training'}
+            add_check("method_compatibility", False, 
+                f"Dataset type '{dataset_type}' is not compatible with {method_names.get(training_method, training_method.upper())}. "
+                f"Compatible: {', '.join(m.upper() for m in compatible_methods)}")
+    else:
+        add_check("method_compatibility", True, "Training method compatibility OK", "info")
+    
+    # ── 9. Feature flags (training method enabled) ────────────────
+    try:
+        from ...services.training_service import training_service as ts
+        is_valid, error = ts._validate_feature_flags(config)
+        if is_valid:
+            add_check("feature_flags", True, "Training method is enabled in this build")
+        else:
+            add_check("feature_flags", False, error)
+    except Exception as e:
+        add_check("feature_flags", True, "Feature flag check skipped", "warning")
+    
+    # ── 10. Config compatibility ──────────────────────────────────
+    config_issues = []
+    
+    # DeepSpeed + FSDP conflict
+    if getattr(config, 'deepspeed', None) and getattr(config, 'fsdp', None):
+        config_issues.append("DeepSpeed and FSDP cannot be used together")
+    
+    # Packing requires Flash Attention
+    if getattr(config, 'packing', False):
+        attn_impl = getattr(config, 'attn_impl', None)
+        flash_attn_values = ['flash_attn', 'flash_attention_2', 'flash_attention_3']
+        if attn_impl and attn_impl not in flash_attn_values:
+            config_issues.append(f"Sequence Packing requires Flash Attention but '{attn_impl}' is selected")
+    
+    # Flash Attention 3 requires Hopper GPU
+    attn_impl = getattr(config, 'attn_impl', None)
+    if attn_impl == 'flash_attention_3':
+        try:
+            import torch
+            if torch.cuda.is_available():
+                props = torch.cuda.get_device_properties(0)
+                if props.major < 9:
+                    config_issues.append(f"Flash Attention 3 requires Hopper GPU (H100/H200) but detected {props.name}")
+        except Exception:
+            pass
+    
+    if config_issues:
+        add_check("config_compatibility", False, "; ".join(config_issues))
+    else:
+        add_check("config_compatibility", True, "Configuration is valid")
+    
+    # ── 11. Core dependencies ─────────────────────────────────────
+    dep_issues = []
+    for pkg_name in ['torch', 'transformers', 'peft', 'trl', 'datasets', 'accelerate']:
+        try:
+            mod = __import__(pkg_name)
+            ver = getattr(mod, '__version__', 'unknown')
+        except ImportError:
+            dep_issues.append(f"{pkg_name} not installed")
+    
+    if dep_issues:
+        add_check("dependencies", False, f"Missing: {', '.join(dep_issues)}")
+    else:
+        add_check("dependencies", True, "All core ML dependencies installed")
+    
+    # ── 12. Storage space ─────────────────────────────────────────
+    try:
+        output_dir = getattr(config, 'output_dir', '') or '/workspace'
+        # Check the parent directory that exists
+        check_path = output_dir
+        while check_path and not os.path.exists(check_path):
+            check_path = os.path.dirname(check_path)
+        if check_path:
+            stat = shutil.disk_usage(check_path)
+            free_gb = stat.free / (1024**3)
+            if free_gb < 5:
+                add_check("storage", False, f"Only {free_gb:.1f}GB free disk space. Training may need more.")
+            elif free_gb < 20:
+                add_check("storage", True, f"{free_gb:.1f}GB free disk space (may be tight for large models)", "warning")
+            else:
+                add_check("storage", True, f"{free_gb:.1f}GB free disk space")
+        else:
+            add_check("storage", True, "Could not check storage", "warning")
+    except Exception as e:
+        add_check("storage", True, f"Storage check skipped: {str(e)[:50]}", "warning")
+    
+    return {
+        "success": all_passed,
+        "checks": checks,
+        "total_checks": len(checks),
+        "passed": sum(1 for c in checks if c["passed"]),
+        "failed": sum(1 for c in checks if not c["passed"] and c["severity"] == "error"),
+        "warnings": sum(1 for c in checks if not c["passed"] and c["severity"] == "warning"),
+    }
+
+
 @router.post("/create", response_model=JobInfo)
 async def create_job(config: TrainingConfig, db: Session = Depends(get_db)):
     """Create a new training job

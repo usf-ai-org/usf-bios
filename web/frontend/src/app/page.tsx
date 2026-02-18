@@ -2489,6 +2489,51 @@ export default function Home() {
         throw new Error('No model selected. Please select a model for training.')
       }
       
+      setLoadingMessage('Running pre-flight checks...')
+      
+      // ============================================================
+      // COMPREHENSIVE PRE-FLIGHT VALIDATION (Backend)
+      // Checks: system status, GPU, model path, dataset format,
+      // dependencies, storage, config compatibility, feature flags
+      // ============================================================
+      try {
+        const jobConfig = {
+          ...config,
+          dataset_path: config.dataset_paths.join(','),
+          dataset_type: datasetTypeInfo?.dataset_type || null,
+          dataset_type_display: datasetTypeInfo?.display_name || null,
+          compatible_training_methods: datasetTypeInfo?.compatible_training_methods || null,
+          compatible_rlhf_types: datasetTypeInfo?.compatible_rlhf_types || null,
+          merge_adapter_before_training: adapterMergeMode && modelTypeInfo?.is_adapter,
+          adapter_base_model_path: adapterMergeMode ? adapterBaseModelPath : undefined,
+          adapter_base_model_source: adapterMergeMode ? adapterBaseModelSource : undefined,
+          existing_adapter_path: useExistingAdapter && existingAdapterPath ? existingAdapterPath : undefined,
+          existing_adapter_source: useExistingAdapter && existingAdapterPath ? existingAdapterSource : undefined,
+        }
+        const preflightRes = await fetch('/api/jobs/preflight', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(jobConfig),
+        })
+        if (preflightRes.ok) {
+          const preflight = await preflightRes.json()
+          if (!preflight.success) {
+            const failedChecks = (preflight.checks || []).filter((c: any) => !c.passed && c.severity === 'error')
+            const warnings = (preflight.checks || []).filter((c: any) => !c.passed && c.severity === 'warning')
+            const errorLines = failedChecks.map((c: any) => `• ${c.message}`).join('\n')
+            const warningLines = warnings.map((c: any) => `• ${c.message}`).join('\n')
+            let fullMessage = `Pre-flight validation failed (${preflight.failed} error${preflight.failed !== 1 ? 's' : ''}):\n\n${errorLines}`
+            if (warningLines) fullMessage += `\n\nWarnings:\n${warningLines}`
+            throw new Error(fullMessage)
+          }
+        }
+      } catch (preflightErr: any) {
+        if (preflightErr.message?.includes('Pre-flight validation failed')) {
+          throw preflightErr
+        }
+        console.warn('Pre-flight check endpoint unavailable, continuing with standard validation:', preflightErr)
+      }
+      
       setLoadingMessage('Preparing for training...')
       
       // Step 1: Clean GPU memory before training to ensure maximum available VRAM
