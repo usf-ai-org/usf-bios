@@ -403,6 +403,9 @@ class TrainingStatusService:
             self._status.can_load_inference = False
             self._status.can_start_training = False
             self._status.last_updated = datetime.utcnow()
+            # Reset staleness tracker so previous job's timestamp
+            # doesn't cause the new job to be immediately marked stale
+            self._last_progress_update = datetime.utcnow()
     
     async def set_training_running(self, job_id: str) -> None:
         """Mark training as actively running"""
@@ -421,6 +424,7 @@ class TrainingStatusService:
                 self._status.can_load_inference = True
                 self._status.can_start_training = True
                 self._status.last_updated = datetime.utcnow()
+                self._last_progress_update = None
     
     async def set_training_failed(self, job_id: str, error_message: str = None) -> None:
         """Mark training as failed"""
@@ -433,6 +437,7 @@ class TrainingStatusService:
                 self._status.can_load_inference = True
                 self._status.can_start_training = True
                 self._status.last_updated = datetime.utcnow()
+                self._last_progress_update = None
     
     async def set_training_stopped(self, job_id: str) -> None:
         """Mark training as manually stopped"""
@@ -444,6 +449,7 @@ class TrainingStatusService:
                 self._status.can_load_inference = True
                 self._status.can_start_training = True
                 self._status.last_updated = datetime.utcnow()
+                self._last_progress_update = None
     
     def is_training_active_sync(self) -> bool:
         """
