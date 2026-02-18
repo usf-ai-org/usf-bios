@@ -231,7 +231,12 @@ class ModelLoader(BaseModelLoader):
 
     def get_config(self, model_dir: str) -> PretrainedConfig:
         auto_config_cls = self.auto_config_cls or AutoConfig
-        return auto_config_cls.from_pretrained(model_dir, trust_remote_code=True)
+        try:
+            return auto_config_cls.from_pretrained(model_dir, trust_remote_code=True)
+        except (KeyError, ValueError):
+            # Fallback for custom model types not in transformers' CONFIG_MAPPING
+            # (e.g. usf_omega). Load as generic PretrainedConfig instead.
+            return PretrainedConfig.from_pretrained(model_dir, trust_remote_code=True)
 
     def _get_tokenizer(self, processor):
         if not isinstance(processor, PreTrainedTokenizerBase) and hasattr(processor, 'tokenizer'):
