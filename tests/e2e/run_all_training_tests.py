@@ -55,7 +55,7 @@ TEST_TRAINING_PARAMS = {
     "lora_rank": 8,
     "lora_alpha": 16,
     "lora_dropout": 0.05,
-    "target_modules": "all",
+    "target_modules": "all-linear",
     "warmup_ratio": 0.1,
     "lr_scheduler_type": "cosine",
     "gradient_checkpointing": True,
