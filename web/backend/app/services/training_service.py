@@ -1462,8 +1462,8 @@ class TrainingService:
                 "model_source": model_source,
                 "model_path": job.config.model_path,
             })
+            model_path = job.config.model_path
             if model_source == 'local':
-                model_path = job.config.model_path
                 if not os.path.exists(model_path):
                     validation_errors.append(f"Model path does not exist: {model_path}")
                 elif not os.path.isdir(model_path):
