@@ -902,11 +902,10 @@ Examples:
     parser.add_argument("--skip-full", action="store_true", help="Skip full fine-tuning tests (saves memory)")
     parser.add_argument("--only", dest="only_test", default=None,
                         help="Only run tests matching this string (e.g., 'sft', 'dpo', 'grpo')")
-    parser.add_argument("--timeout", type=int, default=TEST_TIMEOUT, help="Timeout per test in seconds")
+    parser.add_argument("--timeout", type=int, default=1800, help="Timeout per test in seconds")
     
     args = parser.parse_args()
     
-    global TEST_TIMEOUT
     TEST_TIMEOUT = args.timeout
     
     runner = E2ETestRunner(
