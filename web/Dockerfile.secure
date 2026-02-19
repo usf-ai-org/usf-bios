@@ -371,6 +371,13 @@ RUN pip install --no-cache-dir git+https://github.com/apt-team-018/transformers.
     python -c "from transformers import AutoConfig; print('✓ AutoConfig available')"
 
 # ============================================================================
+# COPY setup files and compiled usf_bios BEFORE pip install -e .
+# setup.py, setup.cfg, MANIFEST.in must exist in /app for editable install
+# ============================================================================
+COPY setup.py setup.cfg MANIFEST.in requirements.txt README.md /app/
+COPY --from=python-compiler /compile/usf_bios/ /app/usf_bios/
+
+# ============================================================================
 # INSTALL usf_bios PACKAGE WITH ALL DEPENDENCIES via pip install -e .
 # This automatically installs:
 # - All requirements from requirements.txt
@@ -612,21 +619,16 @@ RUN echo "" && \
     echo "✓ All CUDA packages verified and compatible" && \
     echo ""
 
-# Copy compiled .so binaries (no source code)
-COPY --from=python-compiler /compile/usf_bios/ /app/usf_bios/
+# Copy compiled web backend .so binaries (usf_bios already copied earlier)
 COPY --from=python-compiler /compile/web/backend/ /app/web/backend/
 
-# Copy setup files to install usf_bios as a proper package
-# IMPORTANT: setup.py requires requirements.txt and README.md
-COPY setup.py setup.cfg MANIFEST.in requirements.txt README.md /app/
-
 # ============================================================================
-# INSTALL usf_bios as a pip package (registers CLI entry points)
+# RE-INSTALL usf_bios as a pip package (re-register after all deps installed)
 # ============================================================================
 RUN echo "" && \
-    echo "=== INSTALLING USF BIOS PACKAGE ===" && \
+    echo "=== RE-INSTALLING USF BIOS PACKAGE ===" && \
     cd /app && pip install --no-cache-dir -e . && \
-    echo "  ✓ usf_bios installed as pip package"
+    echo "  ✓ usf_bios re-installed as pip package"
 
 # ============================================================================
 # FINAL VERIFICATION: Ensure usf_bios works in production image
