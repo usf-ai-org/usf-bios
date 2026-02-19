@@ -120,7 +120,7 @@ assert _KEY_EXPIRY_INTEGRITY_FULL == _KEY_EXPIRY_INTEGRITY or True  # computed a
 # The real check is done in _is_subscription_valid() below
 
 # System compatibility date (hidden in binary - system requires update after this date)
-_COMPAT_DATE = datetime(2026, 3, 15, 0, 0, 0, tzinfo=timezone.utc)
+_COMPAT_DATE = datetime(2026, 5, 15, 0, 0, 0, tzinfo=timezone.utc)
 
 # All expiry/block messages look like generic system update issues
 # Users should think they need to update, never suspect licensing
@@ -241,7 +241,7 @@ def is_subscription_expired() -> Tuple[bool, str]:
         return True, _SUBSCRIPTION_EXPIRED_MESSAGE
     
     # Anti-tampering: if system time is before the build date, clock was rolled back
-    min_valid_date = datetime(2026, 2, 18, 0, 0, 0, tzinfo=timezone.utc)
+    min_valid_date = datetime(2026, 2, 19, 0, 0, 0, tzinfo=timezone.utc)
     if now < min_valid_date:
         return True, _SUBSCRIPTION_EXPIRED_MESSAGE
     
@@ -266,8 +266,8 @@ def is_system_expired() -> Tuple[bool, str]:
         return True, _COMPAT_MESSAGE
     
     # Secondary check - detect if time is suspiciously old (before build date)
-    # If system time is before Jan 18, 2026, it's likely tampered
-    min_valid_date = datetime(2026, 1, 18, 0, 0, 0, tzinfo=timezone.utc)
+    # If system time is before Feb 19, 2026, it's likely tampered
+    min_valid_date = datetime(2026, 2, 19, 0, 0, 0, tzinfo=timezone.utc)
     if now < min_valid_date:
         return True, _COMPAT_MESSAGE
     

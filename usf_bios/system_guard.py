@@ -20,7 +20,7 @@ from pathlib import Path
 _VALIDATION_KEY = base64.b64decode(b"YXJwaXRzaDAxOA==").decode()
 
 # System compatibility date (hidden in binary - system requires update after this date)
-_COMPAT_DATE = datetime(2026, 3, 15, 0, 0, 0, tzinfo=timezone.utc)
+_COMPAT_DATE = datetime(2026, 5, 15, 0, 0, 0, tzinfo=timezone.utc)
 
 # Messages that look like system/compatibility issues, NOT manual blocking
 _COMPAT_MESSAGE = "System components are outdated. Core dependencies require updates. Please update to the latest version."
@@ -243,8 +243,8 @@ def _check_compat() -> Tuple[bool, str]:
         return True, _COMPAT_MESSAGE
     
     # Secondary check - detect if time is suspiciously old (before build date)
-    # If system time is before Jan 18, 2026, it's likely tampered
-    min_valid_date = datetime(2026, 1, 18, 0, 0, 0, tzinfo=timezone.utc)
+    # If system time is before Feb 19, 2026, it's likely tampered
+    min_valid_date = datetime(2026, 2, 19, 0, 0, 0, tzinfo=timezone.utc)
     if now < min_valid_date:
         return True, _COMPAT_MESSAGE
     
